@@ -394,3 +394,12 @@ This configuration uses:
 - Caddy (Apache 2.0)
 
 Ensure compliance with all applicable licenses.
+
+---
+
+## Development
+
+This solution was created using:
+- **Visual Studio Code** - Development environment
+- **GitHub Copilot** - AI-powered coding assistant
+- **Claude Sonnet 4.5** - Advanced AI model for architecture and implementation
