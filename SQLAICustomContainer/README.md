@@ -34,6 +34,7 @@ OS Detection Layer:
 - Docker Engine 20.10+
 - Minimum 4GB RAM available
 - 20GB disk space for images and models
+- Linux, macOS, or WSL2 environment for build script
 
 ## Building the Container
 
@@ -59,13 +60,9 @@ docker build -t sqlserver-ollama:2025 .
 docker build --build-arg BASE_IMAGE=mcr.microsoft.com/mssql/rhel/server:2025-latest -t sqlserver-ollama:2025-rhel .
 ```
 
-### Build with custom tag
-
-```bash
-docker build -t yourusername/sqlserver-ollama:2025 .
-```
-
 ### Using the build script (recommended)
+
+> **Note**: The build script is designed for Linux/Mac/WSL environments with Bash.
 
 **Option 1: Provide password via command-line (recommended)**
 ```bash
@@ -74,14 +71,11 @@ docker build -t yourusername/sqlserver-ollama:2025 .
 
 # Build with RHEL image
 ./build-and-run.sh --base-image mcr.microsoft.com/mssql/rhel/server:2025-latest --sa-password 'YourStrong@Pass123'
-
-# Windows PowerShell
-.\build-and-run.ps1 -SAPassword 'YourStrong@Pass123' -BaseImage mcr.microsoft.com/mssql/rhel/server:2025-latest
 ```
 
 **Option 2: Edit the script and set password**
 ```bash
-# Edit build-and-run.sh (Linux/Mac) or build-and-run.ps1 (Windows)
+# Edit build-and-run.sh
 # Set SA_PASSWORD="YourStrong@Pass123"
 
 # Then run without the parameter
@@ -196,8 +190,7 @@ Set the password via environment variable when running, or via script parameter 
 
 **At build time (using build script):**
 ```bash
---sa-password 'YourStrong@Pass123'  # Linux/Mac
--SAPassword 'YourStrong@Pass123'    # Windows PowerShell
+--sa-password 'YourStrong@Pass123'
 ```
 
 **Password requirements:**
