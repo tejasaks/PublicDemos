@@ -1,16 +1,17 @@
-# Building an AI-Powered SQL Server Container: Combining SQL Server 2025, Ollama, and Caddy for Secure Embeddings
+# Building an AI-Powered SQL Server Container: Combining SQL Server 2025, Ollama, MinIO, and Caddy for Secure Embeddings and Object Storage
 
 ## Introduction
 
-In the rapidly evolving landscape of AI and data management, the need to combine traditional database systems with modern AI capabilities has never been more critical. Today, I'm excited to share an example of a solution that bridges this gap: a custom Docker container that seamlessly integrates SQL Server 2025, Ollama (an AI model runtime), and Caddy (a modern HTTPS proxy server) into a single, deployable unit.
+In the rapidly evolving landscape of AI and data management, the need to combine traditional database systems with modern AI capabilities has never been more critical. Today, I'm excited to share an example of a solution that bridges this gap: a custom Docker container that seamlessly integrates SQL Server 2025, Ollama (an AI model runtime), MinIO (S3-compatible object storage), and Caddy (a modern HTTPS proxy server) into a single, deployable unit.
 
-This solution enables you to run AI embeddings and large language models directly alongside your SQL Server database, with secure HTTPS communication, Full-Text Search capabilities, and proper certificate management—all within one container. Plus, it intelligently adapts to both Ubuntu and RHEL base images automatically.
+This solution enables you to run AI embeddings and large language models directly alongside your SQL Server database, with S3-compatible object storage for unstructured data, secure HTTPS communication, Full-Text Search capabilities, and proper certificate management—all within one container. Plus, it intelligently adapts to both Ubuntu and RHEL base images automatically.
 
 ## The Challenge
 
 Modern applications increasingly require:
 - **Relational database capabilities** for structured data storage
 - **AI/ML model inference** for embeddings, semantic search, and natural language processing
+- **Object storage** for unstructured data like documents, images, and model artifacts
 - **Secure communication** between services, especially in production environments
 - **Simple deployment** that doesn't require complex orchestration
 
@@ -18,35 +19,44 @@ Traditionally, these would require multiple containers, complex networking confi
 
 ## The Solution Architecture
 
-Our custom container combines three powerful components:
+Our custom container combines four powerful components:
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                 Docker Container                     │
-│              (Ubuntu or RHEL Base)                   │
-├─────────────────────────────────────────────────────┤
-│                                                       │
-│  ┌──────────────┐         ┌────────────────┐       │
-│  │ SQL Server   │         │ Ollama Runtime │       │
-│  │ 2025 + FTS   │         │ + nomic-embed  │       │
-│  │ Port: 1433   │         │ Port: 11434    │       │
-│  └──────────────┘         └────────┬───────┘       │
-│         │                           │               │
-│         │                           │               │
-│         │                  ┌────────▼───────┐      │
-│         │                  │ Caddy Proxy    │      │
-│         │                  │ HTTPS:11435    │      │
-│         │                  └────────┬───────┘      │
-│         │                           │               │
-│    Trusted CA ◄────────────────────┘               │
-│    Certificates                                     │
-│                                                     │
-│  OS Detection: Ubuntu/Debian or RHEL/CentOS       │
-└─────────────────────────────────────────────────────┘
-          │                           │
-          │                           │
-     Port 1433                   Port 11435
-    (SQL Server)               (Ollama HTTPS)
+┌────────────────────────────────────────────────────────────┐
+│                    Docker Container                         │
+│                 (Ubuntu or RHEL Base)                      │
+├────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌──────────────┐         ┌────────────────┐             │
+│  │ SQL Server   │         │ Ollama Runtime │             │
+│  │ 2025 + FTS   │         │ + nomic-embed  │             │
+│  │ + Polybase*  │         │ Port: 11434    │             │
+│  │ Port: 1433   │         └────────┬───────┘             │
+│  └──────────────┘                  │                      │
+│         │                           │                      │
+│         │                  ┌────────▼───────┐             │
+│         │                  │ Caddy Proxy    │             │
+│         │                  │ HTTPS:11435    │             │
+│         │                  │ HTTPS:9001     │             │
+│         │                  └────────┬───────┘             │
+│         │                           │                      │
+│    Trusted CA ◄────────────────────┘                      │
+│    Certificates                                            │
+│                                                             │
+│  ┌────────────────────────────────────┐                   │
+│  │ MinIO Object Storage               │                   │
+│  │ S3-Compatible API (Port: 9000)     │                   │
+│  │ Web Console (Port: 9002→9001)      │                   │
+│  │ Persistent Storage: /minio/data    │                   │
+│  └────────────────────────────────────┘                   │
+│                                                             │
+│  OS Detection: Ubuntu/Debian or RHEL/CentOS               │
+│  * Polybase: Optional, enabled via build argument         │
+└────────────────────────────────────────────────────────────┘
+          │         │            │            │
+          │         │            │            │
+     Port 1433  Port 11435  Port 9000    Port 9001
+   (SQL Server) (Ollama)   (MinIO API)  (MinIO HTTPS)
 ```
 
 ### Component Breakdown
@@ -67,8 +77,17 @@ Our custom container combines three powerful components:
 **3. Caddy HTTPS Proxy**
 - Automatically generates self-signed certificates
 - Reverse proxies Ollama HTTP → HTTPS
+- Reverse proxies MinIO Console HTTP → HTTPS
 - Certificate authority chain trusted system-wide
 - Production-ready TLS configuration
+
+**4. MinIO Object Storage**
+- S3-compatible object storage service
+- REST API on port 9000
+- Web console on port 9001 (HTTPS via Caddy)
+- Persistent storage at /minio/data
+- Ideal for storing unstructured data, model artifacts, and backups
+- Integrates with SQL Server via Polybase for external table access
 
 ## Key Features
 
@@ -168,6 +187,51 @@ A unique aspect of this solution is how we establish trust between SQL Server an
 ```
 
 This enables SQL Server to make secure HTTPS calls to Ollama for AI operations without certificate validation errors.
+
+### MinIO Object Storage Integration
+
+MinIO provides enterprise-grade, S3-compatible object storage that seamlessly integrates with SQL Server through Polybase. This integration enables:
+
+**Key Benefits:**
+- **Unstructured Data Storage**: Store documents, images, videos, and model artifacts
+- **SQL Server Integration**: Query object storage data directly using SQL via Polybase external tables
+- **S3 Compatibility**: Works with any S3-compatible client or SDK
+- **Persistent Storage**: Data persisted in Docker volume for durability
+- **Secure Access**: Web console secured via Caddy HTTPS proxy
+- **TLS Encryption**: All MinIO API traffic encrypted with auto-generated certificates
+
+**Important Prerequisites for Polybase Integration:**
+- ⚠️ **Trace flag 13702 required**: Polybase on SQL Server for Linux requires trace flag 13702
+- ⚠️ **TLS enabled**: MinIO must have TLS enabled for SQL Server Polybase connectivity
+- ⚠️ **Certificate trust**: MinIO certificate must be in SQL Server's trusted CA store
+
+**MinIO Architecture:**
+```
+MinIO Server (Port 9000)  ←→  S3 API Access (HTTPS/TLS Enabled)
+     ↓
+MinIO Console (Port 9002) → Caddy HTTPS Proxy (Port 9001)
+     ↓
+Persistent Volume: /minio/data
+     ↓
+TLS Certificates: /root/.minio/certs/
+```
+
+**Default Credentials:**
+- Username: `minioadmin`
+- Password: `minioadmin`
+- Console URL: `https://localhost:9001`
+- API Endpoint: `https://localhost:9000` (TLS enabled with self-signed certificate)
+
+**TLS and Certificate Management:**
+- MinIO automatically generates self-signed TLS certificates on container startup
+- Certificates stored in `/root/.minio/certs/` (private.key and public.crt)
+- Public certificate automatically copied to:
+  - SQL Server CA store: `/var/opt/mssql/security/ca-certificates/minio-cert.crt`
+  - System CA store (Ubuntu): `/usr/local/share/ca-certificates/minio-cert.crt`
+  - System CA store (RHEL): `/etc/pki/ca-trust/source/anchors/minio-cert.crt`
+- System CA certificates updated automatically to trust MinIO certificate
+
+**Important Security Note**: Change default credentials in production by setting environment variables `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD` in the startup script or via Docker environment variables.
 
 ## Real-World Use Cases
 
@@ -286,14 +350,432 @@ ORDER BY st.distance;
 - Perform similarity searches
 - All within the same container
 
-### 3. Hybrid AI/SQL Workloads
+### 3. MinIO + SQL Server Polybase Integration
+
+**Note**: This use case requires enabling Polybase during build with `--polybase true` flag.
+
+MinIO provides S3-compatible object storage that integrates seamlessly with SQL Server via Polybase, enabling SQL queries over unstructured data stored in MinIO.
+
+**Prerequisites:**
+```bash
+# Build with Polybase enabled
+./build-and-run.sh --sa-password "YourStrong@Pass123" --polybase true
+```
+
+**Step 1: Create sample data files and upload to MinIO**
+
+Use this Python program to generate sample CSV and Parquet files with technical book data:
+
+```python
+import pandas as pd
+from minio import Minio
+from minio.error import S3Error
+import io
+
+# Sample technical books data (10 rows)
+books_data = {
+    'ID': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    'Title': [
+        'Introduction to Machine Learning',
+        'Deep Learning Fundamentals',
+        'Advanced Materials Processing',
+        'Computer Vision and AI',
+        'Adaptive Learning Systems',
+        'Chemical Reaction Kinetics',
+        'AI Ethics and Responsible ML',
+        'Predictive Analytics with ML',
+        'Polymer Science and Engineering',
+        'AI in Healthcare Applications'
+    ],
+    'Content': [
+        'Machine learning is a subset of artificial intelligence that enables systems to learn and improve from experience without being explicitly programmed. It focuses on developing algorithms that can access data and use it to learn.',
+        'Deep neural systems teach computers to learn by example using computational intelligence. Multi-layered networks can identify patterns in images, text, and speech with human-like accuracy in intelligent automation applications.',
+        'Materials processing involves the transformation of raw materials into finished products through various manufacturing techniques. Heat treatment, forging, and extrusion are critical processes that alter material properties to achieve desired strength and durability characteristics.',
+        'Computer vision is an artificial intelligence field enabling machines to interpret visual information. Using machine learning algorithms, systems can identify objects, faces, and scenes in images and videos with remarkable accuracy.',
+        'Adaptive learning represents a paradigm where intelligent agents learn optimal behaviors through trial and error interactions with their environment. This computational approach has revolutionized robotics, game playing, and autonomous systems development.',
+        'Chemical reaction kinetics studies the rates of chemical processes and the factors affecting them. Temperature, pressure, and catalyst concentration influence reaction rates, enabling chemists to optimize industrial processes and predict reaction outcomes.',
+        'Ethical considerations in artificial intelligence are crucial for responsible machine learning development. Bias mitigation, transparency, and fairness must guide AI systems to ensure equitable outcomes across diverse populations.',
+        'Predictive analytics leverages machine learning algorithms to forecast future outcomes. By analyzing historical data, artificial intelligence models identify trends and patterns enabling data-driven decision making in businesses.',
+        'Polymer science explores the synthesis, structure, and properties of macromolecules. Cross-linking density, molecular weight distribution, and crystallinity determine mechanical properties like tensile strength, elasticity, and thermal stability in polymer materials.',
+        'Artificial intelligence transforms healthcare through machine learning applications in diagnosis, treatment planning, and drug discovery. AI systems analyze medical imaging and patient data to support clinical decision making.'
+    ]
+}
+
+# Create DataFrame
+df = pd.DataFrame(books_data)
+
+# Create MinIO client
+client = Minio(
+    "localhost:9000",
+    access_key="minioadmin",
+    secret_key="minioadmin",
+    secure=True,  # MinIO uses HTTPS with self-signed certificate
+    cert_check=False  # Disable certificate verification for self-signed cert
+)
+
+# Create bucket if it doesn't exist
+bucket_name = "sqltest"
+try:
+    if not client.bucket_exists(bucket_name):
+        client.make_bucket(bucket_name)
+        print(f"Bucket '{bucket_name}' created successfully")
+    else:
+        print(f"Bucket '{bucket_name}' already exists")
+except S3Error as e:
+    print(f"Error creating bucket: {e}")
+
+# Save as CSV (with proper escaping for commas in content)
+csv_buffer = io.BytesIO()
+df.to_csv(csv_buffer, index=False, quoting=1)  # quoting=1 quotes all fields
+csv_buffer.seek(0)
+
+try:
+    client.put_object(
+        bucket_name,
+        "technical_books.csv",
+        csv_buffer,
+        length=csv_buffer.getbuffer().nbytes,
+        content_type="text/csv"
+    )
+    print("CSV file uploaded successfully to MinIO")
+except S3Error as e:
+    print(f"Error uploading CSV: {e}")
+
+# Save as Parquet
+parquet_buffer = io.BytesIO()
+df.to_parquet(parquet_buffer, index=False, engine='pyarrow')
+parquet_buffer.seek(0)
+
+try:
+    client.put_object(
+        bucket_name,
+        "technical_books.parquet",
+        parquet_buffer,
+        length=parquet_buffer.getbuffer().nbytes,
+        content_type="application/octet-stream"
+    )
+    print("Parquet file uploaded successfully to MinIO")
+except S3Error as e:
+    print(f"Error uploading Parquet: {e}")
+
+# List files in bucket to verify
+print("\nFiles in bucket:")
+objects = client.list_objects(bucket_name)
+for obj in objects:
+    print(f"  - {obj.object_name} ({obj.size} bytes)")
+```
+
+**Required Python packages:**
+```bash
+pip install pandas pyarrow minio
+```
+
+**Step 2: Configure SQL Server Polybase to query MinIO data**
+
+**Important**: Polybase on SQL Server for Linux requires trace flag 13702. Configure it before enabling Polybase:
+
+```bash
+# Enable trace flag 13702 globally for Polybase support on Linux
+docker exec -it sqlserver-ollama /opt/mssql/bin/mssql-conf traceflag 13702 on
+
+# Restart the container for the trace flag to take effect
+docker restart sqlserver-ollama
+
+# Wait for SQL Server to start (check logs)
+docker logs -f sqlserver-ollama
+```
+
+After the container restarts and SQL Server is ready, connect and run the following SQL commands:
+
+```sql
+-- Verify the Polybase feature is installed
+SELECT SERVERPROPERTY('IsPolyBaseInstalled') AS IsPolyBaseInstalled;
+
+-- Enable polybase feature using the commands below
+EXEC sp_configure @configname = 'polybase enabled', @configvalue = 1;
+RECONFIGURE WITH OVERRIDE;
+EXEC sp_configure @configname = 'polybase enabled';
+GO
+
+-- Next, let's create a database and database scoped credential to access the object storage
+CREATE DATABASE pb_demo;
+GO
+
+USE pb_demo;
+GO
+
+CREATE MASTER KEY ENCRYPTION BY PASSWORD = 'mypass123@';  
+GO
+
+-- Create database scoped credential with MinIO access credentials
+-- Format: 'username:password' in the SECRET
+CREATE DATABASE SCOPED CREDENTIAL s3_dc 
+WITH IDENTITY = 'S3 Access Key', 
+     SECRET = 'minioadmin:minioadmin';
+GO
+
+-- To verify the credential is created, run the below command
+SELECT * FROM sys.database_scoped_credentials;
+GO
+
+-- Now create the External data source pointing to MinIO
+-- Note: Use the container's internal IP or 'localhost' depending on network setup
+-- If you get an error, try using the container's IP address instead of localhost
+CREATE EXTERNAL DATA SOURCE s3_ds 
+WITH (
+    LOCATION = 's3://localhost:9000/',
+    CREDENTIAL = s3_dc
+);
+GO
+
+-- When creating the external data source, if you see the below error, 
+-- restart the container and run the same command again
+-- Msg 46530, Level 16, State 11, Line 20
+-- External data sources are not supported with type GENERIC.
+
+-- Query the CSV file from MinIO using OPENROWSET
+-- This queries the technical_books.csv file we uploaded
+SELECT * 
+FROM OPENROWSET(
+    BULK '/sqltest/technical_books.csv', 
+    FORMAT = 'CSV',
+    DATA_SOURCE = 's3_ds',
+    FIRSTROW = 2  -- Skip header row
+) WITH (
+    ID INT,
+    Title VARCHAR(200),
+    Content VARCHAR(MAX)
+) AS TechnicalBooks;
+GO
+
+-- Query the Parquet file from MinIO
+-- Parquet format automatically handles schema
+SELECT * 
+FROM OPENROWSET(
+    BULK '/sqltest/technical_books.parquet',
+    FORMAT = 'PARQUET',
+    DATA_SOURCE = 's3_ds'
+) AS TechnicalBooksParquet;
+GO
+
+-- Example: Filter and analyze data from object storage
+SELECT 
+    ID,
+    Title,
+    LEFT(Content, 100) + '...' AS ContentPreview
+FROM OPENROWSET(
+    BULK '/sqltest/technical_books.parquet',
+    FORMAT = 'PARQUET',
+    DATA_SOURCE = 's3_ds'
+) AS Books
+WHERE Title LIKE '%Machine Learning%' OR Title LIKE '%AI%'
+ORDER BY ID;
+GO
+
+-- Example: Join MinIO data with SQL Server tables
+-- First, create a local table with additional metadata
+CREATE TABLE BookMetadata (
+    BookID INT PRIMARY KEY,
+    ISBN VARCHAR(20),
+    PublicationYear INT,
+    Publisher VARCHAR(100)
+);
+GO
+
+INSERT INTO BookMetadata VALUES
+(1, '978-1-234-56789-0', 2023, 'Tech Publishers'),
+(2, '978-1-234-56789-1', 2024, 'AI Press'),
+(4, '978-1-234-56789-3', 2023, 'Vision Books'),
+(7, '978-1-234-56789-6', 2024, 'Ethics Press');
+GO
+
+-- Join external MinIO data with internal SQL Server table
+SELECT 
+    b.ID,
+    b.Title,
+    m.ISBN,
+    m.PublicationYear,
+    m.Publisher
+FROM OPENROWSET(
+    BULK '/sqltest/technical_books.parquet',
+    FORMAT = 'PARQUET',
+    DATA_SOURCE = 's3_ds'
+) AS b
+INNER JOIN BookMetadata m ON b.ID = m.BookID
+ORDER BY b.ID;
+GO
+```
+
+**Benefits of MinIO + Polybase Integration:**
+- **Unified Queries**: Query object storage and relational data together
+- **Cost-Effective Storage**: Store large files in object storage, metadata in SQL Server
+- **Data Lake Integration**: Build data lake solutions with SQL Server as the query engine
+- **Hybrid Workloads**: Combine structured (SQL Server) and unstructured (MinIO) data
+- **Format Flexibility**: Support for CSV, Parquet, and other data formats
+
+### 4. Database Backup to S3-Compatible Object Storage (MinIO)
+
+SQL Server 2025 supports native backup to S3-compatible object storage using the BACKUP TO URL feature. This allows you to store database backups directly in MinIO.
+
+**Prerequisites:**
+- MinIO running with TLS enabled (automatically configured in this container)
+- Database to backup (we'll use the `pb_demo` database from the Polybase example)
+
+**Step 1: Create SQL Server credential for MinIO S3 backup**
+
+```sql
+-- Create credential for S3 backup to MinIO
+-- Note: Use the format 'S3 Access Key' for IDENTITY and 'username:password' for SECRET
+CREATE CREDENTIAL [s3://localhost:9000/sqlbackups]
+WITH
+    IDENTITY = 'S3 Access Key',
+    SECRET = 'minioadmin:minioadmin';
+GO
+
+-- Verify the credential was created
+SELECT * FROM sys.credentials WHERE name LIKE 's3://%';
+GO
+```
+
+**Step 2: Create a bucket in MinIO for backups**
+
+You can create the bucket via the MinIO Console (`https://localhost:9001`) or using Python:
+
+```python
+from minio import Minio
+
+client = Minio(
+    "localhost:9000",
+    access_key="minioadmin",
+    secret_key="minioadmin",
+    secure=True,
+    cert_check=False
+)
+
+# Create bucket for SQL Server backups
+if not client.bucket_exists("sqlbackups"):
+    client.make_bucket("sqlbackups")
+    print("Bucket 'sqlbackups' created successfully")
+```
+
+**Step 3: Perform backup to MinIO**
+
+```sql
+-- Backup the pb_demo database to MinIO S3 storage
+BACKUP DATABASE pb_demo
+TO URL = 's3://localhost:9000/sqlbackups/pb_demo_full.bak'
+WITH 
+    STATS = 10,
+    COMPRESSION,
+    CHECKSUM;
+GO
+
+-- Example: Differential backup
+BACKUP DATABASE pb_demo
+TO URL = 's3://localhost:9000/sqlbackups/pb_demo_diff.bak'
+WITH 
+    DIFFERENTIAL,
+    STATS = 10,
+    COMPRESSION;
+GO
+
+-- Example: Transaction log backup
+BACKUP LOG pb_demo
+TO URL = 's3://localhost:9000/sqlbackups/pb_demo_log.trn'
+WITH 
+    STATS = 10,
+    COMPRESSION;
+GO
+```
+
+**Step 4: Verify backup in MinIO**
+
+Using MinIO Console:
+1. Navigate to `https://localhost:9001`
+2. Login with `minioadmin/minioadmin`
+3. Browse to the `sqlbackups` bucket
+4. You should see your backup files: `pb_demo_full.bak`, `pb_demo_diff.bak`, `pb_demo_log.trn`
+
+Using Python:
+```python
+from minio import Minio
+
+client = Minio(
+    "localhost:9000",
+    access_key="minioadmin",
+    secret_key="minioadmin",
+    secure=True,
+    cert_check=False
+)
+
+# List all backup files
+print("Backup files in MinIO:")
+objects = client.list_objects("sqlbackups")
+for obj in objects:
+    print(f"  - {obj.object_name} ({obj.size} bytes, {obj.last_modified})")
+```
+
+**Step 5: Restore database from S3 backup**
+
+```sql
+-- Restore database from MinIO S3 storage
+RESTORE DATABASE pb_demo_restored
+FROM URL = 's3://localhost:9000/sqlbackups/pb_demo_full.bak'
+WITH 
+    MOVE 'pb_demo' TO '/var/opt/mssql/data/pb_demo_restored.mdf',
+    MOVE 'pb_demo_log' TO '/var/opt/mssql/data/pb_demo_restored_log.ldf',
+    STATS = 10,
+    REPLACE;
+GO
+
+-- Verify the restored database
+SELECT name, state_desc, recovery_model_desc
+FROM sys.databases
+WHERE name = 'pb_demo_restored';
+GO
+```
+
+**Benefits of Backup to MinIO:**
+- **Cost-Effective**: Store backups in object storage instead of expensive disk arrays
+- **Scalable**: MinIO can scale to petabytes of storage
+- **Offsite Storage**: Separate backup storage from production databases
+- **S3 Compatible**: Can migrate backups to AWS S3, Azure Blob, or other S3-compatible storage
+- **Automated Retention**: Use MinIO lifecycle policies for automatic backup retention
+- **Compression**: SQL Server compression reduces backup size and transfer time
+
+**Troubleshooting Backup to URL:**
+
+If backup fails with certificate or connectivity errors:
+
+1. Verify MinIO TLS certificate is trusted:
+   ```bash
+   docker exec sqlserver-ollama ls -la /var/opt/mssql/security/ca-certificates/minio-cert.crt
+   ```
+
+2. Test MinIO connectivity:
+   ```bash
+   docker exec sqlserver-ollama curl -k https://localhost:9000/minio/health/live
+   ```
+
+3. Verify credential is correct:
+   ```sql
+   SELECT * FROM sys.credentials WHERE name = 's3://localhost:9000/sqlbackups';
+   ```
+
+4. Check SQL Server error log for details:
+   ```sql
+   EXEC xp_readerrorlog 0, 1, N'URL';
+   ```
+
+### 5. Hybrid AI/SQL Workloads
 - Traditional OLTP operations in SQL Server
 - Real-time AI inference via Ollama
+- Object storage for model artifacts and data files via MinIO
 - Secure communication between components
 - Single deployment unit
 
-### 4. Development and Testing
-- Complete AI-powered database stack
+### 6. Development and Testing
+- Complete AI-powered database stack with object storage
 - No external dependencies
 - Reproducible environments
 - Quick setup for proof-of-concepts
@@ -304,26 +786,38 @@ ORDER BY st.distance;
 
 **With Ubuntu base (default):**
 ```bash
-# Build the image
+# Build the image (without Polybase)
 docker build -t sqlserver-ollama:2025 .
 
+# Build with Polybase enabled
+docker build --build-arg ENABLE_POLYBASE=true -t sqlserver-ollama:2025 .
+
 # Or use the build script (SA password is MANDATORY)
-# Option 1: Pass password as parameter
+# Option 1: Pass password as parameter (without Polybase)
 ./build-and-run.sh --sa-password "YourStrong@Passw0rd"
+
+# With Polybase enabled
+./build-and-run.sh --sa-password "YourStrong@Passw0rd" --polybase true
 
 # Option 2: Edit build-and-run.sh and set SA_PASSWORD variable to your desired password
 # Then run: ./build-and-run.sh
 ```
 
-**Note**: The `build-and-run.sh` script requires a SQL Server SA password for security compliance. You must either pass it via `--sa-password` parameter or modify the script to set the `SA_PASSWORD` variable directly.
+**Note**: The `build-and-run.sh` script requires a SQL Server SA password for security compliance. You must either pass it via `--sa-password` parameter or modify the script to set the `SA_PASSWORD` variable directly. Polybase is optional and disabled by default; enable it with `--polybase true` if you need MinIO integration.
 
 **With RHEL base:**
 ```bash
 # Build with RHEL base image
 docker build --build-arg BASE_IMAGE=mcr.microsoft.com/mssql/rhel/server:2025-latest -t sqlserver-ollama:2025-rhel .
 
+# With Polybase enabled
+docker build --build-arg BASE_IMAGE=mcr.microsoft.com/mssql/rhel/server:2025-latest --build-arg ENABLE_POLYBASE=true -t sqlserver-ollama:2025-rhel .
+
 # Or use the build script with password (MANDATORY)
 ./build-and-run.sh --sa-password "YourStrong@Passw0rd" --base-image mcr.microsoft.com/mssql/rhel/server:2025-latest
+
+# With Polybase
+./build-and-run.sh --sa-password "YourStrong@Passw0rd" --base-image mcr.microsoft.com/mssql/rhel/server:2025-latest --polybase true
 ```
 
 **Run the container:**
@@ -336,9 +830,12 @@ docker run -d \
   -e MSSQL_PID=Developer \
   -p 1433:1433 \
   -p 11435:11435 \
+  -p 9000:9000 \
+  -p 9001:9001 \
   -v sqlserver_data:/var/opt/mssql \
   -v ollama_data:/root/.ollama \
   -v caddy_data:/root/.local/share/caddy \
+  -v minio_data:/minio/data \
   sqlserver-ollama:2025
 ```
 
@@ -353,6 +850,13 @@ curl -k https://localhost:11435/api/embeddings -d '{
   "model": "nomic-embed-text",
   "prompt": "Hello, world!"
 }'
+
+# Test MinIO API (now uses HTTPS)
+curl -k https://localhost:9000/minio/health/live
+
+# Access MinIO Console
+# Open browser to https://localhost:9001
+# Login with minioadmin/minioadmin
 ```
 
 ### Sharing Your Container
@@ -648,15 +1152,17 @@ In our testing, this integrated container provides:
 
 - **Build Time**: 
   - First build (cold cache): Up to 10 minutes when base container image and Ollama models need to be downloaded
+  - With Polybase: Add 1-2 minutes for additional package installation
   - Rebuild: 2-3 minutes with cached base image
   - Cached build: Very quick (<1 minute) when base image and models are already pulled
-- **Startup Time**: 30-60 seconds (with pre-pulled model)
+- **Startup Time**: 45-75 seconds (with pre-pulled model and MinIO initialization)
 - **Embedding Generation**: ~50ms per request (nomic-embed-text)
 - **SQL Query Performance**: Native SQL Server performance
-- **Memory Footprint**: ~6GB with one model loaded
-- **Disk Usage**: ~15GB with SQL Server + Ollama + one model
+- **MinIO Throughput**: Depends on disk I/O; typically 100+ MB/s for local volumes
+- **Memory Footprint**: ~6-7GB with one model loaded and MinIO running
+- **Disk Usage**: ~15-16GB with SQL Server + Ollama + MinIO + one model
 
-**Note**: The first-time build can be lengthy due to downloading the SQL Server 2025 base image (~1.5GB) and pulling the Ollama `nomic-embed-text` model. Subsequent builds benefit from Docker's layer caching and pre-pulled models.
+**Note**: The first-time build can be lengthy due to downloading the SQL Server 2025 base image (~1.5GB), MinIO binary, and pulling the Ollama `nomic-embed-text` model. Subsequent builds benefit from Docker's layer caching and pre-pulled models.
 
 ## Future Enhancements
 
@@ -670,6 +1176,8 @@ In our testing, this integrated container provides:
 7. **Vector Index Support**: Native vector similarity search in SQL Server
 8. **Monitoring Dashboard**: Web UI showing service status and metrics
 9. **Auto-scaling**: Dynamic model loading based on demand
+10. **MinIO Replication**: Multi-node MinIO setup for high availability
+11. **Advanced Polybase**: Additional connectors for various data sources
 
 ### A Learning Sample, Not a Production Solution
 **Important Note**: This is a sample solution designed for learning and experimentation purposes. It demonstrates integration patterns and architectural concepts but is **not production-ready**. Use this as a starting point to understand the technologies and build a more robust, enterprise-grade solution tailored to your specific requirements.
@@ -680,19 +1188,22 @@ While I appreciate ideas and feedback from the community, please note that I may
 - Integration patterns with different frameworks
 - Containerization best practices
 - Azure deployment examples
+- MinIO bucket policies and access control
+- Polybase performance optimization
 
 Feel free to fork this solution and adapt it for your needs!
 
 ## Conclusion
 
-Building this all-in-one SQL Server + AI container has been an exciting journey into the intersection of traditional databases and modern AI capabilities. By combining SQL Server 2025, Ollama, and Caddy into a single container, we've created a solution that is:
+Building this all-in-one SQL Server + AI + Object Storage container has been an exciting journey into the intersection of traditional databases, modern AI capabilities, and cloud-native storage. By combining SQL Server 2025, Ollama, MinIO, and Caddy into a single container, we've created a solution that is:
 
 - **Secure**: HTTPS everywhere, proper user isolation, trusted certificates
 - **Simple**: One container, one command, ready to go
-- **Powerful**: Full SQL Server + AI embeddings + secure proxy
-- **Flexible**: Easy to extend with more models and configurations
+- **Powerful**: Full SQL Server + AI embeddings + S3-compatible storage + secure proxy
+- **Flexible**: Easy to extend with more models, Polybase connectors, and configurations
+- **Complete**: Structured data (SQL), unstructured data (MinIO), and AI (Ollama) in one place
 
-Whether you're building a semantic search engine, processing documents with AI, or experimenting with hybrid SQL/AI workloads, this container provides a solid foundation.
+Whether you're building a semantic search engine, processing documents with AI, storing model artifacts in object storage, or experimenting with hybrid SQL/AI/Storage workloads, this container provides a solid foundation.
 
 ## Get Started Today
 
@@ -718,7 +1229,10 @@ All the code, scripts, and documentation are available:
 # The script will build the image AND run the container
 ./build-and-run.sh --sa-password "YourSecure@Pass123"
 
-# Start building AI-powered database applications!
+# With Polybase for MinIO integration
+./build-and-run.sh --sa-password "YourSecure@Pass123" --polybase true
+
+# Start building AI-powered database applications with object storage!
 ```
 
 **Option 2: Manual**
@@ -735,9 +1249,12 @@ docker run -d \
   -e MSSQL_PID=Developer \
   -p 1433:1433 \
   -p 11435:11435 \
+  -p 9000:9000 \
+  -p 9001:9001 \
   -v sqlserver_data:/var/opt/mssql \
   -v ollama_data:/root/.ollama \
   -v caddy_data:/root/.local/share/caddy \
+  -v minio_data:/minio/data \
   sqlserver-ollama:2025
 ```
 
@@ -754,7 +1271,7 @@ Have you built something similar? Found a better approach? I'd love to hear from
 
 ## Tags
 
-`#SQLServer` `#AI` `#Docker` `#Ollama` `#Embeddings` `#MachineLearning` `#DevOps` `#Containers` `#HTTPS` `#Caddy` `#DatabaseEngineering` `#InfrastructureAsCode`
+`#SQLServer` `#AI` `#Docker` `#Ollama` `#Embeddings` `#MachineLearning` `#DevOps` `#Containers` `#HTTPS` `#Caddy` `#MinIO` `#ObjectStorage` `#S3` `#Polybase` `#DatabaseEngineering` `#InfrastructureAsCode`
 
 ---
 

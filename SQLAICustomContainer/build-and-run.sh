@@ -11,9 +11,10 @@ IMAGE_TAG="2025"
 CONTAINER_NAME="sqlserver-ollama"
 SA_PASSWORD=""
 MSSQL_PID="Developer"
-MEMORY_LIMIT="8g"
+MEMORY_LIMIT="32g"
 MEMORY_RESERVATION="4g"
 BASE_IMAGE="mcr.microsoft.com/mssql/server:2025-latest"
+ENABLE_POLYBASE="false"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -46,6 +47,10 @@ while [[ $# -gt 0 ]]; do
             BASE_IMAGE="$2"
             shift 2
             ;;
+        --polybase)
+            ENABLE_POLYBASE="$2"
+            shift 2
+            ;;
         --help)
             echo "Usage: ./build-and-run.sh [OPTIONS]"
             echo ""
@@ -57,13 +62,14 @@ while [[ $# -gt 0 ]]; do
             echo "  --edition EDITION       SQL Server edition: Developer, Express, Standard, Enterprise (default: Developer)"
             echo "  --memory SIZE           Memory limit (default: 8g)"
             echo "  --base-image IMAGE      Base SQL Server image (default: mcr.microsoft.com/mssql/server:2025-latest)"
+            echo "  --polybase BOOL         Enable SQL Server Polybase: true or false (default: false)"
             echo "  --help                  Show this help message"
             echo ""
             echo "Examples:"
-            echo "  ./build-and-run.sh"
             echo "  ./build-and-run.sh --sa-password 'MySecure@Pass123'"
-            echo "  ./build-and-run.sh --image-name myuser/sqlserver-ollama --tag latest"
-            echo "  ./build-and-run.sh --base-image mcr.microsoft.com/mssql/server:2025-latest-rhel"
+            echo "  ./build-and-run.sh --sa-password 'MySecure@Pass123' --polybase true"
+            echo "  ./build-and-run.sh --sa-password 'MySecure@Pass123' --image-name myuser/sqlserver-ollama --tag latest"
+            echo "  ./build-and-run.sh --sa-password 'MySecure@Pass123' --base-image mcr.microsoft.com/mssql/server:2025-latest-rhel"
             exit 0
             ;;
         *)
@@ -89,19 +95,20 @@ if [ -z "${SA_PASSWORD}" ]; then
 fi
 
 echo "=========================================="
-echo "SQL Server + Ollama + Caddy Container"
+echo "SQL Server + Ollama + Caddy + MinIO Container"
 echo "=========================================="
 echo "Base Image: ${BASE_IMAGE}"
 echo "Output Image: ${FULL_IMAGE_NAME}"
 echo "Container: ${CONTAINER_NAME}"
 echo "SQL Edition: ${MSSQL_PID}"
+echo "Polybase Enabled: ${ENABLE_POLYBASE}"
 echo "Memory: ${MEMORY_LIMIT}"
 echo "=========================================="
 echo ""
 
 # Build the image
 echo "Building Docker image..."
-docker build --build-arg BASE_IMAGE="${BASE_IMAGE}" -t "${FULL_IMAGE_NAME}" .
+docker build --build-arg BASE_IMAGE="${BASE_IMAGE}" --build-arg ENABLE_POLYBASE="${ENABLE_POLYBASE}" -t "${FULL_IMAGE_NAME}" .
 
 if [ $? -ne 0 ]; then
     echo "Error: Docker build failed"
@@ -129,9 +136,12 @@ docker run -d \
     -e MSSQL_PID="${MSSQL_PID}" \
     -p 1433:1433 \
     -p 11435:11435 \
+    -p 9001:9001 \
+    -p 9000:9000 \
     -v sqlserver_data:/var/opt/mssql \
     -v ollama_data:/root/.ollama \
     -v caddy_data:/root/.local/share/caddy \
+    -v minio_data:/minio/data \
     "${FULL_IMAGE_NAME}"
 
 if [ $? -ne 0 ]; then
@@ -146,8 +156,10 @@ echo "=========================================="
 echo "Container name: ${CONTAINER_NAME}"
 echo ""
 echo "Services:"
-echo "  • SQL Server:      localhost:1433"
-echo "  • Ollama (HTTPS):  https://localhost:11435"
+echo "  • SQL Server:       localhost:1433"
+echo "  • Ollama (HTTPS):   https://localhost:11435"
+echo "  • MinIO API:        https://localhost:9000 (TLS enabled)"
+echo "  • MinIO Console:    https://localhost:9001"
 echo ""
 echo "SQL Server credentials:"
 echo "  • Username: sa"

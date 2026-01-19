@@ -1,6 +1,7 @@
 # Base OS layer: SQL Server 2025 (Ubuntu or RHEL)
 # Can be overridden with --build-arg BASE_IMAGE=<image>
 ARG BASE_IMAGE=mcr.microsoft.com/mssql/server:2025-latest
+ARG ENABLE_POLYBASE=false
 FROM ${BASE_IMAGE}
 
 # Switch to root for installations
@@ -43,6 +44,26 @@ RUN if [ -f /etc/debian_version ]; then \
         echo "Warning: Unknown base OS, skipping FTS installation"; \
     fi
 
+# Install SQL Server Polybase if enabled
+ARG ENABLE_POLYBASE=false
+RUN if [ "${ENABLE_POLYBASE}" = "true" ]; then \
+        echo "Polybase installation enabled" && \
+        if [ -f /etc/debian_version ]; then \
+            # Ubuntu/Debian-based image
+            echo "Installing Polybase for Ubuntu/Debian" && \
+            apt-get update && \
+            apt-get install -y mssql-server-polybase && \
+            rm -rf /var/lib/apt/lists/*; \
+        elif [ -f /etc/redhat-release ]; then \
+            # RHEL-based image
+            echo "Installing Polybase for RHEL" && \
+            yum install -y mssql-server-polybase && \
+            yum clean all; \
+        fi; \
+    else \
+        echo "Polybase installation skipped"; \
+    fi
+
 # Install Caddy (works for both Ubuntu and RHEL)
 RUN if [ -f /etc/debian_version ]; then \
         # Ubuntu/Debian - install Caddy via apt
@@ -61,6 +82,24 @@ RUN if [ -f /etc/debian_version ]; then \
 
 # Install Ollama
 RUN curl -fsSL https://ollama.com/install.sh | sh
+
+# Install MinIO (works for both Ubuntu and RHEL)
+RUN if [ -f /etc/debian_version ]; then \
+        # Ubuntu/Debian - install MinIO binary
+        echo "Installing MinIO for Ubuntu/Debian" && \
+        wget https://dl.min.io/server/minio/release/linux-amd64/minio -O /usr/local/bin/minio && \
+        chmod +x /usr/local/bin/minio; \
+    elif [ -f /etc/redhat-release ]; then \
+        # RHEL - install MinIO binary
+        echo "Installing MinIO for RHEL" && \
+        wget https://dl.min.io/server/minio/release/linux-amd64/minio -O /usr/local/bin/minio && \
+        chmod +x /usr/local/bin/minio; \
+    fi
+
+# Create MinIO directories
+RUN mkdir -p /minio/data && \
+    mkdir -p /root/.minio/certs && \
+    chmod -R 755 /minio
 
 # Create Caddyfile for reverse proxy configuration
 RUN mkdir -p /etc/caddy
@@ -84,18 +123,34 @@ https://localhost:11435 {
         format console
     }
 }
+
+https://localhost:9001 {
+    # Use internal CA for self-signed certificates
+    tls internal
+    
+    # Reverse proxy to MinIO Console
+    reverse_proxy localhost:9002
+    
+    # Enable logging
+    log {
+        output stdout
+        format console
+    }
+}
 EOF
 
 # Create SQL Server certificate directory
 RUN mkdir -p /var/opt/mssql/security/ca-certificates
 
 # Create startup script that will:
-# 1. Start Ollama in background
-# 2. Pull the model
-# 3. Start Caddy
-# 4. Copy Caddy certificate to SQL Server cert directory
-# 5. Update CA certificates
-# 6. Start SQL Server
+# 1. Generate MinIO TLS certificates
+# 2. Start MinIO in background with TLS
+# 3. Start Ollama in background
+# 4. Pull the model
+# 5. Start Caddy
+# 6. Copy Caddy and MinIO certificates to SQL Server cert directory
+# 7. Update CA certificates
+# 8. Start SQL Server
 RUN cat > /opt/start-services.sh << 'EOF'
 #!/bin/bash
 set -e
@@ -104,7 +159,64 @@ set -e
 echo "Setting up directory permissions..."
 mkdir -p /root/.ollama
 mkdir -p /var/opt/mssql/security/ca-certificates
+mkdir -p /minio/data
+mkdir -p /root/.minio/certs
 chown -R mssql:root /var/opt/mssql
+
+# Generate self-signed certificate for MinIO
+echo "Generating TLS certificate for MinIO..."
+openssl req -new -newkey rsa:2048 -days 3650 -nodes -x509 \
+    -subj "/C=US/ST=State/L=City/O=Organization/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost,DNS:minio,IP:127.0.0.1" \
+    -keyout /root/.minio/certs/private.key \
+    -out /root/.minio/certs/public.crt
+
+chmod 644 /root/.minio/certs/public.crt
+chmod 600 /root/.minio/certs/private.key
+
+echo "MinIO TLS certificate generated successfully"
+
+# Copy MinIO certificate to SQL Server certificate directory
+echo "Copying MinIO certificate to SQL Server CA store..."
+cp /root/.minio/certs/public.crt \
+   /var/opt/mssql/security/ca-certificates/minio-cert.crt
+chown mssql:root /var/opt/mssql/security/ca-certificates/minio-cert.crt
+chmod 644 /var/opt/mssql/security/ca-certificates/minio-cert.crt
+
+# Copy MinIO certificate to system-wide CA store
+if [ -f /etc/debian_version ]; then
+    # Ubuntu/Debian
+    echo "Detected Ubuntu/Debian - adding MinIO cert to system CA store..."
+    mkdir -p /usr/local/share/ca-certificates
+    cp /root/.minio/certs/public.crt \
+       /usr/local/share/ca-certificates/minio-cert.crt
+elif [ -f /etc/redhat-release ]; then
+    # RHEL/CentOS
+    echo "Detected RHEL - adding MinIO cert to system CA store..."
+    mkdir -p /etc/pki/ca-trust/source/anchors
+    cp /root/.minio/certs/public.crt \
+       /etc/pki/ca-trust/source/anchors/minio-cert.crt
+fi
+
+# Set default MinIO credentials if not provided
+export MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+export MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
+
+echo "Starting MinIO service with TLS..."
+# Start MinIO server in background with TLS enabled (console on port 9002, will be proxied to 9001 via HTTPS)
+MINIO_ROOT_USER=$MINIO_ROOT_USER MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD \
+minio server /minio/data --address :9000 --console-address :9002 &
+MINIO_PID=$!
+
+# Wait for MinIO to be ready
+echo "Waiting for MinIO to start..."
+for i in {1..30}; do
+    if curl -k -s https://localhost:9000/minio/health/live >/dev/null 2>&1; then
+        echo "MinIO is ready (TLS enabled)"
+        break
+    fi
+    sleep 2
+done
 
 echo "Starting Ollama service..."
 # Start Ollama in background as root
@@ -186,6 +298,14 @@ else
     fi
 fi
 
+# Update CA certificates for both Caddy and MinIO certs
+echo "Updating system CA certificates..."
+if [ -f /etc/debian_version ]; then
+    update-ca-certificates
+elif [ -f /etc/redhat-release ]; then
+    update-ca-trust
+fi
+
 echo "All services started. Starting SQL Server..."
 # Start SQL Server as mssql user (this will run in foreground)
 # Use su to switch to mssql user for SQL Server process only
@@ -209,7 +329,9 @@ RUN (ollama serve &) && \
 # Expose ports
 # 1433: SQL Server
 # 11435: HTTPS proxy for Ollama
-EXPOSE 1433 11435
+# 9000: MinIO API
+# 9001: MinIO Console (HTTPS via Caddy)
+EXPOSE 1433 11435 9000 9001
 
 # Keep running as root since we're orchestrating multiple services
 # SQL Server will be started with proper user via sqlservr
