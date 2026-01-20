@@ -120,45 +120,17 @@ The container supports seven different deployment configurations:
 
 ## Key Features
 
-### 🎛️ Flexible Deployment
-- Choose exactly which components you need
-- Minimal resource footprint for simple deployments
-- Full-featured stack available when needed
-- Single container image supports all configurations
-- Build-time component selection
+**Flexible Deployment**: Choose from 7 configurations ranging from minimal SQL+FTS (~3.5GB) to full-stack (~5.8GB) with optional Ollama, MinIO, and Polybase installation controlled via build parameters.
 
-### 🔒 Security First
-- SQL Server runs as unprivileged `mssql` user
-- HTTPS encryption for AI model API calls (when Ollama enabled)
-- MinIO TLS encryption with automatic certificate generation (when MinIO enabled)
-- Automatic certificate management
-- System-wide CA trust store integration
+**Security First**: SQL Server runs as unprivileged mssql user, HTTPS encryption for all services with Caddy auto-generating trusted local certificates, automatic CA trust store integration, and TLS for MinIO/Ollama when enabled.
 
-### 🎯 Intelligent OS Detection
-- Automatically detects Ubuntu/Debian or RHEL/CentOS base
-- Uses appropriate package managers (apt-get vs yum/dnf)
-- Single Dockerfile works with multiple base images
-- Proper repository configuration for each OS
+**Intelligent OS Detection**: Single Dockerfile automatically detects Ubuntu/Debian or RHEL/CentOS base images and selects the appropriate package manager (apt-get vs yum) with correct repository configuration.
 
-### 🚀 Performance Optimized
-- AI model pre-pulled during image build (when Ollama enabled)
-- Single container reduces network latency
-- Direct in-memory communication between services
-- Efficient resource utilization
-- Only install what you need
+**Performance Optimized**: AI models pre-pulled during build, single-container architecture reduces network latency, direct in-memory service communication, efficient resource utilization, and component-based installation.
 
-### 📦 Production Ready
-- Persistent volumes for data (and models/objects when enabled)
-- Configurable memory limits
-- Comprehensive logging
-- Health check compatible
-- Conditional service startup
+**Production Ready**: Persistent volumes for data/models/objects, configurable memory limits, comprehensive logging, health check compatible, and conditional service startup based on installed components.
 
-### 🔧 Developer Friendly
-- Single build script with clear parameters
-- Automated startup orchestration
-- Clear documentation and examples
-- Easy to extend with additional models or features
+**Developer Friendly**: Single build script with clear parameters, automated startup orchestration, detailed documentation with examples, and easy extensibility for additional models or Polybase connectors.
 
 ## Deployment Configuration Examples
 
@@ -193,162 +165,6 @@ The container's flexibility allows you to deploy exactly what you need:
 
 *Approximate compressed image size
 **Typical runtime memory usage under light load
-
-## Implementation Highlights
-
-### Conditional Component Installation
-
-The Dockerfile uses build arguments to conditionally install components:
-
-```dockerfile
-ARG INSTALL_OLLAMA=true
-ARG INSTALL_MINIO=false
-ARG ENABLE_POLYBASE=false
-
-# Install Ollama if enabled
-RUN if [ "${INSTALL_OLLAMA}" = "true" ]; then \
-        curl -fsSL https://ollama.com/install.sh | sh; \
-    fi
-
-# Install MinIO if enabled  
-RUN if [ "${INSTALL_MINIO}" = "true" ]; then \
-        wget https://dl.min.io/server/minio/release/linux-amd64/minio && \
-        chmod +x minio && \
-        mkdir -p /minio/data /root/.minio/certs; \
-    fi
-```
-
-Benefits:
-- **Reduced image size** when components aren't needed
-- **Faster builds** skipping unused software
-- **Lower attack surface** with minimal installations
-- **Flexible deployment** matching your requirements
-
-### Dynamic Caddy Configuration
-
-Caddyfile generation adapts to installed components:
-
-```dockerfile
-RUN echo "{ local_certs }" > /etc/caddy/Caddyfile && \
-    if [ "${INSTALL_OLLAMA}" = "true" ]; then \
-        # Add Ollama HTTPS proxy configuration
-    fi && \
-    if [ "${INSTALL_MINIO}" = "true" ]; then \
-        # Add MinIO Console HTTPS proxy configuration
-    fi
-```
-
-This ensures Caddy only proxies services that are actually installed.
-
-### Intelligent OS Detection
-
-One of the most powerful features of this solution is its ability to work with both Ubuntu and RHEL base images without any code changes. The Dockerfile intelligently detects the operating system at build time:
-
-```dockerfile
-RUN if [ -f /etc/debian_version ]; then \
-        # Ubuntu/Debian detected
-        apt-get update && \
-        apt-get install -y mssql-server-fts && \
-        # Add Ubuntu repositories
-        wget -qO- https://packages.microsoft.com/.../ubuntu/22.04/mssql-server-2025.list
-    elif [ -f /etc/redhat-release ]; then \
-        # RHEL detected
-        yum install -y mssql-server-fts && \
-        # Add RHEL repositories
-        curl -o /etc/yum.repos.d/mssql-server.repo https://packages.microsoft.com/.../rhel/9/mssql-server-2025.repo
-    fi
-```
-
-This means:
-- **Same Dockerfile** works for both Ubuntu and RHEL
-- **Automatic package manager selection** (apt-get vs yum/dnf)
-- **Correct repository configuration** for SQL Server 2025 FTS
-- **Build-time OS detection** with no runtime overhead
-
-### The Startup Orchestration
-
-The startup script dynamically adjusts based on installed components:
-
-```bash
-1. Setup directory permissions
-2. [If MinIO] Generate TLS certificates and start MinIO
-3. [If Ollama] Start Ollama service and pull models
-4. Start Caddy with dynamic configuration
-5. Copy certificates to SQL Server trust store (if needed)
-6. Update system CA certificates
-7. Start SQL Server as mssql user
-```
-
-This sequence ensures that:
-- Only enabled services are started
-- Services start in dependency order
-- Certificates are generated before SQL Server starts (when needed)
-- SQL Server trusts the required CAs
-- Each service has proper permissions
-
-### Certificate Trust Chain
-
-A unique aspect of this solution is how we establish trust between SQL Server and the Ollama HTTPS endpoint:
-
-```bash
-# Caddy generates certificates
-/root/.local/share/caddy/pki/authorities/local/root.crt
-
-# Copy to SQL Server certificate directory
-→ /var/opt/mssql/security/ca-certificates/caddy-root.crt
-
-# Update system-wide CA trust
-→ update-ca-certificates
-
-# SQL Server can now trust HTTPS calls to Ollama
-```
-
-This enables SQL Server to make secure HTTPS calls to Ollama for AI operations without certificate validation errors.
-
-### MinIO Object Storage Integration
-
-MinIO provides enterprise-grade, S3-compatible object storage that seamlessly integrates with SQL Server through Polybase. This integration enables:
-
-**Key Benefits:**
-- **Unstructured Data Storage**: Store documents, images, videos, and model artifacts
-- **SQL Server Integration**: Query object storage data directly using SQL via Polybase external tables
-- **S3 Compatibility**: Works with any S3-compatible client or SDK
-- **Persistent Storage**: Data persisted in Docker volume for durability
-- **Secure Access**: Web console secured via Caddy HTTPS proxy
-- **TLS Encryption**: All MinIO API traffic encrypted with auto-generated certificates
-
-**Important Prerequisites for Polybase Integration:**
-- ⚠️ **Trace flag 13702 required**: Polybase on SQL Server for Linux requires trace flag 13702
-- ⚠️ **TLS enabled**: MinIO must have TLS enabled for SQL Server Polybase connectivity
-- ⚠️ **Certificate trust**: MinIO certificate must be in SQL Server's trusted CA store
-
-**MinIO Architecture:**
-```
-MinIO Server (Port 9000)  ←→  S3 API Access (HTTPS/TLS Enabled)
-     ↓
-MinIO Console (Port 9002) → Caddy HTTPS Proxy (Port 9001)
-     ↓
-Persistent Volume: /minio/data
-     ↓
-TLS Certificates: /root/.minio/certs/
-```
-
-**Default Credentials:**
-- Username: `minioadmin`
-- Password: `minioadmin`
-- Console URL: `https://localhost:9001`
-- API Endpoint: `https://localhost:9000` (TLS enabled with self-signed certificate)
-
-**TLS and Certificate Management:**
-- MinIO automatically generates self-signed TLS certificates on container startup
-- Certificates stored in `/root/.minio/certs/` (private.key and public.crt)
-- Public certificate automatically copied to:
-  - SQL Server CA store: `/var/opt/mssql/security/ca-certificates/minio-cert.crt`
-  - System CA store (Ubuntu): `/usr/local/share/ca-certificates/minio-cert.crt`
-  - System CA store (RHEL): `/etc/pki/ca-trust/source/anchors/minio-cert.crt`
-- System CA certificates updated automatically to trust MinIO certificate
-
-**Important Security Note**: Change default credentials in production by setting environment variables `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD` in the startup script or via Docker environment variables.
 
 ## Real-World Use Cases
 
@@ -1333,6 +1149,162 @@ In our testing, this integrated container provides:
 - **Disk Usage**: ~15-16GB with SQL Server + Ollama + MinIO + one model
 
 **Note**: The first-time build can be lengthy due to downloading the SQL Server 2025 base image (~1.5GB), MinIO binary, and pulling the Ollama `nomic-embed-text` model. Subsequent builds benefit from Docker's layer caching and pre-pulled models.
+
+## Implementation Highlights
+
+### Conditional Component Installation
+
+The Dockerfile uses build arguments to conditionally install components:
+
+```dockerfile
+ARG INSTALL_OLLAMA=true
+ARG INSTALL_MINIO=false
+ARG ENABLE_POLYBASE=false
+
+# Install Ollama if enabled
+RUN if [ "${INSTALL_OLLAMA}" = "true" ]; then \
+        curl -fsSL https://ollama.com/install.sh | sh; \
+    fi
+
+# Install MinIO if enabled  
+RUN if [ "${INSTALL_MINIO}" = "true" ]; then \
+        wget https://dl.min.io/server/minio/release/linux-amd64/minio && \
+        chmod +x minio && \
+        mkdir -p /minio/data /root/.minio/certs; \
+    fi
+```
+
+Benefits:
+- **Reduced image size** when components aren't needed
+- **Faster builds** skipping unused software
+- **Lower attack surface** with minimal installations
+- **Flexible deployment** matching your requirements
+
+### Dynamic Caddy Configuration
+
+Caddyfile generation adapts to installed components:
+
+```dockerfile
+RUN echo "{ local_certs }" > /etc/caddy/Caddyfile && \
+    if [ "${INSTALL_OLLAMA}" = "true" ]; then \
+        # Add Ollama HTTPS proxy configuration
+    fi && \
+    if [ "${INSTALL_MINIO}" = "true" ]; then \
+        # Add MinIO Console HTTPS proxy configuration
+    fi
+```
+
+This ensures Caddy only proxies services that are actually installed.
+
+### Intelligent OS Detection
+
+One of the most powerful features of this solution is its ability to work with both Ubuntu and RHEL base images without any code changes. The Dockerfile intelligently detects the operating system at build time:
+
+```dockerfile
+RUN if [ -f /etc/debian_version ]; then \
+        # Ubuntu/Debian detected
+        apt-get update && \
+        apt-get install -y mssql-server-fts && \
+        # Add Ubuntu repositories
+        wget -qO- https://packages.microsoft.com/.../ubuntu/22.04/mssql-server-2025.list
+    elif [ -f /etc/redhat-release ]; then \
+        # RHEL detected
+        yum install -y mssql-server-fts && \
+        # Add RHEL repositories
+        curl -o /etc/yum.repos.d/mssql-server.repo https://packages.microsoft.com/.../rhel/9/mssql-server-2025.repo
+    fi
+```
+
+This means:
+- **Same Dockerfile** works for both Ubuntu and RHEL
+- **Automatic package manager selection** (apt-get vs yum/dnf)
+- **Correct repository configuration** for SQL Server 2025 FTS
+- **Build-time OS detection** with no runtime overhead
+
+### The Startup Orchestration
+
+The startup script dynamically adjusts based on installed components:
+
+```bash
+1. Setup directory permissions
+2. [If MinIO] Generate TLS certificates and start MinIO
+3. [If Ollama] Start Ollama service and pull models
+4. Start Caddy with dynamic configuration
+5. Copy certificates to SQL Server trust store (if needed)
+6. Update system CA certificates
+7. Start SQL Server as mssql user
+```
+
+This sequence ensures that:
+- Only enabled services are started
+- Services start in dependency order
+- Certificates are generated before SQL Server starts (when needed)
+- SQL Server trusts the required CAs
+- Each service has proper permissions
+
+### Certificate Trust Chain
+
+A unique aspect of this solution is how we establish trust between SQL Server and the Ollama HTTPS endpoint:
+
+```bash
+# Caddy generates certificates
+/root/.local/share/caddy/pki/authorities/local/root.crt
+
+# Copy to SQL Server certificate directory
+→ /var/opt/mssql/security/ca-certificates/caddy-root.crt
+
+# Update system-wide CA trust
+→ update-ca-certificates
+
+# SQL Server can now trust HTTPS calls to Ollama
+```
+
+This enables SQL Server to make secure HTTPS calls to Ollama for AI operations without certificate validation errors.
+
+### MinIO Object Storage Integration
+
+MinIO provides enterprise-grade, S3-compatible object storage that seamlessly integrates with SQL Server through Polybase. This integration enables:
+
+**Key Benefits:**
+- **Unstructured Data Storage**: Store documents, images, videos, and model artifacts
+- **SQL Server Integration**: Query object storage data directly using SQL via Polybase external tables
+- **S3 Compatibility**: Works with any S3-compatible client or SDK
+- **Persistent Storage**: Data persisted in Docker volume for durability
+- **Secure Access**: Web console secured via Caddy HTTPS proxy
+- **TLS Encryption**: All MinIO API traffic encrypted with auto-generated certificates
+
+**Important Prerequisites for Polybase Integration:**
+- ⚠️ **Trace flag 13702 required**: Polybase on SQL Server for Linux requires trace flag 13702
+- ⚠️ **TLS enabled**: MinIO must have TLS enabled for SQL Server Polybase connectivity
+- ⚠️ **Certificate trust**: MinIO certificate must be in SQL Server's trusted CA store
+
+**MinIO Architecture:**
+```
+MinIO Server (Port 9000)  ←→  S3 API Access (HTTPS/TLS Enabled)
+     ↓
+MinIO Console (Port 9002) → Caddy HTTPS Proxy (Port 9001)
+     ↓
+Persistent Volume: /minio/data
+     ↓
+TLS Certificates: /root/.minio/certs/
+```
+
+**Default Credentials:**
+- Username: `minioadmin`
+- Password: `minioadmin`
+- Console URL: `https://localhost:9001`
+- API Endpoint: `https://localhost:9000` (TLS enabled with self-signed certificate)
+
+**TLS and Certificate Management:**
+- MinIO automatically generates self-signed TLS certificates on container startup
+- Certificates stored in `/root/.minio/certs/` (private.key and public.crt)
+- Public certificate automatically copied to:
+  - SQL Server CA store: `/var/opt/mssql/security/ca-certificates/minio-cert.crt`
+  - System CA store (Ubuntu): `/usr/local/share/ca-certificates/minio-cert.crt`
+  - System CA store (RHEL): `/etc/pki/ca-trust/source/anchors/minio-cert.crt`
+- System CA certificates updated automatically to trust MinIO certificate
+
+**Important Security Note**: Change default credentials in production by setting environment variables `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD` in the startup script or via Docker environment variables.
 
 ## Future Enhancements
 
