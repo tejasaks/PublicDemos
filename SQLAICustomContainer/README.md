@@ -252,6 +252,8 @@ docker run -d \
 
 ## Quick Start
 
+### Running the Container
+
 1. **Check logs:**
    ```bash
    docker logs -f sqlserver-ollama
@@ -521,6 +523,38 @@ Then install it on your system:
 - **Windows**: Double-click → Install Certificate → Trusted Root Certification Authorities
 - **Linux**: Copy to `/usr/local/share/ca-certificates/` and run `sudo update-ca-certificates`
 - **macOS**: Add to Keychain Access → System → Certificates
+
+## Testing
+
+### Automated Test Suite
+
+A comprehensive test suite is available to validate all deployment configurations:
+
+```bash
+cd tests
+export SA_PASSWORD='YourComplexPass@123'
+./run-all-tests.sh
+```
+
+The test suite validates:
+- ✅ Docker and SQL Server tools installation
+- ✅ All 14 deployment scenarios (7 configurations × 2 base images)
+- ✅ SQL Server connectivity and basic queries
+- ✅ Automatic cleanup of test resources
+
+**Quick test options:**
+```bash
+# Prerequisites only
+./test-prerequisites.sh
+
+# Deployments only
+./test-deployments.sh
+
+# Cleanup test resources
+./cleanup.sh
+```
+
+📖 **See [tests/README.md](tests/README.md) for complete testing documentation**
 
 ## Troubleshooting
 
