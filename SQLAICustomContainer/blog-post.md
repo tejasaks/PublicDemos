@@ -1,25 +1,29 @@
-# Building an AI-Powered SQL Server Container: Combining SQL Server 2025, Ollama, MinIO, and Caddy for Secure Embeddings and Object Storage
+# Building an AI-Powered SQL Server Container: Combining SQL Server 2025 with Optional Ollama, MinIO, and Caddy for Flexible AI and Storage Solutions
+
+> **📖 Quick Reference**: For detailed setup instructions, configuration options, and troubleshooting, see the [README](README.md).
 
 ## Introduction
 
-In the rapidly evolving landscape of AI and data management, the need to combine traditional database systems with modern AI capabilities has never been more critical. Today, I'm excited to share an example of a solution that bridges this gap: a custom Docker container that seamlessly integrates SQL Server 2025, Ollama (an AI model runtime), MinIO (S3-compatible object storage), and Caddy (a modern HTTPS proxy server) into a single, deployable unit.
+In the rapidly evolving landscape of AI and data management, the need to combine traditional database systems with modern AI capabilities and object storage has never been more critical. Today, I'm excited to share a flexible solution that bridges this gap: a custom Docker container that integrates SQL Server 2025 with optional Ollama (AI model runtime), MinIO (S3-compatible object storage), and Caddy (HTTPS proxy server) components—all configurable based on your specific needs.
 
-This solution enables you to run AI embeddings and large language models directly alongside your SQL Server database, with S3-compatible object storage for unstructured data, secure HTTPS communication, Full-Text Search capabilities, and proper certificate management—all within one container. Plus, it intelligently adapts to both Ubuntu and RHEL base images automatically.
+This solution enables you to deploy SQL Server in various configurations: from a minimal setup with just Full-Text Search, to a full-stack deployment with AI embeddings, object storage, and external data connectivity through Polybase. All with secure HTTPS communication, proper certificate management, and automatic adaptation to both Ubuntu and RHEL base images.
 
 ## The Challenge
 
 Modern applications increasingly require:
 - **Relational database capabilities** for structured data storage
-- **AI/ML model inference** for embeddings, semantic search, and natural language processing
-- **Object storage** for unstructured data like documents, images, and model artifacts
+- **AI/ML model inference** (optional) for embeddings, semantic search, and natural language processing
+- **Object storage** (optional) for unstructured data like documents, images, and model artifacts
+- **External data connectivity** (optional) for querying data stored in object storage
 - **Secure communication** between services, especially in production environments
-- **Simple deployment** that doesn't require complex orchestration
+- **Flexible deployment** that doesn't require all components when not needed
+- **Simple configuration** without complex orchestration
 
-Traditionally, these would require multiple containers, complex networking configurations, and significant DevOps overhead. What if we could package everything into a single, reusable container image?
+Traditionally, you'd either deploy a monolithic solution with all components (wasting resources) or manage multiple containers with complex networking. What if you could have the best of both worlds—a single container image that adapts to your exact requirements?
 
 ## The Solution Architecture
 
-Our custom container combines four powerful components:
+Our custom container provides flexible deployment with optional components:
 
 ```
 ┌────────────────────────────────────────────────────────────┐
@@ -28,72 +32,105 @@ Our custom container combines four powerful components:
 ├────────────────────────────────────────────────────────────┤
 │                                                             │
 │  ┌──────────────┐         ┌────────────────┐             │
-│  │ SQL Server   │         │ Ollama Runtime │             │
+│  │ SQL Server   │         │ Ollama Runtime │ (Optional)  │
 │  │ 2025 + FTS   │         │ + nomic-embed  │             │
 │  │ + Polybase*  │         │ Port: 11434    │             │
 │  │ Port: 1433   │         └────────┬───────┘             │
 │  └──────────────┘                  │                      │
 │         │                           │                      │
 │         │                  ┌────────▼───────┐             │
-│         │                  │ Caddy Proxy    │             │
-│         │                  │ HTTPS:11435    │             │
-│         │                  │ HTTPS:9001     │             │
+│         │                  │ Caddy Proxy    │ (Always)   │
+│         │                  │ HTTPS:11435*   │             │
+│         │                  │ HTTPS:9001*    │             │
 │         │                  └────────┬───────┘             │
 │         │                           │                      │
 │    Trusted CA ◄────────────────────┘                      │
 │    Certificates                                            │
 │                                                             │
 │  ┌────────────────────────────────────┐                   │
-│  │ MinIO Object Storage               │                   │
+│  │ MinIO Object Storage               │ (Optional)        │
 │  │ S3-Compatible API (Port: 9000)     │                   │
 │  │ Web Console (Port: 9002→9001)      │                   │
 │  │ Persistent Storage: /minio/data    │                   │
 │  └────────────────────────────────────┘                   │
 │                                                             │
 │  OS Detection: Ubuntu/Debian or RHEL/CentOS               │
-│  * Polybase: Optional, enabled via build argument         │
+│  * Optional components, controlled by build args          │
 └────────────────────────────────────────────────────────────┘
           │         │            │            │
           │         │            │            │
-     Port 1433  Port 11435  Port 9000    Port 9001
+     Port 1433  Port 11435* Port 9000*   Port 9001*
    (SQL Server) (Ollama)   (MinIO API)  (MinIO HTTPS)
+   
+   * Ports only exposed when respective components are installed
 ```
+
+### Deployment Configurations
+
+The container supports seven different deployment configurations:
+
+1. **Minimal**: SQL Server + FTS only
+2. **Data Platform**: SQL + FTS + Polybase
+3. **SQL + Storage**: SQL + FTS + MinIO
+4. **Full Data Platform**: SQL + FTS + Polybase + MinIO
+5. **AI-Enabled (Default)**: SQL + FTS + Ollama
+6. **AI + Data**: SQL + FTS + Ollama + Polybase
+7. **Full Stack**: SQL + FTS + Polybase + Ollama + MinIO
 
 ### Component Breakdown
 
-**1. SQL Server 2025 (Ubuntu or RHEL Base)**
+**1. SQL Server 2025 (Ubuntu or RHEL Base)** - *Always Installed*
 - Latest SQL Server running on Ubuntu or RHEL (configurable at build time)
 - Full-Text Search (FTS) enabled for advanced text indexing and searching
 - Runs as the `mssql` user for security
 - Full T-SQL capabilities with AI integration potential
-- Trusts Caddy's CA certificates for secure outbound connections
+- Trusts Caddy's CA certificates for secure outbound connections (when Ollama or MinIO enabled)
 
-**2. Ollama AI Runtime**
+**2. Ollama AI Runtime** - *Optional (Default: Enabled)*
 - Runs the `nomic-embed-text` model (pre-pulled during build)
 - Provides REST API for embeddings generation
 - Can be extended with additional models (llama2, codellama, etc.)
 - HTTP endpoint on port 11434
+- Controlled by `--install-ollama true|false` parameter
 
-**3. Caddy HTTPS Proxy**
+**3. Caddy HTTPS Proxy** - *Always Installed*
 - Automatically generates self-signed certificates
-- Reverse proxies Ollama HTTP → HTTPS
-- Reverse proxies MinIO Console HTTP → HTTPS
+- Dynamically configured based on installed components
+- Reverse proxies Ollama HTTP → HTTPS (when Ollama enabled)
+- Reverse proxies MinIO Console HTTP → HTTPS (when MinIO enabled)
 - Certificate authority chain trusted system-wide
 - Production-ready TLS configuration
+- Lightweight with minimal resource overhead
 
-**4. MinIO Object Storage**
+**4. MinIO Object Storage** - *Optional (Default: Disabled)*
 - S3-compatible object storage service
-- REST API on port 9000
+- REST API on port 9000 with TLS encryption
 - Web console on port 9001 (HTTPS via Caddy)
 - Persistent storage at /minio/data
 - Ideal for storing unstructured data, model artifacts, and backups
 - Integrates with SQL Server via Polybase for external table access
+- Controlled by `--install-minio true|false` parameter
+
+**5. SQL Server Polybase** - *Optional (Default: Disabled)*
+- External data connectivity for querying data in object storage
+- Requires trace flag 13702 on Linux
+- Works with MinIO S3-compatible storage
+- Enables hybrid data architectures
+- Controlled by `--polybase true|false` parameter
 
 ## Key Features
 
+### 🎛️ Flexible Deployment
+- Choose exactly which components you need
+- Minimal resource footprint for simple deployments
+- Full-featured stack available when needed
+- Single container image supports all configurations
+- Build-time component selection
+
 ### 🔒 Security First
 - SQL Server runs as unprivileged `mssql` user
-- HTTPS encryption for AI model API calls
+- HTTPS encryption for AI model API calls (when Ollama enabled)
+- MinIO TLS encryption with automatic certificate generation (when MinIO enabled)
 - Automatic certificate management
 - System-wide CA trust store integration
 
@@ -104,24 +141,104 @@ Our custom container combines four powerful components:
 - Proper repository configuration for each OS
 
 ### 🚀 Performance Optimized
-- AI model pre-pulled during image build
+- AI model pre-pulled during image build (when Ollama enabled)
 - Single container reduces network latency
 - Direct in-memory communication between services
 - Efficient resource utilization
+- Only install what you need
 
 ### 📦 Production Ready
-- Persistent volumes for data, models, and certificates
+- Persistent volumes for data (and models/objects when enabled)
 - Configurable memory limits
 - Comprehensive logging
 - Health check compatible
+- Conditional service startup
 
 ### 🔧 Developer Friendly
-- Single `docker run` command deployment
+- Single build script with clear parameters
 - Automated startup orchestration
 - Clear documentation and examples
-- Easy to extend with additional models
+- Easy to extend with additional models or features
+
+## Deployment Configuration Examples
+
+The container's flexibility allows you to deploy exactly what you need:
+
+```bash
+# 1. Minimal SQL Server deployment (just FTS)
+./build-and-run.sh --sa-password 'YourPass@123' --install-ollama false
+
+# 2. SQL Server with data platform capabilities
+./build-and-run.sh --sa-password 'YourPass@123' --install-ollama false --polybase true
+
+# 3. SQL Server with object storage
+./build-and-run.sh --sa-password 'YourPass@123' --install-ollama false --install-minio true
+
+# 4. SQL Server with AI capabilities (default)
+./build-and-run.sh --sa-password 'YourPass@123'
+
+# 5. Full data + AI platform
+./build-and-run.sh --sa-password 'YourPass@123' --polybase true --install-minio true
+```
+
+**Resource Impact by Configuration:**
+
+| Configuration | Image Size* | Memory Footprint** | Use Case |
+|--------------|-------------|-------------------|----------|
+| Minimal (SQL+FTS) | ~3.5 GB | ~2 GB | Traditional SQL workloads |
+| +Polybase | ~3.8 GB | ~2.5 GB | External data queries |
+| +MinIO | ~3.6 GB | ~2.5 GB | Object storage integration |
+| +Ollama (default) | ~5.5 GB | ~4 GB | AI/ML workloads |
+| Full Stack | ~5.8 GB | ~5 GB | Complete data+AI platform |
+
+*Approximate compressed image size
+**Typical runtime memory usage under light load
 
 ## Implementation Highlights
+
+### Conditional Component Installation
+
+The Dockerfile uses build arguments to conditionally install components:
+
+```dockerfile
+ARG INSTALL_OLLAMA=true
+ARG INSTALL_MINIO=false
+ARG ENABLE_POLYBASE=false
+
+# Install Ollama if enabled
+RUN if [ "${INSTALL_OLLAMA}" = "true" ]; then \
+        curl -fsSL https://ollama.com/install.sh | sh; \
+    fi
+
+# Install MinIO if enabled  
+RUN if [ "${INSTALL_MINIO}" = "true" ]; then \
+        wget https://dl.min.io/server/minio/release/linux-amd64/minio && \
+        chmod +x minio && \
+        mkdir -p /minio/data /root/.minio/certs; \
+    fi
+```
+
+Benefits:
+- **Reduced image size** when components aren't needed
+- **Faster builds** skipping unused software
+- **Lower attack surface** with minimal installations
+- **Flexible deployment** matching your requirements
+
+### Dynamic Caddy Configuration
+
+Caddyfile generation adapts to installed components:
+
+```dockerfile
+RUN echo "{ local_certs }" > /etc/caddy/Caddyfile && \
+    if [ "${INSTALL_OLLAMA}" = "true" ]; then \
+        # Add Ollama HTTPS proxy configuration
+    fi && \
+    if [ "${INSTALL_MINIO}" = "true" ]; then \
+        # Add MinIO Console HTTPS proxy configuration
+    fi
+```
+
+This ensures Caddy only proxies services that are actually installed.
 
 ### Intelligent OS Detection
 
@@ -131,12 +248,12 @@ One of the most powerful features of this solution is its ability to work with b
 RUN if [ -f /etc/debian_version ]; then \
         # Ubuntu/Debian detected
         apt-get update && \
-        apt-get install -y mssql-server-fts caddy && \
+        apt-get install -y mssql-server-fts && \
         # Add Ubuntu repositories
         wget -qO- https://packages.microsoft.com/.../ubuntu/22.04/mssql-server-2025.list
     elif [ -f /etc/redhat-release ]; then \
         # RHEL detected
-        yum install -y mssql-server-fts caddy && \
+        yum install -y mssql-server-fts && \
         # Add RHEL repositories
         curl -o /etc/yum.repos.d/mssql-server.repo https://packages.microsoft.com/.../rhel/9/mssql-server-2025.repo
     fi
@@ -150,23 +267,23 @@ This means:
 
 ### The Startup Orchestration
 
-One of the most critical aspects of this solution is the startup script that orchestrates all three services in the correct order:
+The startup script dynamically adjusts based on installed components:
 
 ```bash
 1. Setup directory permissions
-2. Start Ollama service
-3. Wait for Ollama readiness
-4. Pull AI models
-5. Start Caddy with HTTPS
-6. Copy Caddy certificates to SQL Server trust store
-7. Update system CA certificates
-8. Start SQL Server as mssql user
+2. [If MinIO] Generate TLS certificates and start MinIO
+3. [If Ollama] Start Ollama service and pull models
+4. Start Caddy with dynamic configuration
+5. Copy certificates to SQL Server trust store (if needed)
+6. Update system CA certificates
+7. Start SQL Server as mssql user
 ```
 
 This sequence ensures that:
+- Only enabled services are started
 - Services start in dependency order
-- Certificates are generated before SQL Server starts
-- SQL Server trusts the Caddy CA from the beginning
+- Certificates are generated before SQL Server starts (when needed)
+- SQL Server trusts the required CAs
 - Each service has proper permissions
 
 ### Certificate Trust Chain
@@ -803,9 +920,10 @@ docker build --build-arg ENABLE_POLYBASE=true -t sqlserver-ollama:2025 .
 # Then run: ./build-and-run.sh
 ```
 
-**Note**: The `build-and-run.sh` script requires a SQL Server SA password for security compliance. You must either pass it via `--sa-password` parameter or modify the script to set the `SA_PASSWORD` variable directly. Polybase is optional and disabled by default; enable it with `--polybase true` if you need MinIO integration.
+**Note**: The `build-and-run.sh` script requires a SQL Server SA password for security compliance. You must pass it via `--sa-password` parameter. Polybase is optional and disabled by default; enable it with `--polybase true` if you need MinIO integration.
 
 **With RHEL base:**
+
 ```bash
 # Build with RHEL base image
 docker build --build-arg BASE_IMAGE=mcr.microsoft.com/mssql/rhel/server:2025-latest -t sqlserver-ollama:2025-rhel .
@@ -819,6 +937,10 @@ docker build --build-arg BASE_IMAGE=mcr.microsoft.com/mssql/rhel/server:2025-lat
 # With Polybase
 ./build-and-run.sh --sa-password "YourStrong@Passw0rd" --base-image mcr.microsoft.com/mssql/rhel/server:2025-latest --polybase true
 ```
+
+**Verified Image Paths:**
+- Ubuntu: `mcr.microsoft.com/mssql/server:2025-latest`
+- RHEL: `mcr.microsoft.com/mssql/rhel/server:2025-latest`
 
 **Run the container:**
 ```bash

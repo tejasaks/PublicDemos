@@ -2,6 +2,8 @@
 # Can be overridden with --build-arg BASE_IMAGE=<image>
 ARG BASE_IMAGE=mcr.microsoft.com/mssql/server:2025-latest
 ARG ENABLE_POLYBASE=false
+ARG INSTALL_OLLAMA=true
+ARG INSTALL_MINIO=false
 FROM ${BASE_IMAGE}
 
 # Switch to root for installations
@@ -80,162 +82,174 @@ RUN if [ -f /etc/debian_version ]; then \
         yum clean all; \
     fi
 
-# Install Ollama
-RUN curl -fsSL https://ollama.com/install.sh | sh
-
-# Install MinIO (works for both Ubuntu and RHEL)
-RUN if [ -f /etc/debian_version ]; then \
-        # Ubuntu/Debian - install MinIO binary
-        echo "Installing MinIO for Ubuntu/Debian" && \
-        wget https://dl.min.io/server/minio/release/linux-amd64/minio -O /usr/local/bin/minio && \
-        chmod +x /usr/local/bin/minio; \
-    elif [ -f /etc/redhat-release ]; then \
-        # RHEL - install MinIO binary
-        echo "Installing MinIO for RHEL" && \
-        wget https://dl.min.io/server/minio/release/linux-amd64/minio -O /usr/local/bin/minio && \
-        chmod +x /usr/local/bin/minio; \
+# Install Ollama if enabled
+ARG INSTALL_OLLAMA=true
+RUN if [ "${INSTALL_OLLAMA}" = "true" ]; then \
+        echo "Ollama installation enabled" && \
+        curl -fsSL https://ollama.com/install.sh | sh; \
+    else \
+        echo "Ollama installation skipped"; \
     fi
 
-# Create MinIO directories
-RUN mkdir -p /minio/data && \
-    mkdir -p /root/.minio/certs && \
-    chmod -R 755 /minio
+# Install MinIO if enabled (works for both Ubuntu and RHEL)
+ARG INSTALL_MINIO=false
+RUN if [ "${INSTALL_MINIO}" = "true" ]; then \
+        echo "MinIO installation enabled" && \
+        if [ -f /etc/debian_version ]; then \
+            echo "Installing MinIO for Ubuntu/Debian" && \
+            wget https://dl.min.io/server/minio/release/linux-amd64/minio -O /usr/local/bin/minio && \
+            chmod +x /usr/local/bin/minio; \
+        elif [ -f /etc/redhat-release ]; then \
+            echo "Installing MinIO for RHEL" && \
+            wget https://dl.min.io/server/minio/release/linux-amd64/minio -O /usr/local/bin/minio && \
+            chmod +x /usr/local/bin/minio; \
+        fi && \
+        mkdir -p /minio/data && \
+        mkdir -p /root/.minio/certs && \
+        chmod -R 755 /minio; \
+    else \
+        echo "MinIO installation skipped"; \
+    fi
 
 # Create Caddyfile for reverse proxy configuration
 RUN mkdir -p /etc/caddy
-RUN cat > /etc/caddy/Caddyfile << 'EOF'
-{
-    # Global options
-    # Enable local HTTPS with self-signed certificates
-    local_certs
-}
 
-https://localhost:11435 {
-    # Use internal CA for self-signed certificates
-    tls internal
-    
-    # Reverse proxy to Ollama
-    reverse_proxy localhost:11434
-    
-    # Enable logging
-    log {
-        output stdout
-        format console
-    }
-}
-
-https://localhost:9001 {
-    # Use internal CA for self-signed certificates
-    tls internal
-    
-    # Reverse proxy to MinIO Console
-    reverse_proxy localhost:9002
-    
-    # Enable logging
-    log {
-        output stdout
-        format console
-    }
-}
-EOF
+# Generate Caddyfile dynamically based on which services are installed
+ARG INSTALL_OLLAMA=true
+ARG INSTALL_MINIO=false
+RUN printf '{\n    local_certs\n}\n' > /etc/caddy/Caddyfile && \
+    if [ "${INSTALL_OLLAMA}" = "true" ]; then \
+        printf '\nhttps://localhost:11435 {\n' >> /etc/caddy/Caddyfile && \
+        printf '    tls internal\n' >> /etc/caddy/Caddyfile && \
+        printf '    reverse_proxy localhost:11434\n' >> /etc/caddy/Caddyfile && \
+        printf '    log {\n' >> /etc/caddy/Caddyfile && \
+        printf '        output stdout\n' >> /etc/caddy/Caddyfile && \
+        printf '        format console\n' >> /etc/caddy/Caddyfile && \
+        printf '    }\n' >> /etc/caddy/Caddyfile && \
+        printf '}\n' >> /etc/caddy/Caddyfile; \
+    fi && \
+    if [ "${INSTALL_MINIO}" = "true" ]; then \
+        printf '\nhttps://localhost:9001 {\n' >> /etc/caddy/Caddyfile && \
+        printf '    tls internal\n' >> /etc/caddy/Caddyfile && \
+        printf '    reverse_proxy localhost:9002\n' >> /etc/caddy/Caddyfile && \
+        printf '    log {\n' >> /etc/caddy/Caddyfile && \
+        printf '        output stdout\n' >> /etc/caddy/Caddyfile && \
+        printf '        format console\n' >> /etc/caddy/Caddyfile && \
+        printf '    }\n' >> /etc/caddy/Caddyfile && \
+        printf '}\n' >> /etc/caddy/Caddyfile; \
+    fi
 
 # Create SQL Server certificate directory
 RUN mkdir -p /var/opt/mssql/security/ca-certificates
 
 # Create startup script that will:
-# 1. Generate MinIO TLS certificates
-# 2. Start MinIO in background with TLS
-# 3. Start Ollama in background
-# 4. Pull the model
-# 5. Start Caddy
+# 1. Generate MinIO TLS certificates (if MinIO is installed)
+# 2. Start MinIO in background with TLS (if MinIO is installed)
+# 3. Start Ollama in background (if Ollama is installed)
+# 4. Pull the model (if Ollama is installed)
+# 5. Start Caddy (always)
 # 6. Copy Caddy and MinIO certificates to SQL Server cert directory
 # 7. Update CA certificates
 # 8. Start SQL Server
-RUN cat > /opt/start-services.sh << 'EOF'
+ARG INSTALL_OLLAMA=true
+ARG INSTALL_MINIO=false
+RUN cat > /opt/start-services.sh << EOF_SCRIPT
 #!/bin/bash
 set -e
 
+# Build args passed as environment for runtime decision
+INSTALL_OLLAMA="${INSTALL_OLLAMA}"
+INSTALL_MINIO="${INSTALL_MINIO}"
+
 # Ensure proper directory permissions
 echo "Setting up directory permissions..."
-mkdir -p /root/.ollama
 mkdir -p /var/opt/mssql/security/ca-certificates
-mkdir -p /minio/data
-mkdir -p /root/.minio/certs
 chown -R mssql:root /var/opt/mssql
 
-# Generate self-signed certificate for MinIO
-echo "Generating TLS certificate for MinIO..."
-openssl req -new -newkey rsa:2048 -days 3650 -nodes -x509 \
-    -subj "/C=US/ST=State/L=City/O=Organization/CN=localhost" \
-    -addext "subjectAltName=DNS:localhost,DNS:minio,IP:127.0.0.1" \
-    -keyout /root/.minio/certs/private.key \
-    -out /root/.minio/certs/public.crt
-
-chmod 644 /root/.minio/certs/public.crt
-chmod 600 /root/.minio/certs/private.key
-
-echo "MinIO TLS certificate generated successfully"
-
-# Copy MinIO certificate to SQL Server certificate directory
-echo "Copying MinIO certificate to SQL Server CA store..."
-cp /root/.minio/certs/public.crt \
-   /var/opt/mssql/security/ca-certificates/minio-cert.crt
-chown mssql:root /var/opt/mssql/security/ca-certificates/minio-cert.crt
-chmod 644 /var/opt/mssql/security/ca-certificates/minio-cert.crt
-
-# Copy MinIO certificate to system-wide CA store
-if [ -f /etc/debian_version ]; then
-    # Ubuntu/Debian
-    echo "Detected Ubuntu/Debian - adding MinIO cert to system CA store..."
-    mkdir -p /usr/local/share/ca-certificates
-    cp /root/.minio/certs/public.crt \
-       /usr/local/share/ca-certificates/minio-cert.crt
-elif [ -f /etc/redhat-release ]; then
-    # RHEL/CentOS
-    echo "Detected RHEL - adding MinIO cert to system CA store..."
-    mkdir -p /etc/pki/ca-trust/source/anchors
-    cp /root/.minio/certs/public.crt \
-       /etc/pki/ca-trust/source/anchors/minio-cert.crt
+if [ "\${INSTALL_OLLAMA}" = "true" ]; then
+    echo "Ollama is installed - creating directories..."
+    mkdir -p /root/.ollama
 fi
 
-# Set default MinIO credentials if not provided
-export MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
-export MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
-
-echo "Starting MinIO service with TLS..."
-# Start MinIO server in background with TLS enabled (console on port 9002, will be proxied to 9001 via HTTPS)
-MINIO_ROOT_USER=$MINIO_ROOT_USER MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD \
-minio server /minio/data --address :9000 --console-address :9002 &
-MINIO_PID=$!
-
-# Wait for MinIO to be ready
-echo "Waiting for MinIO to start..."
-for i in {1..30}; do
-    if curl -k -s https://localhost:9000/minio/health/live >/dev/null 2>&1; then
-        echo "MinIO is ready (TLS enabled)"
-        break
+if [ "\${INSTALL_MINIO}" = "true" ]; then
+    echo "MinIO is installed - setting up..."
+    mkdir -p /minio/data
+    mkdir -p /root/.minio/certs
+    
+    # Generate self-signed certificate for MinIO
+    echo "Generating TLS certificate for MinIO..."
+    openssl req -new -newkey rsa:2048 -days 3650 -nodes -x509 \
+        -subj "/C=US/ST=State/L=City/O=Organization/CN=localhost" \
+        -addext "subjectAltName=DNS:localhost,DNS:minio,IP:127.0.0.1" \
+        -keyout /root/.minio/certs/private.key \
+        -out /root/.minio/certs/public.crt
+    
+    chmod 644 /root/.minio/certs/public.crt
+    chmod 600 /root/.minio/certs/private.key
+    
+    echo "MinIO TLS certificate generated successfully"
+    
+    # Copy MinIO certificate to SQL Server certificate directory
+    echo "Copying MinIO certificate to SQL Server CA store..."
+    cp /root/.minio/certs/public.crt \
+       /var/opt/mssql/security/ca-certificates/minio-cert.crt
+    chown mssql:root /var/opt/mssql/security/ca-certificates/minio-cert.crt
+    chmod 644 /var/opt/mssql/security/ca-certificates/minio-cert.crt
+    
+    # Copy MinIO certificate to system-wide CA store
+    if [ -f /etc/debian_version ]; then
+        echo "Detected Ubuntu/Debian - adding MinIO cert to system CA store..."
+        mkdir -p /usr/local/share/ca-certificates
+        cp /root/.minio/certs/public.crt \
+           /usr/local/share/ca-certificates/minio-cert.crt
+    elif [ -f /etc/redhat-release ]; then
+        echo "Detected RHEL - adding MinIO cert to system CA store..."
+        mkdir -p /etc/pki/ca-trust/source/anchors
+        cp /root/.minio/certs/public.crt \
+           /etc/pki/ca-trust/source/anchors/minio-cert.crt
     fi
-    sleep 2
-done
+    
+    # Set default MinIO credentials if not provided
+    export MINIO_ROOT_USER=\${MINIO_ROOT_USER:-minioadmin}
+    export MINIO_ROOT_PASSWORD=\${MINIO_ROOT_PASSWORD:-minioadmin}
+    
+    echo "Starting MinIO service with TLS..."
+    # Start MinIO server in background with TLS enabled
+    MINIO_ROOT_USER=\$MINIO_ROOT_USER MINIO_ROOT_PASSWORD=\$MINIO_ROOT_PASSWORD \
+    minio server /minio/data --address :9000 --console-address :9002 &
+    MINIO_PID=\$!
+    
+    # Wait for MinIO to be ready
+    echo "Waiting for MinIO to start..."
+    for i in {1..30}; do
+        if curl -k -s https://localhost:9000/minio/health/live >/dev/null 2>&1; then
+            echo "MinIO is ready (TLS enabled)"
+            break
+        fi
+        sleep 2
+    done
+fi
 
-echo "Starting Ollama service..."
-# Start Ollama in background as root
-OLLAMA_HOST=0.0.0.0:11434 ollama serve &
-OLLAMA_PID=$!
-
-# Wait for Ollama to be ready
-echo "Waiting for Ollama to start..."
-for i in {1..30}; do
-    if curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
-        echo "Ollama is ready"
-        break
-    fi
-    sleep 2
-done
-
-# Pull the nomic-embed-text model
-echo "Pulling nomic-embed-text model..."
-ollama pull nomic-embed-text || echo "Note: Model pull will retry if needed"
+if [ "\${INSTALL_OLLAMA}" = "true" ]; then
+    echo "Starting Ollama service..."
+    # Start Ollama in background as root
+    OLLAMA_HOST=0.0.0.0:11434 ollama serve &
+    OLLAMA_PID=\$!
+    
+    # Wait for Ollama to be ready
+    echo "Waiting for Ollama to start..."
+    for i in {1..30}; do
+        if curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
+            echo "Ollama is ready"
+            break
+        fi
+        sleep 2
+    done
+    
+    # Pull the nomic-embed-text model
+    echo "Pulling nomic-embed-text model..."
+    ollama pull nomic-embed-text || echo "Note: Model pull will retry if needed"
+fi
 
 echo "Starting Caddy server..."
 # Start Caddy in background
@@ -245,60 +259,60 @@ caddy start --config /etc/caddy/Caddyfile --adapter caddyfile
 echo "Waiting for Caddy to generate certificates..."
 sleep 5
 
-# Copy Caddy root certificate to SQL Server certificate directory
-if [ -f /root/.local/share/caddy/pki/authorities/local/root.crt ]; then
-    echo "Copying Caddy root certificate..."
-    cp /root/.local/share/caddy/pki/authorities/local/root.crt \
-       /var/opt/mssql/security/ca-certificates/caddy-root.crt
-    
-    # Detect OS and copy to appropriate system-wide CA certificates location
-    if [ -f /etc/debian_version ]; then
-        # Ubuntu/Debian
-        echo "Detected Ubuntu/Debian - updating CA certificates..."
-        mkdir -p /usr/local/share/ca-certificates
+# Copy Caddy root certificate to SQL Server certificate directory (if Ollama or MinIO is installed)
+if [ "\${INSTALL_OLLAMA}" = "true" ] || [ "\${INSTALL_MINIO}" = "true" ]; then
+    if [ -f /root/.local/share/caddy/pki/authorities/local/root.crt ]; then
+        echo "Copying Caddy root certificate..."
         cp /root/.local/share/caddy/pki/authorities/local/root.crt \
-           /usr/local/share/ca-certificates/caddy-root.crt
-        update-ca-certificates
-    elif [ -f /etc/redhat-release ]; then
-        # RHEL/CentOS
-        echo "Detected RHEL - updating CA trust..."
-        mkdir -p /etc/pki/ca-trust/source/anchors
-        cp /root/.local/share/caddy/pki/authorities/local/root.crt \
-           /etc/pki/ca-trust/source/anchors/caddy-root.crt
-        update-ca-trust
-    fi
-    
-    # Ensure SQL Server can read the certificate
-    chown mssql:root /var/opt/mssql/security/ca-certificates/caddy-root.crt
-    chmod 644 /var/opt/mssql/security/ca-certificates/caddy-root.crt
-    
-    echo "Certificate setup complete"
-else
-    echo "Warning: Caddy root certificate not found at expected location"
-    # Try alternative location
-    if [ -f /data/caddy/pki/authorities/local/root.crt ]; then
-        cp /data/caddy/pki/authorities/local/root.crt \
            /var/opt/mssql/security/ca-certificates/caddy-root.crt
         
+        # Detect OS and copy to appropriate system-wide CA certificates location
         if [ -f /etc/debian_version ]; then
+            echo "Detected Ubuntu/Debian - updating CA certificates..."
             mkdir -p /usr/local/share/ca-certificates
-            cp /data/caddy/pki/authorities/local/root.crt \
+            cp /root/.local/share/caddy/pki/authorities/local/root.crt \
                /usr/local/share/ca-certificates/caddy-root.crt
             update-ca-certificates
         elif [ -f /etc/redhat-release ]; then
+            echo "Detected RHEL - updating CA trust..."
             mkdir -p /etc/pki/ca-trust/source/anchors
-            cp /data/caddy/pki/authorities/local/root.crt \
+            cp /root/.local/share/caddy/pki/authorities/local/root.crt \
                /etc/pki/ca-trust/source/anchors/caddy-root.crt
             update-ca-trust
         fi
         
+        # Ensure SQL Server can read the certificate
         chown mssql:root /var/opt/mssql/security/ca-certificates/caddy-root.crt
         chmod 644 /var/opt/mssql/security/ca-certificates/caddy-root.crt
-        echo "Certificate setup complete (alternative location)"
+        
+        echo "Certificate setup complete"
+    else
+        echo "Warning: Caddy root certificate not found at expected location"
+        # Try alternative location
+        if [ -f /data/caddy/pki/authorities/local/root.crt ]; then
+            cp /data/caddy/pki/authorities/local/root.crt \
+               /var/opt/mssql/security/ca-certificates/caddy-root.crt
+            
+            if [ -f /etc/debian_version ]; then
+                mkdir -p /usr/local/share/ca-certificates
+                cp /data/caddy/pki/authorities/local/root.crt \
+                   /usr/local/share/ca-certificates/caddy-root.crt
+                update-ca-certificates
+            elif [ -f /etc/redhat-release ]; then
+                mkdir -p /etc/pki/ca-trust/source/anchors
+                cp /data/caddy/pki/authorities/local/root.crt \
+                   /etc/pki/ca-trust/source/anchors/caddy-root.crt
+                update-ca-trust
+            fi
+            
+            chown mssql:root /var/opt/mssql/security/ca-certificates/caddy-root.crt
+            chmod 644 /var/opt/mssql/security/ca-certificates/caddy-root.crt
+            echo "Certificate setup complete (alternative location)"
+        fi
     fi
 fi
 
-# Update CA certificates for both Caddy and MinIO certs
+# Update CA certificates
 echo "Updating system CA certificates..."
 if [ -f /etc/debian_version ]; then
     update-ca-certificates
@@ -308,32 +322,34 @@ fi
 
 echo "All services started. Starting SQL Server..."
 # Start SQL Server as mssql user (this will run in foreground)
-# Use su to switch to mssql user for SQL Server process only
 exec su -s /bin/bash mssql -c "/opt/mssql/bin/sqlservr"
-EOF
+EOF_SCRIPT
 
 RUN chmod +x /opt/start-services.sh
 
-# Create Ollama directories with proper permissions
-RUN mkdir -p /root/.ollama && \
-    mkdir -p /home/mssql/.ollama && \
-    chown -R mssql:mssql /home/mssql/.ollama
+# Create Ollama directories with proper permissions (conditional)
+ARG INSTALL_OLLAMA=true
+RUN if [ "${INSTALL_OLLAMA}" = "true" ]; then \
+        mkdir -p /root/.ollama && \
+        mkdir -p /home/mssql/.ollama && \
+        chown -R mssql:mssql /home/mssql/.ollama; \
+    fi
 
-# Pre-pull the Ollama model during build to speed up container startup
-# This is done in a way that doesn't fail the build if it times out
-RUN (ollama serve &) && \
-    sleep 10 && \
-    (timeout 300 ollama pull nomic-embed-text || echo "Model pull will complete at runtime") && \
-    pkill ollama || true
+# Pre-pull the Ollama model during build to speed up container startup (conditional)
+ARG INSTALL_OLLAMA=true
+RUN if [ "${INSTALL_OLLAMA}" = "true" ]; then \
+        (ollama serve &) && \
+        sleep 10 && \
+        (timeout 300 ollama pull nomic-embed-text || echo "Model pull will complete at runtime") && \
+        pkill ollama || true; \
+    fi
 
-# Expose ports
-# 1433: SQL Server
-# 11435: HTTPS proxy for Ollama
-# 9000: MinIO API
-# 9001: MinIO Console (HTTPS via Caddy)
-EXPOSE 1433 11435 9000 9001
-
-# Keep running as root since we're orchestrating multiple services
+# Expose ports - always expose SQL Server (1433)
+# Other ports depend on what's installed:
+# 11435: HTTPS proxy for Ollama (if INSTALL_OLLAMA=true)
+# 9000: MinIO API (if INSTALL_MINIO=true)
+# 9001: MinIO Console HTTPS via Caddy (if INSTALL_MINIO=true)
+# Note: Docker EXPOSE is documentation only, actual port mapping happens at runtime
 # SQL Server will be started with proper user via sqlservr
 USER root
 

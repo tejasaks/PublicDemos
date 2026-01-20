@@ -1,30 +1,74 @@
 # SQL Server 2025 + Ollama + MinIO + Caddy Container
 
-This custom container combines SQL Server 2025, Ollama AI runtime, MinIO object storage, and Caddy reverse proxy in a single deployable unit.
+This custom container combines SQL Server 2025 with optional Ollama AI runtime, MinIO object storage, and Caddy reverse proxy in a single deployable unit. Each component can be enabled or disabled based on your requirements.
 
 ## Features
 
 - **SQL Server 2025**: Latest SQL Server on Ubuntu or RHEL base (configurable via build argument)
-- **SQL Server Full-Text Search (FTS)**: Advanced text searching and indexing capabilities
+- **SQL Server Full-Text Search (FTS)**: Advanced text searching and indexing capabilities (always installed)
 - **SQL Server Polybase** (Optional): External data connectivity to MinIO and other sources
   - **Important**: Requires trace flag 13702 on Linux
   - **Note**: MinIO must be TLS-enabled for Polybase connectivity
+- **Ollama** (Optional, default: enabled): AI model runtime with nomic-embed-text model pre-installed
+- **MinIO** (Optional, default: disabled): S3-compatible object storage with web console and TLS encryption
+- **Caddy** (Always installed): Automatic HTTPS reverse proxy for enabled services
 - **Automatic OS Detection**: Intelligently detects Ubuntu or RHEL base and uses appropriate package managers
-- **Ollama**: AI model runtime with nomic-embed-text model pre-installed
-- **MinIO**: S3-compatible object storage with web console
-- **Caddy**: Automatic HTTPS reverse proxy for Ollama and MinIO Console (HTTP→HTTPS)
-- **SSL Certificate Management**: Caddy's root certificate automatically trusted by SQL Server
+- **SSL Certificate Management**: Caddy's root certificate and MinIO TLS certificates automatically trusted by SQL Server
 - **Multi-OS Support**: Single Dockerfile works with both Ubuntu and RHEL base images
-- **Persistent Storage**: Volumes for SQL Server data, Ollama models, MinIO objects, and Caddy certificates
+- **Persistent Storage**: Volumes for SQL Server data and Caddy certificates (Ollama models and MinIO objects only when enabled)
+- **Flexible Deployment**: Deploy SQL Server alone or with any combination of Polybase, Ollama, and MinIO
+
+## Deployment Configurations
+
+This container supports multiple deployment configurations:
+
+1. **SQL Server + FTS only** (minimal)
+   ```bash
+   ./build-and-run.sh --sa-password 'YourPass@123' --install-ollama false
+   ```
+
+2. **SQL Server + FTS + Polybase**
+   ```bash
+   ./build-and-run.sh --sa-password 'YourPass@123' --install-ollama false --polybase true
+   ```
+
+3. **SQL Server + FTS + MinIO**
+   ```bash
+   ./build-and-run.sh --sa-password 'YourPass@123' --install-ollama false --install-minio true
+   ```
+
+4. **SQL Server + FTS + Polybase + MinIO**
+   ```bash
+   ./build-and-run.sh --sa-password 'YourPass@123' --install-ollama false --polybase true --install-minio true
+   ```
+
+5. **SQL Server + FTS + Ollama** (default AI-enabled setup)
+   ```bash
+   ./build-and-run.sh --sa-password 'YourPass@123'
+   ```
+
+6. **SQL Server + FTS + Ollama + Polybase**
+   ```bash
+   ./build-and-run.sh --sa-password 'YourPass@123' --polybase true
+   ```
+
+7. **Full Stack** (SQL + FTS + Polybase + Ollama + MinIO)
+   ```bash
+   ./build-and-run.sh --sa-password 'YourPass@123' --polybase true --install-minio true
+   ```
 
 ## Architecture
 
+The architecture adapts based on which components are installed:
+
 ```
+[When Ollama is enabled]
 External Request (HTTPS:11435) 
     → Caddy (HTTPS termination)
         → Ollama (HTTP:11434)
             → nomic-embed-text model
 
+[When MinIO is enabled]
 External Request (HTTPS:9001)
     → Caddy (HTTPS termination)
         → MinIO Console (HTTP:9002)
@@ -34,10 +78,14 @@ MinIO API (HTTPS:9000)
     → Persistent storage: /minio/data
     → TLS certificates: /root/.minio/certs/
 
+[Always present]
 SQL Server (1433) + FTS + Polybase*
-    → Trusts Caddy CA certificates
+    → Trusts Caddy CA certificates (when Ollama or MinIO enabled)
     → Full-Text Search enabled
     → Polybase for external data access*
+
+Caddy Reverse Proxy (always installed)
+    → Dynamically configured based on enabled services
 
 OS Detection Layer:
     ├─ Ubuntu/Debian → apt-get, dpkg
@@ -53,65 +101,75 @@ OS Detection Layer:
 - 20GB disk space for images and models
 - Linux, macOS, or WSL2 environment for build script
 
+> **Base Image Options**: 
+> - **Ubuntu** (default): `mcr.microsoft.com/mssql/server:2025-latest`
+> - **RHEL**: `mcr.microsoft.com/mssql/rhel/server:2025-latest` 
+> 
+> Both images are published by Microsoft and support the same SQL Server features.
+> To verify available tags: https://mcr.microsoft.com/en-us/product/mssql/rhel/server/tags
+
 ## Building the Container
 
-> **⚠️ SECURITY NOTICE**: The SA password is mandatory and must be provided either:
-> 1. **Via command-line parameter** (recommended): Use `--sa-password` flag when running the script
-> 2. **By editing the script**: Manually set `SA_PASSWORD` variable in the build-and-run script
+> **⚠️ SECURITY NOTICE**: The SA password is mandatory and must be provided via command-line parameter when using the build script: `--sa-password 'YourStrong@Pass123'`
 >
 > The script will NOT run without a valid password set.
 
-### Build with default Ubuntu base
+### Build with default configuration (Ubuntu base, Ollama enabled)
 
 ```bash
-# Using command-line parameter (recommended)
+# Using Docker directly
 docker build -t sqlserver-ollama:2025 .
 
-# With Polybase enabled
-docker build --build-arg ENABLE_POLYBASE=true -t sqlserver-ollama:2025 .
-
-# OR using the build script with password
+# OR using the build script (recommended)
 ./build-and-run.sh --sa-password 'YourStrong@Pass123'
+```
 
-# With Polybase
-./build-and-run.sh --sa-password 'YourStrong@Pass123' --polybase true
+### Build with optional components
+
+```bash
+# Minimal: SQL Server + FTS only (no Ollama, no MinIO)
+./build-and-run.sh --sa-password 'YourPass@123' --install-ollama false
+
+# SQL Server + FTS + Polybase (no Ollama, no MinIO)
+./build-and-run.sh --sa-password 'YourPass@123' --install-ollama false --polybase true
+
+# SQL Server + FTS + MinIO (no Ollama)
+./build-and-run.sh --sa-password 'YourPass@123' --install-ollama false --install-minio true
+
+# Full stack: SQL + FTS + Polybase + Ollama + MinIO
+./build-and-run.sh --sa-password 'YourPass@123' --polybase true --install-minio true
 ```
 
 ### Build with RHEL base image
 
 ```bash
-docker build --build-arg BASE_IMAGE=mcr.microsoft.com/mssql/rhel/server:2025-latest -t sqlserver-ollama:2025-rhel .
+# Default RHEL with Ollama
+./build-and-run.sh --base-image mcr.microsoft.com/mssql/rhel/server:2025-latest --sa-password 'YourPass@123'
 
-# With Polybase
-docker build --build-arg BASE_IMAGE=mcr.microsoft.com/mssql/rhel/server:2025-latest --build-arg ENABLE_POLYBASE=true -t sqlserver-ollama:2025-rhel .
+# RHEL with Polybase and MinIO
+./build-and-run.sh --base-image mcr.microsoft.com/mssql/rhel/server:2025-latest --sa-password 'YourPass@123' --polybase true --install-minio true
+
+# Minimal RHEL (no Ollama)
+./build-and-run.sh --base-image mcr.microsoft.com/mssql/rhel/server:2025-latest --sa-password 'YourPass@123' --install-ollama false
 ```
 
-### Using the build script (recommended)
+### Manual Docker build with build args
 
-> **Note**: The build script is designed for Linux/Mac/WSL environments with Bash.
-
-**Option 1: Provide password via command-line (recommended)**
 ```bash
-# Build with default Ubuntu image
-./build-and-run.sh --sa-password 'YourStrong@Pass123'
+# Full control over components
+docker build \
+  --build-arg BASE_IMAGE=mcr.microsoft.com/mssql/server:2025-latest \
+  --build-arg ENABLE_POLYBASE=true \
+  --build-arg INSTALL_OLLAMA=true \
+  --build-arg INSTALL_MINIO=true \
+  -t sqlserver-ollama:2025 .
 
-# Build with Polybase enabled
-./build-and-run.sh --sa-password 'YourStrong@Pass123' --polybase true
-
-# Build with RHEL image
-./build-and-run.sh --base-image mcr.microsoft.com/mssql/rhel/server:2025-latest --sa-password 'YourStrong@Pass123'
-
-# Build with RHEL and Polybase
-./build-and-run.sh --base-image mcr.microsoft.com/mssql/rhel/server:2025-latest --sa-password 'YourStrong@Pass123' --polybase true
-```
-
-**Option 2: Edit the script and set password**
-```bash
-# Edit build-and-run.sh
-# Set SA_PASSWORD="YourStrong@Pass123"
-
-# Then run without the parameter
-./build-and-run.sh
+# Minimal build (no optional components)
+docker build \
+  --build-arg ENABLE_POLYBASE=false \
+  --build-arg INSTALL_OLLAMA=false \
+  --build-arg INSTALL_MINIO=false \
+  -t sqlserver-minimal:2025 .
 ```
 
 ### Push to Docker Hub (for sharing)
@@ -203,14 +261,14 @@ docker run -d \
    - Host: `localhost`
    - Port: `1433`
    - Username: `sa`
-   - Password: `YourStrong@Passw0rd` (set during docker run)
+   - Password: `YourStrong@Passw0rd` (set during build)
 
-3. **Test Ollama via HTTPS:**
+3. **Test Ollama via HTTPS (if Ollama is installed):**
    ```bash
    curl -k https://localhost:11435/api/tags
    ```
 
-4. **Test embeddings:**
+4. **Test embeddings (if Ollama is installed):**
    ```bash
    curl -k https://localhost:11435/api/embeddings -d '{
      "model": "nomic-embed-text",
@@ -218,12 +276,12 @@ docker run -d \
    }'
    ```
 
-5. **Test MinIO API (HTTPS enabled):**
+5. **Test MinIO API (if MinIO is installed):**
    ```bash
    curl -k https://localhost:9000/minio/health/live
    ```
 
-6. **Access MinIO Console:**
+6. **Access MinIO Console (if MinIO is installed):**
    - URL: `https://localhost:9001` (accept self-signed certificate warning)
    - Username: `minioadmin`
    - Password: `minioadmin`
@@ -231,43 +289,60 @@ docker run -d \
 
 ## Configuration
 
-### SQL Server Password (Required)
+### Component Selection
 
-Set the password via environment variable when running, or via script parameter when building:
+Control which components are installed using build parameters:
 
-**At runtime:**
 ```bash
--e MSSQL_SA_PASSWORD=YourStrong@Passw0rd
+# Minimal: SQL Server + FTS only
+./build-and-run.sh --sa-password 'YourPass@123' --install-ollama false
+
+# Add Polybase support
+./build-and-run.sh --sa-password 'YourPass@123' --install-ollama false --polybase true
+
+# Add MinIO support
+./build-and-run.sh --sa-password 'YourPass@123' --install-minio true
+
+# Full stack with all components
+./build-and-run.sh --sa-password 'YourPass@123' --polybase true --install-minio true
 ```
 
-**At build time (using build script):**
+**Component parameters:**
+- `--install-ollama`: `true` (default) or `false` - Install Ollama AI runtime
+- `--install-minio`: `true` or `false` (default) - Install MinIO object storage
+- `--polybase`: `true` or `false` (default) - Install SQL Server Polybase
+
+### SQL Server Password (Required)
+
+Set the password via script parameter when building:
+
 ```bash
---sa-password 'YourStrong@Pass123'
+./build-and-run.sh --sa-password 'YourStrong@Pass123'
 ```
 
 **Password requirements:**
 - At least 8 characters
 - Contains uppercase, lowercase, digits, and special characters
-- Cannot be empty or default value
+- Cannot be empty
 
 ### SQL Server Edition
 
-Change the edition via environment variable:
+Change the edition via parameter:
 ```bash
--e MSSQL_PID=Developer    # Free developer edition
--e MSSQL_PID=Express      # Free express edition
--e MSSQL_PID=Standard     # Requires license
--e MSSQL_PID=Enterprise   # Requires license
+./build-and-run.sh --sa-password 'YourPass@123' --edition Developer    # Free developer edition
+./build-and-run.sh --sa-password 'YourPass@123' --edition Express      # Free express edition
+./build-and-run.sh --sa-password 'YourPass@123' --edition Standard     # Requires license
+./build-and-run.sh --sa-password 'YourPass@123' --edition Enterprise   # Requires license
 ```
 
 ### Resource Limits
 
-Set memory limits when running:
+Set memory limits via parameter:
 ```bash
-docker run --memory="8g" --memory-reservation="4g" ...
+./build-and-run.sh --sa-password 'YourPass@123' --memory 8g
 ```
 
-### Additional Ollama Models
+### Additional Ollama Models (if Ollama is installed)
 
 Add models at runtime:
 ```bash
@@ -276,7 +351,7 @@ docker exec sqlserver-ollama ollama pull codellama
 ```
 
 Or modify the Dockerfile before building to include them automatically:
-```bash
+```dockerfile
 ollama pull llama2
 ollama pull codellama
 ```
@@ -448,6 +523,33 @@ Then install it on your system:
 - **macOS**: Add to Keychain Access → System → Certificates
 
 ## Troubleshooting
+
+### Build Issues
+
+**Error: "failed to resolve source metadata" or "not found" for base image**
+
+This occurs when the specified base image doesn't exist in the registry or you don't have network connectivity.
+
+Solutions:
+1. **Verify network connectivity**:
+   ```bash
+   docker pull mcr.microsoft.com/mssql/server:2025-latest
+   ```
+
+2. **Check available tags** (if specific version not found):
+   ```bash
+   # List available SQL Server RHEL tags
+   curl -s https://mcr.microsoft.com/v2/mssql/rhel/server/tags/list | jq -r '.tags[]' | sort
+   ```
+
+3. **Verify image path format**:
+   - ✅ **Correct Ubuntu**: `mcr.microsoft.com/mssql/server:2025-latest`
+   - ✅ **Correct RHEL**: `mcr.microsoft.com/mssql/rhel/server:2025-latest`
+   - ❌ Wrong: `mcr.microsoft.com/mssql/server:2025-latest-rhel`
+
+**Error: Build fails during package installation**
+
+Check if the base image requires different package names or repositories. SQL Server 2025 packages may not be available for all base OS versions.
 
 ### Polybase Issues
 
