@@ -353,6 +353,21 @@ TLS Certificates: /root/.minio/certs/
 ## Real-World Use Cases
 
 ### 1. Advanced Text Search with FTS + AI Embeddings
+
+**Note**: This example uses the default container configuration where **Full-Text Search (FTS)** and **Ollama** are installed by default, enabling local AI model inference without external dependencies.
+
+**For Remote AI Models (Azure OpenAI, etc.)**: If you plan to use remote AI services like Azure OpenAI instead of local Ollama models, you can significantly reduce the container size by disabling Ollama during build:
+
+```bash
+# Minimal container for FTS + remote AI (no Ollama)
+./build-and-run.sh --sa-password "YourPass@123" --install-ollama false
+
+# This reduces the image size from ~5.5GB to ~3.5GB and saves ~2GB of memory
+# Then use CREATE EXTERNAL MODEL with Azure OpenAI endpoint instead of localhost:11435
+```
+
+**SQL Implementation with Local Ollama (Default Configuration):**
+
 ```sql
 -- Create and switch to a new database
 CREATE DATABASE AIDocuments;
@@ -462,21 +477,27 @@ ORDER BY st.distance;
 ```
 
 ### 2. Document Processing Pipeline
+
+**Note**: This use case uses the default configuration with Ollama enabled for local AI processing.
+
+Common workflow:
 - Store documents in SQL Server
 - Generate embeddings via Ollama HTTPS API
 - Perform similarity searches
 - All within the same container
 
+**For minimal footprint**: If using external embedding services (Azure OpenAI, etc.), build with `--install-ollama false` to reduce container size.
+
 ### 3. MinIO + SQL Server Polybase Integration
 
-**Note**: This use case requires enabling Polybase during build with `--polybase true` flag.
+**Note**: This use case requires enabling both Polybase and MinIO during build with `--polybase true` and `--install-minio true` flags.
 
 MinIO provides S3-compatible object storage that integrates seamlessly with SQL Server via Polybase, enabling SQL queries over unstructured data stored in MinIO.
 
 **Prerequisites:**
 ```bash
-# Build with Polybase enabled
-./build-and-run.sh --sa-password "YourStrong@Pass123" --polybase true
+# Build with Polybase and MinIO enabled
+./build-and-run.sh --sa-password "YourStrong@Pass123" --polybase true --install-minio true
 ```
 
 **Step 1: Create sample data files and upload to MinIO**
@@ -732,11 +753,18 @@ GO
 
 ### 4. Database Backup to S3-Compatible Object Storage (MinIO)
 
+**Note**: This use case requires MinIO to be installed during build with `--install-minio true` flag.
+
 SQL Server 2025 supports native backup to S3-compatible object storage using the BACKUP TO URL feature. This allows you to store database backups directly in MinIO.
 
 **Prerequisites:**
+```bash
+# Build with MinIO enabled (Polybase optional but useful for data examples)
+./build-and-run.sh --sa-password "YourPass@123" --install-minio true
+```
+
 - MinIO running with TLS enabled (automatically configured in this container)
-- Database to backup (we'll use the `pb_demo` database from the Polybase example)
+- Database to backup (we'll use the `pb_demo` database from the Polybase example, or create a test database)
 
 **Step 1: Create SQL Server credential for MinIO S3 backup**
 
@@ -885,17 +913,31 @@ If backup fails with certificate or connectivity errors:
    ```
 
 ### 5. Hybrid AI/SQL Workloads
-- Traditional OLTP operations in SQL Server
-- Real-time AI inference via Ollama
-- Object storage for model artifacts and data files via MinIO
+
+Build the appropriate configuration based on your needs:
+- **AI workloads**: Default configuration includes Ollama (local AI inference)
+- **Data platform**: Add `--polybase true` for external data connectivity
+- **Object storage**: Add `--install-minio true` for S3-compatible storage
+- **Minimal SQL**: Use `--install-ollama false` to exclude AI components
+
+Traditional OLTP operations in SQL Server combined with:
+- Real-time AI inference via Ollama (when installed)
+- Object storage for model artifacts and data files via MinIO (when installed)
 - Secure communication between components
-- Single deployment unit
+- Single deployment unit with flexible configuration
 
 ### 6. Development and Testing
-- Complete AI-powered database stack with object storage
+
+Choose your stack based on testing requirements:
+- **Minimal**: `--install-ollama false` for pure SQL testing (~3.5GB)
+- **AI-enabled**: Default with Ollama for AI/ML testing (~5.5GB)
+- **Full stack**: Add `--polybase true --install-minio true` for complete platform testing (~5.8GB)
+
+Benefits:
 - No external dependencies
 - Reproducible environments
 - Quick setup for proof-of-concepts
+- Deploy and destroy in minutes
 
 ## Building and Deploying
 
@@ -903,39 +945,41 @@ If backup fails with certificate or connectivity errors:
 
 **With Ubuntu base (default):**
 ```bash
-# Build the image (without Polybase)
+# Minimal: SQL Server + FTS only (no Ollama, smallest image)
+docker build --build-arg INSTALL_OLLAMA=false -t sqlserver-minimal:2025 .
+
+# Default: SQL Server + FTS + Ollama (AI-enabled)
 docker build -t sqlserver-ollama:2025 .
 
-# Build with Polybase enabled
+# With Polybase for external data access
 docker build --build-arg ENABLE_POLYBASE=true -t sqlserver-ollama:2025 .
 
+# Full stack: All components
+docker build --build-arg ENABLE_POLYBASE=true --build-arg INSTALL_MINIO=true -t sqlserver-full:2025 .
+
 # Or use the build script (SA password is MANDATORY)
-# Option 1: Pass password as parameter (without Polybase)
+# Default configuration (FTS + Ollama)
 ./build-and-run.sh --sa-password "YourStrong@Passw0rd"
 
-# With Polybase enabled
-./build-and-run.sh --sa-password "YourStrong@Passw0rd" --polybase true
+# Minimal (no Ollama)
+./build-and-run.sh --sa-password "YourStrong@Passw0rd" --install-ollama false
 
-# Option 2: Edit build-and-run.sh and set SA_PASSWORD variable to your desired password
-# Then run: ./build-and-run.sh
+# With Polybase and MinIO
+./build-and-run.sh --sa-password "YourStrong@Passw0rd" --polybase true --install-minio true
 ```
 
-**Note**: The `build-and-run.sh` script requires a SQL Server SA password for security compliance. You must pass it via `--sa-password` parameter. Polybase is optional and disabled by default; enable it with `--polybase true` if you need MinIO integration.
+**Note**: The `build-and-run.sh` script requires a SQL Server SA password for security compliance. All components (Ollama, MinIO, Polybase) are optional and controlled via build parameters.
 
 **With RHEL base:**
 
 ```bash
-# Build with RHEL base image
-docker build --build-arg BASE_IMAGE=mcr.microsoft.com/mssql/rhel/server:2025-latest -t sqlserver-ollama:2025-rhel .
-
-# With Polybase enabled
-docker build --build-arg BASE_IMAGE=mcr.microsoft.com/mssql/rhel/server:2025-latest --build-arg ENABLE_POLYBASE=true -t sqlserver-ollama:2025-rhel .
-
-# Or use the build script with password (MANDATORY)
+# Default RHEL build (FTS + Ollama)
 ./build-and-run.sh --sa-password "YourStrong@Passw0rd" --base-image mcr.microsoft.com/mssql/rhel/server:2025-latest
 
-# With Polybase
-./build-and-run.sh --sa-password "YourStrong@Passw0rd" --base-image mcr.microsoft.com/mssql/rhel/server:2025-latest --polybase true
+# Full stack RHEL (all components)
+./build-and-run.sh --sa-password "YourStrong@Passw0rd" \
+  --base-image mcr.microsoft.com/mssql/rhel/server:2025-latest \
+  --polybase true --install-minio true
 ```
 
 **Verified Image Paths:**
@@ -943,7 +987,11 @@ docker build --build-arg BASE_IMAGE=mcr.microsoft.com/mssql/rhel/server:2025-lat
 - RHEL: `mcr.microsoft.com/mssql/rhel/server:2025-latest`
 
 **Run the container:**
+
+The `build-and-run.sh` script automatically handles port mappings and volumes based on installed components. For manual docker run:
+
 ```bash
+# Full stack example (adjust ports/volumes based on your build configuration)
 docker run -d \
   --name sqlserver-ollama \
   --memory="8g" \
