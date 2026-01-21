@@ -66,10 +66,12 @@ Use this checklist before running the test suite to ensure everything is configu
   cd tests
   ```
 
-- [ ] **Scripts are executable** (Linux/macOS/Git Bash)
+- [ ] **Scripts are executable** (Linux/macOS)
   ```bash
   chmod +x *.sh
   ```
+  
+  > **Note:** After cloning from Git, shell scripts need to be made executable. See main README for details.
 
 - [ ] **Network connectivity available** (for downloading base images and packages)
   ```bash

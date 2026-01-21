@@ -55,12 +55,13 @@ tests/
 #### `cleanup.sh`
 - **Purpose**: Remove test containers, images, and volumes
 - **Usage**: 
-  - `./cleanup.sh` (clean all test resources)
-  - `./cleanup.sh <container-prefix> <image-prefix>` (targeted cleanup)
+  - `./cleanup.sh` (clean test resources only)
+  - `./cleanup.sh --all` (clean test resources AND default sqlserver-ollama)
 - **Removes**:
-  - Containers matching prefix
-  - Images matching prefix
-  - Volumes (sqldata, ollama-models, minio-data)
+  - Test containers (sql-ai-test-*)
+  - Test images (sql-ai-custom:*)
+  - Default container/image (when --all flag used)
+  - Volumes (sqlserver_data, caddy_data, ollama_data, minio_data)
   - Optional: System-wide Docker prune
 
 ### Configuration

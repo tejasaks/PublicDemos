@@ -565,6 +565,9 @@ The test suite validates:
 
 # Cleanup test resources
 ./cleanup.sh
+
+# Cleanup including default containers/images
+./cleanup.sh --all
 ```
 
 📖 **See [tests/README.md](tests/README.md) for complete testing documentation**

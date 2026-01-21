@@ -65,7 +65,7 @@ Phase 1: Prerequisites Check
 
 [5/7] Checking sqlcmd PATH configuration...
 ✅ PASS - sqlcmd in PATH
-   Location: /opt/mssql-tools/bin/sqlcmd
+   Location: /opt/mssql-tools18/bin/sqlcmd
 
 [6/7] Checking SA password environment variable...
 ✅ PASS - SA_PASSWORD set and valid
@@ -102,12 +102,12 @@ Testing with base image: ubuntu
 ║ SQL Server + FTS only (minimal)
 ╚════════════════════════════════════════════════════════════╝
 
-Build command: ./build-and-run.sh --sa-password "***" --install-ollama false
+Build command: ./build-and-run.sh --sa-password "***" --no-follow --container-name "sql-ai-test-ubuntu-minimal" --image-name sql-ai-custom --tag test-ubuntu-minimal --install-ollama false
+Log file: /tmp/build-minimal-ubuntu.log
 
 [1/5] Building Docker image...
 ✅ Build succeeded
-
-Container name: sqlserver-ollama
+✅ Container found: sql-ai-test-ubuntu-minimal
 
 [2/5] Waiting for SQL Server to start...
 Waiting for SQL Server to be ready (timeout: 120s)...
@@ -135,10 +135,12 @@ Testing SQL connectivity...
 ║ SQL Server + FTS + Polybase
 ╚════════════════════════════════════════════════════════════╝
 
-Build command: ./build-and-run.sh --sa-password "***" --install-ollama false --polybase true
+Build command: ./build-and-run.sh --sa-password "***" --no-follow --container-name "sql-ai-test-ubuntu-polybase" --image-name sql-ai-custom --tag test-ubuntu-polybase --install-ollama false --polybase true
+Log file: /tmp/build-polybase-ubuntu.log
 
 [1/5] Building Docker image...
 ✅ Build succeeded
+✅ Container found: sql-ai-test-ubuntu-polybase
 
 [... continues for all scenarios ...]
 
@@ -238,30 +240,46 @@ Skips prerequisites and goes straight to building/testing deployments.
 ### Cleanup Only
 
 ```bash
+# Clean up test resources only (default)
 ./cleanup.sh
+
+# Clean up test resources AND default containers/images
+./cleanup.sh --all
 ```
 
 ```
 Starting cleanup of test resources...
+Mode: Cleaning up test resources only (use --all to include defaults)
 
 [1/3] Cleaning up containers...
 Removing container: sql-ai-test-ubuntu-minimal
 ✅ Container removed: sql-ai-test-ubuntu-minimal
-[... continues for all containers ...]
+Removing container: sql-ai-test-ubuntu-polybase
+✅ Container removed: sql-ai-test-ubuntu-polybase
+[... continues for all test containers ...]
 
 [2/3] Cleaning up images...
 Removing image: sql-ai-custom:test-ubuntu-minimal
 ✅ Image removed: sql-ai-custom:test-ubuntu-minimal
-[... continues for all images ...]
+Removing image: sql-ai-custom:test-ubuntu-polybase
+✅ Image removed: sql-ai-custom:test-ubuntu-polybase
+[... continues for all test images ...]
 
 [3/3] Cleaning up volumes...
-Removing volumes matching: sqldata*
-✅ Volume removed: sqldata
-✅ Volume removed: ollama-models
-✅ Volume removed: minio-data
+Removing volumes matching: sqlserver_data*
+✅ Volume removed: sqlserver_data
+Removing volumes matching: caddy_data*
+✅ Volume removed: caddy_data
+Removing volumes matching: ollama_data*
+✅ Volume removed: ollama_data
+Removing volumes matching: minio_data*
+✅ Volume removed: minio_data
 
 Do you want to prune unused Docker resources (dangling images, stopped containers)? [y/N]
-n
+y
+Pruning unused Docker resources...
+Total reclaimed space: 3.2GB
+✅ Pruning complete
 
 ✅ Cleanup complete!
 ```
@@ -288,7 +306,7 @@ To inspect:
   docker exec -it sql-ai-test-ubuntu-full-stack /bin/bash
 
 To cleanup manually:
-  ./cleanup.sh
+  ./cleanup.sh --all
 ```
 
 ## Test Timing Examples

@@ -40,7 +40,11 @@ cd tests
 
 **Cleanup Resources:**
 ```bash
+# Clean up test resources only
 ./cleanup.sh
+
+# Clean up test resources AND default containers/images
+./cleanup.sh --all
 ```
 
 ## Test Matrix
