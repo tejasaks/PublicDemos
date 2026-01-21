@@ -44,6 +44,54 @@ if [ -z "$SA_PASSWORD" ]; then
     exit 1
 fi
 
+# Validate password complexity
+PASSWORD_VALID=true
+PASSWORD_ERRORS=""
+
+if [[ ${#SA_PASSWORD} -lt 8 ]]; then
+    PASSWORD_VALID=false
+    PASSWORD_ERRORS="${PASSWORD_ERRORS}\n  ❌ Password must be at least 8 characters (currently ${#SA_PASSWORD})"
+fi
+
+if [[ ! "$SA_PASSWORD" =~ [A-Z] ]]; then
+    PASSWORD_VALID=false
+    PASSWORD_ERRORS="${PASSWORD_ERRORS}\n  ❌ Password must contain at least one uppercase letter (A-Z)"
+fi
+
+if [[ ! "$SA_PASSWORD" =~ [a-z] ]]; then
+    PASSWORD_VALID=false
+    PASSWORD_ERRORS="${PASSWORD_ERRORS}\n  ❌ Password must contain at least one lowercase letter (a-z)"
+fi
+
+if [[ ! "$SA_PASSWORD" =~ [0-9] ]]; then
+    PASSWORD_VALID=false
+    PASSWORD_ERRORS="${PASSWORD_ERRORS}\n  ❌ Password must contain at least one digit (0-9)"
+fi
+
+if [[ ! "$SA_PASSWORD" =~ [^a-zA-Z0-9] ]]; then
+    PASSWORD_VALID=false
+    PASSWORD_ERRORS="${PASSWORD_ERRORS}\n  ❌ Password must contain at least one special character (!@#\$%^&*)"
+fi
+
+if [ "$PASSWORD_VALID" = false ]; then
+    echo -e "${RED}Error: SA_PASSWORD does not meet SQL Server complexity requirements${NC}"
+    echo ""
+    echo -e "${RED}Password validation failed:${NC}"
+    echo -e "${PASSWORD_ERRORS}"
+    echo ""
+    echo -e "${YELLOW}SQL Server Password Requirements:${NC}"
+    echo "  ✓ At least 8 characters"
+    echo "  ✓ Contains uppercase letters (A-Z)"
+    echo "  ✓ Contains lowercase letters (a-z)"
+    echo "  ✓ Contains digits (0-9)"
+    echo "  ✓ Contains special characters (!@#\$%^&*)"
+    echo ""
+    echo -e "${GREEN}Example of a valid password:${NC}"
+    echo "  export SA_PASSWORD='MyComplexPass@123'"
+    echo ""
+    exit 1
+fi
+
 # Display configuration
 echo -e "${BLUE}Test Configuration:${NC}"
 echo -e "  Working Directory: ${YELLOW}$SCRIPT_DIR${NC}"

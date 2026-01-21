@@ -3,7 +3,8 @@
 # Deployment Test Suite - Tests all deployment scenarios
 # This script builds, deploys, tests, and cleans up all container configurations
 
-set -e
+# Note: We handle errors manually instead of using 'set -e' to provide better
+# error messages and continue through all test scenarios
 
 # Color codes
 RED='\033[0;31m'
@@ -36,6 +37,20 @@ declare -a FAILED_SCENARIOS
 if [ -z "$SA_PASSWORD" ]; then
     echo -e "${RED}Error: SA_PASSWORD environment variable not set${NC}"
     echo "Please set it with: export SA_PASSWORD='YourComplexPass@123'"
+    exit 1
+fi
+
+# Verify build script exists and is executable
+if [ ! -f "$BUILD_SCRIPT" ]; then
+    echo -e "${RED}Error: Build script not found at: $BUILD_SCRIPT${NC}"
+    echo -e "${YELLOW}SCRIPT_DIR: $SCRIPT_DIR${NC}"
+    echo -e "${YELLOW}Looking for: $BUILD_SCRIPT${NC}"
+    exit 1
+fi
+
+if [ ! -x "$BUILD_SCRIPT" ]; then
+    echo -e "${RED}Error: Build script is not executable: $BUILD_SCRIPT${NC}"
+    echo "Run: chmod +x $BUILD_SCRIPT"
     exit 1
 fi
 
@@ -163,16 +178,31 @@ test_scenario() {
     fi
     
     echo -e "${YELLOW}Build command: $BUILD_SCRIPT $BUILD_ARGS${NC}"
+    echo -e "${YELLOW}Log file: /tmp/build-${scenario_name}-${base_image}.log${NC}"
     echo ""
     
     # Step 1: Build the image
     echo -e "${BLUE}[1/5] Building Docker image...${NC}"
-    if eval "$BUILD_SCRIPT $BUILD_ARGS" &> /tmp/build-${scenario_name}-${base_image}.log; then
+    
+    # Run the build command and capture the exit code
+    LOG_FILE="/tmp/build-${scenario_name}-${base_image}.log"
+    eval "$BUILD_SCRIPT $BUILD_ARGS" &> "$LOG_FILE"
+    BUILD_EXIT_CODE=$?
+    
+    if [ $BUILD_EXIT_CODE -eq 0 ]; then
         echo -e "${GREEN}✅ Build succeeded${NC}"
     else
-        echo -e "${RED}❌ Build failed${NC}"
-        echo -e "${RED}Check logs: /tmp/build-${scenario_name}-${base_image}.log${NC}"
-        tail -n 50 /tmp/build-${scenario_name}-${base_image}.log
+        echo -e "${RED}❌ Build failed (exit code: $BUILD_EXIT_CODE)${NC}"
+        echo -e "${RED}Check logs: $LOG_FILE${NC}"
+        echo ""
+        if [ -f "$LOG_FILE" ]; then
+            echo -e "${YELLOW}Last 50 lines of build log:${NC}"
+            tail -n 50 "$LOG_FILE"
+        else
+            echo -e "${RED}Log file not created - build command may have failed to start${NC}"
+            echo -e "${YELLOW}Build script: $BUILD_SCRIPT${NC}"
+            echo -e "${YELLOW}Build args: $BUILD_ARGS${NC}"
+        fi
         FAILED_SCENARIOS+=("${base_image}/${scenario_name} - Build failed")
         ((FAILED_TESTS++))
         return 1
