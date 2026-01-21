@@ -157,8 +157,8 @@ test_scenario() {
     echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
     ((TOTAL_TESTS++))
     
-    # Build command arguments
-    BUILD_ARGS="--sa-password \"$SA_PASSWORD\" --no-follow"
+    # Build command arguments - pass custom container and image names for test isolation
+    BUILD_ARGS="--sa-password \"$SA_PASSWORD\" --no-follow --container-name \"${container_name}\" --image-name sql-ai-custom --tag test-${base_image}-${scenario_name}"
     
     if [ "$install_ollama" = "false" ]; then
         BUILD_ARGS="$BUILD_ARGS --install-ollama false"
@@ -210,18 +210,18 @@ test_scenario() {
         return 1
     fi
     
-    # Get the actual container name created by build-and-run.sh
-    ACTUAL_CONTAINER=$(docker ps -a --filter "ancestor=sql-ai-custom:latest" --format "{{.Names}}" | head -n 1)
-    
-    if [ -z "$ACTUAL_CONTAINER" ]; then
+    # Verify the container was created with our custom name
+    if ! docker ps -a --filter "name=^${container_name}$" --format "{{.Names}}" | grep -q "^${container_name}$"; then
         echo -e "${RED}❌ Container not found after build${NC}"
+        echo -e "${YELLOW}Expected container name: ${container_name}${NC}"
+        echo -e "${YELLOW}Running containers:${NC}"
+        docker ps -a --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
         FAILED_SCENARIOS+=("${base_image}/${scenario_name} - Container not created")
         ((FAILED_TESTS++))
         return 1
     fi
     
-    container_name="$ACTUAL_CONTAINER"
-    echo -e "${BLUE}Container name: $container_name${NC}"
+    echo -e "${GREEN}✅ Container found: ${container_name}${NC}"
     
     # Step 2: Wait for SQL Server
     echo -e "${BLUE}[2/5] Waiting for SQL Server to start...${NC}"
