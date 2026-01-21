@@ -185,8 +185,10 @@ test_scenario() {
     echo -e "${BLUE}[1/5] Building Docker image...${NC}"
     
     # Run the build command and capture the exit code
+    # IMPORTANT: Change to parent directory because build-and-run.sh expects to run from
+    # the directory containing the Dockerfile
     LOG_FILE="/tmp/build-${scenario_name}-${base_image}.log"
-    eval "$BUILD_SCRIPT $BUILD_ARGS" &> "$LOG_FILE"
+    (cd "$SCRIPT_DIR/.." && eval "$BUILD_SCRIPT $BUILD_ARGS") &> "$LOG_FILE"
     BUILD_EXIT_CODE=$?
     
     if [ $BUILD_EXIT_CODE -eq 0 ]; then
