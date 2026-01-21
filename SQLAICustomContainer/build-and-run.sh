@@ -17,6 +17,7 @@ BASE_IMAGE="mcr.microsoft.com/mssql/server:2025-latest"
 ENABLE_POLYBASE="false"
 INSTALL_OLLAMA="true"
 INSTALL_MINIO="false"
+NO_FOLLOW="false"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -61,6 +62,10 @@ while [[ $# -gt 0 ]]; do
             INSTALL_MINIO="$2"
             shift 2
             ;;
+        --no-follow)
+            NO_FOLLOW="true"
+            shift
+            ;;
         --help)
             echo "Usage: ./build-and-run.sh [OPTIONS]"
             echo ""
@@ -75,6 +80,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --polybase BOOL         Enable SQL Server Polybase: true or false (default: false)"
             echo "  --install-ollama BOOL   Install Ollama AI runtime: true or false (default: true)"
             echo "  --install-minio BOOL    Install MinIO object storage: true or false (default: false)"
+            echo "  --no-follow             Skip following container logs (useful for automation/testing)"
             echo "  --help                  Show this help message"
             echo ""
             echo "Examples:"
@@ -216,5 +222,12 @@ echo "=========================================="
 # Wait for container to be ready
 sleep 5
 
-# Show logs
-docker logs -f "${CONTAINER_NAME}"
+if [ "${NO_FOLLOW}" = "true" ]; then
+    echo ""
+    echo "Container started successfully. Skipping log follow."
+    echo "To view logs: docker logs -f ${CONTAINER_NAME}"
+    echo ""
+else
+    # Show logs
+    docker logs -f "${CONTAINER_NAME}"
+fi

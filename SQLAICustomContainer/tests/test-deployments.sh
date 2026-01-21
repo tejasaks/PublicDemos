@@ -158,7 +158,7 @@ test_scenario() {
     ((TOTAL_TESTS++))
     
     # Build command arguments
-    BUILD_ARGS="--sa-password \"$SA_PASSWORD\""
+    BUILD_ARGS="--sa-password \"$SA_PASSWORD\" --no-follow"
     
     if [ "$install_ollama" = "false" ]; then
         BUILD_ARGS="$BUILD_ARGS --install-ollama false"

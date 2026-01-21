@@ -311,6 +311,14 @@ Common workflow:
 MinIO provides S3-compatible object storage that integrates seamlessly with SQL Server via Polybase, enabling SQL queries over unstructured data stored in MinIO.
 
 **Prerequisites:**
+
+> **⚠️ Linux/macOS Users**: After cloning the repository, make the shell scripts executable:
+> ```bash
+> chmod +x *.sh
+> chmod +x tests/*.sh
+> # Or recursively: find . -name "*.sh" -exec chmod +x {} \;
+> ```
+
 ```bash
 # Build with Polybase and MinIO enabled
 ./build-and-run.sh --sa-password "YourStrong@Pass123" --polybase true --install-minio true

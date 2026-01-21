@@ -108,6 +108,19 @@ OS Detection Layer:
 > Both images are published by Microsoft and support the same SQL Server features.
 > To verify available tags: https://mcr.microsoft.com/en-us/product/mssql/rhel/server/tags
 
+> **⚠️ IMPORTANT - Linux/macOS Users**: After cloning this repository, the shell scripts will not be executable by default due to Git's file permission handling. You must make them executable before running:
+>
+> ```bash
+> # Make all shell scripts executable (run from repository root)
+> chmod +x *.sh
+> chmod +x tests/*.sh
+> ```
+>
+> Or recursively for all shell scripts:
+> ```bash
+> find . -name "*.sh" -exec chmod +x {} \;
+> ```
+
 ## Building the Container
 
 > **⚠️ SECURITY NOTICE**: The SA password is mandatory and must be provided via command-line parameter when using the build script: `--sa-password 'YourStrong@Pass123'`
