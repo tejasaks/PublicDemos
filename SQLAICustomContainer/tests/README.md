@@ -15,8 +15,15 @@ This test suite validates all deployment configurations for the SQL Server + AI 
 Before running tests, ensure you have:
 
 1. **Docker** installed and running
+   - Installation guide: [Get Docker](https://docs.docker.com/get-docker/)
+   - Linux: [Install Docker Engine](https://docs.docker.com/engine/install/)
+   - macOS: [Install Docker Desktop](https://docs.docker.com/desktop/install/mac-install/)
+
 2. **SQL Server command-line tools** (`sqlcmd`) installed and in PATH
+   - Installation guide: [Install sqlcmd on Linux](https://learn.microsoft.com/en-us/sql/linux/sql-server-linux-setup-tools)
+
 3. **Bash** shell (Linux or macOS)
+
 4. **SA Password** set as environment variable: `export SA_PASSWORD='YourPass@123'`
 
 ## Running Tests
