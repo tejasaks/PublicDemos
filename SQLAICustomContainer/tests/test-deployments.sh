@@ -80,9 +80,9 @@ wait_for_sql() {
             return 1
         fi
         
-        # Try to connect with sqlcmd
-        if docker exec "$container_name" /opt/mssql-tools/bin/sqlcmd \
-            -S localhost -U sa -P "$SA_PASSWORD" \
+        # Try to connect with sqlcmd (use -C to trust server certificate)
+        if docker exec "$container_name" /opt/mssql-tools18/bin/sqlcmd \
+            -S localhost -U sa -P "$SA_PASSWORD" -C \
             -Q "SELECT 1" &> /dev/null; then
             echo -e "${GREEN}✅ SQL Server is ready (${elapsed}s)${NC}"
             return 0
@@ -107,8 +107,8 @@ test_sql_connectivity() {
     
     # Test 1: SELECT @@VERSION
     echo -e "  ${BLUE}[1/2]${NC} Testing SELECT @@VERSION..."
-    VERSION_OUTPUT=$(docker exec "$container_name" /opt/mssql-tools/bin/sqlcmd \
-        -S localhost -U sa -P "$SA_PASSWORD" \
+    VERSION_OUTPUT=$(docker exec "$container_name" /opt/mssql-tools18/bin/sqlcmd \
+        -S localhost -U sa -P "$SA_PASSWORD" -C \
         -Q "SET NOCOUNT ON; SELECT @@VERSION" -h -1 2>&1)
     
     if [ $? -eq 0 ]; then
@@ -122,8 +122,8 @@ test_sql_connectivity() {
     
     # Test 2: SELECT @@SERVERNAME
     echo -e "  ${BLUE}[2/2]${NC} Testing SELECT @@SERVERNAME..."
-    SERVERNAME_OUTPUT=$(docker exec "$container_name" /opt/mssql-tools/bin/sqlcmd \
-        -S localhost -U sa -P "$SA_PASSWORD" \
+    SERVERNAME_OUTPUT=$(docker exec "$container_name" /opt/mssql-tools18/bin/sqlcmd \
+        -S localhost -U sa -P "$SA_PASSWORD" -C \
         -Q "SET NOCOUNT ON; SELECT @@SERVERNAME" -h -1 2>&1)
     
     if [ $? -eq 0 ]; then
