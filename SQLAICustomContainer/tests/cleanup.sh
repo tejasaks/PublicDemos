@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # Cleanup Script - Removes test containers, images, and volumes
-# Usage: ./cleanup.sh [container_name] [image_name]
-# If no arguments provided, cleans up all sql-ai-test-* resources
-
-set -e
+# Usage: ./cleanup.sh [--all]
+# 
+# By default, cleans up test resources (sql-ai-test-* containers/images)
+# Use --all flag to also clean up default sqlserver-ollama container/image
 
 # Color codes
 RED='\033[0;31m'
@@ -13,10 +13,19 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-CONTAINER_PREFIX="${1:-sql-ai-test-}"
-IMAGE_PREFIX="${2:-sql-ai-custom}"
+CLEANUP_ALL=false
+
+# Parse arguments
+if [ "$1" = "--all" ]; then
+    CLEANUP_ALL=true
+fi
 
 echo -e "${BLUE}Starting cleanup of test resources...${NC}"
+if [ "$CLEANUP_ALL" = true ]; then
+    echo -e "${YELLOW}Mode: Cleaning up ALL SQL AI containers and images (including defaults)${NC}"
+else
+    echo -e "${YELLOW}Mode: Cleaning up test resources only (use --all to include defaults)${NC}"
+fi
 echo ""
 
 # Function to safely remove container
@@ -69,34 +78,63 @@ remove_volumes() {
 
 # Cleanup containers
 echo -e "${BLUE}[1/3] Cleaning up containers...${NC}"
-CONTAINERS=$(docker ps -a --format '{{.Names}}' | grep "^${CONTAINER_PREFIX}" || true)
+
+# Test containers (always cleanup)
+CONTAINERS=$(docker ps -a --format '{{.Names}}' | grep "^sql-ai-test-" || true)
 
 if [ -n "$CONTAINERS" ]; then
     echo "$CONTAINERS" | while read -r container; do
         remove_container "$container"
     done
 else
-    echo -e "${BLUE}No containers found matching: ${CONTAINER_PREFIX}*${NC}"
+    echo -e "${BLUE}No test containers found (sql-ai-test-*)${NC}"
+fi
+
+# Default sqlserver-ollama container (only if --all flag)
+if [ "$CLEANUP_ALL" = true ]; then
+    if docker ps -a --format '{{.Names}}' | grep -q "^sqlserver-ollama$"; then
+        remove_container "sqlserver-ollama"
+    else
+        echo -e "${BLUE}No default container found (sqlserver-ollama)${NC}"
+    fi
 fi
 echo ""
 
 # Cleanup images
 echo -e "${BLUE}[2/3] Cleaning up images...${NC}"
-IMAGES=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "^${IMAGE_PREFIX}" || true)
+
+# Test images (always cleanup)
+IMAGES=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "^sql-ai-custom" || true)
 
 if [ -n "$IMAGES" ]; then
     echo "$IMAGES" | while read -r image; do
         remove_image "$image"
     done
 else
-    echo -e "${BLUE}No images found matching: ${IMAGE_PREFIX}*${NC}"
+    echo -e "${BLUE}No test images found (sql-ai-custom*)${NC}"
+fi
+
+# Default sqlserver-ollama image (only if --all flag)
+if [ "$CLEANUP_ALL" = true ]; then
+    DEFAULT_IMAGES=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "^sqlserver-ollama" || true)
+    if [ -n "$DEFAULT_IMAGES" ]; then
+        echo "$DEFAULT_IMAGES" | while read -r image; do
+            remove_image "$image"
+        done
+    else
+        echo -e "${BLUE}No default images found (sqlserver-ollama*)${NC}"
+    fi
 fi
 echo ""
 
 # Cleanup volumes
 echo -e "${BLUE}[3/3] Cleaning up volumes...${NC}"
+remove_volumes "sqlserver_data"
 remove_volumes "sqldata"
+remove_volumes "caddy_data"
+remove_volumes "ollama_data"
 remove_volumes "ollama-models"
+remove_volumes "minio_data"
 remove_volumes "minio-data"
 echo ""
 
