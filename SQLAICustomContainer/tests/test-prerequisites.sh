@@ -3,7 +3,8 @@
 # Test Prerequisites - Validates Docker and SQL Server tools installation
 # This script checks if all required tools are installed and properly configured
 
-set -e
+# Note: We don't use 'set -e' here so the script continues through all checks
+# even if some fail, providing complete diagnostic information
 
 # Color codes for output
 RED='\033[0;31m'
