@@ -171,7 +171,7 @@ cat /tmp/build-minimal-ubuntu.log
 | SA password error | Use complex password (8+ chars, mixed case, digits, special) |
 | Timeout waiting for SQL | Increase `TEST_TIMEOUT=180` |
 | Permission denied | Add user to `docker` group or use sudo |
-| Disk space error | Free up at least 20 GB |
+| Disk space error | Free up at least 20 GB, 30GB+ recommended |
 
 ## 📖 Documentation Quick Links
 

@@ -205,7 +205,11 @@ Test logs are written to `/tmp/`:
 1. **Always run prerequisites first** on new systems
 2. **Set appropriate timeout** for slower systems (`TEST_TIMEOUT=180`)
 3. **Use SKIP_CLEANUP=1** when debugging failures
-4. **Check disk space** before running full suite (~20GB recommended)
+4. **Check disk space** before running full suite
+   - 20GB minimum required
+   - 30GB+ recommended for all 14 tests
+   - Tests automatically clean up when space drops below 15GB
+   - Tests fail fast when space drops below 5GB
 5. **Clean up** after debugging with `./cleanup.sh`
 6. **Review logs** in `/tmp/` for build failures
 

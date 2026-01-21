@@ -183,10 +183,30 @@ test_scenario() {
     
     # Check available disk space before build
     AVAILABLE_SPACE=$(df / | tail -1 | awk '{print $4}')
-    if [ $AVAILABLE_SPACE -lt 10485760 ]; then  # Less than 10GB
-        echo -e "${YELLOW}Warning: Low disk space ($(($AVAILABLE_SPACE/1048576))GB available)${NC}"
-        echo -e "${YELLOW}Cleaning Docker build cache...${NC}"
-        docker builder prune -f &> /dev/null || true
+    AVAILABLE_GB=$(($AVAILABLE_SPACE/1048576))
+    
+    if [ $AVAILABLE_SPACE -lt 15728640 ]; then  # Less than 15GB
+        echo -e "${YELLOW}Warning: Low disk space (${AVAILABLE_GB}GB available)${NC}"
+        echo -e "${YELLOW}Performing aggressive cleanup...${NC}"
+        
+        # Remove dangling images
+        docker image prune -f &> /dev/null || true
+        
+        # Prune build cache aggressively
+        docker builder prune -a -f &> /dev/null || true
+        
+        # Check space again
+        AVAILABLE_SPACE=$(df / | tail -1 | awk '{print $4}')
+        AVAILABLE_GB=$(($AVAILABLE_SPACE/1048576))
+        echo -e "${GREEN}After cleanup: ${AVAILABLE_GB}GB available${NC}"
+        
+        if [ $AVAILABLE_SPACE -lt 5242880 ]; then  # Less than 5GB
+            echo -e "${RED}ERROR: Insufficient disk space (${AVAILABLE_GB}GB). Need at least 5GB to continue.${NC}"
+            echo -e "${RED}Please free up disk space and try again.${NC}"
+            FAILED_SCENARIOS+=("${base_image}/${scenario_name} - Insufficient disk space")
+            ((FAILED_TESTS++))
+            return 1
+        fi
     fi
     
     # Step 1: Build the image
@@ -270,14 +290,29 @@ test_scenario() {
         echo -e "${BLUE}[4/5] Cleaning up resources...${NC}"
         
         # Stop and remove container
+        echo -e "  ${YELLOW}Removing container: ${container_name}${NC}"
         docker stop "$container_name" &> /dev/null || true
         docker rm "$container_name" &> /dev/null || true
         
         # Remove the test image we just created
-        docker rmi "${image_name}" &> /dev/null || true
+        echo -e "  ${YELLOW}Removing image: ${image_name}${NC}"
+        if docker rmi "${image_name}" &> /dev/null; then
+            echo -e "  ${GREEN}✅ Image removed${NC}"
+        else
+            # Try removing by force
+            docker rmi -f "${image_name}" &> /dev/null || true
+        fi
         
-        # Clean up build cache to save space
-        docker builder prune -f &> /dev/null || true
+        # Remove dangling images to free space
+        echo -e "  ${YELLOW}Removing dangling images...${NC}"
+        docker image prune -f &> /dev/null || true
+        
+        # Clean up build cache to save space (aggressive)
+        echo -e "  ${YELLOW}Cleaning build cache...${NC}"
+        CACHE_FREED=$(docker builder prune -f 2>&1 | grep "Total reclaimed space" || echo "0B")
+        if [ -n "$CACHE_FREED" ]; then
+            echo -e "  ${GREEN}✅ Build cache cleaned: $CACHE_FREED${NC}"
+        fi
         
         echo -e "${GREEN}✅ Cleanup complete${NC}"
     else

@@ -31,10 +31,12 @@ Use this checklist before running the test suite to ensure everything is configu
   which sqlcmd
   ```
 
-- [ ] **At least 20GB free disk space**
+- [ ] **At least 20GB free disk space** (30GB+ recommended for all tests)
   ```bash
   df -h .
   ```
+  
+  > **Note:** Tests will warn at <15GB and fail at <5GB. Automatic cleanup runs when space is low.
 
 ### Configuration
 

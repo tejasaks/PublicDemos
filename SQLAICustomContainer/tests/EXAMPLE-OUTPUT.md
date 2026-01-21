@@ -73,7 +73,7 @@ Phase 1: Prerequisites Check
 
 [7/7] Checking available disk space...
 ✅ PASS - Disk space available
-   45GB available (required: 20GB)
+   45GB available (15GB minimum for smooth operation)
 
 ════════════════════════════════════════════════════════════
                     Test Summary
