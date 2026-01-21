@@ -181,6 +181,14 @@ test_scenario() {
     echo -e "${YELLOW}Log file: /tmp/build-${scenario_name}-${base_image}.log${NC}"
     echo ""
     
+    # Check available disk space before build
+    AVAILABLE_SPACE=$(df / | tail -1 | awk '{print $4}')
+    if [ $AVAILABLE_SPACE -lt 10485760 ]; then  # Less than 10GB
+        echo -e "${YELLOW}Warning: Low disk space ($(($AVAILABLE_SPACE/1048576))GB available)${NC}"
+        echo -e "${YELLOW}Cleaning Docker build cache...${NC}"
+        docker builder prune -f &> /dev/null || true
+    fi
+    
     # Step 1: Build the image
     echo -e "${BLUE}[1/5] Building Docker image...${NC}"
     
@@ -265,11 +273,11 @@ test_scenario() {
         docker stop "$container_name" &> /dev/null || true
         docker rm "$container_name" &> /dev/null || true
         
-        # Remove image
-        docker rmi sql-ai-custom:latest &> /dev/null || true
+        # Remove the test image we just created
+        docker rmi "${image_name}" &> /dev/null || true
         
-        # Remove volumes
-        docker volume rm sqldata ollama-models minio-data &> /dev/null || true
+        # Clean up build cache to save space
+        docker builder prune -f &> /dev/null || true
         
         echo -e "${GREEN}✅ Cleanup complete${NC}"
     else
