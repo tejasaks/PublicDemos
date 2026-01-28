@@ -26,13 +26,17 @@ help: ## Display this help.
 
 ##@ Development
 
+.PHONY: tidy
+tidy: ## Run go mod tidy to download dependencies and update go.sum
+	go mod tidy
+
 .PHONY: manifests
-manifests: controller-gen ## Generate CRD manifests.
+manifests: controller-gen tidy ## Generate CRD manifests.
 	$(CONTROLLER_GEN) crd paths="./pkg/apis/..." output:crd:artifacts:config=config/crd/bases
 	$(CONTROLLER_GEN) rbac:roleName=mssql-operator paths="./internal/controller/..." output:rbac:artifacts:config=config/rbac
 
 .PHONY: generate
-generate: controller-gen ## Generate code (DeepCopy functions).
+generate: controller-gen tidy ## Generate code (DeepCopy functions).
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./pkg/apis/..."
 
 .PHONY: fmt

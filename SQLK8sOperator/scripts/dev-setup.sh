@@ -103,6 +103,10 @@ build_operator() {
     log_info "Building operator..."
     cd "${PROJECT_ROOT}"
     
+    # Download dependencies and generate go.sum
+    log_info "Downloading Go dependencies..."
+    go mod tidy
+    
     # Build the operator binary
     make build
     
