@@ -1,0 +1,274 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: sqlserverags.mssql.microsoft.com
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+  labels:
+    {{- include "mssql-operator.labels" . | nindent 4 }}
+spec:
+  group: mssql.microsoft.com
+  names:
+    kind: SQLServerAG
+    listKind: SQLServerAGList
+    plural: sqlserverags
+    singular: sqlserverag
+    shortNames:
+      - mssqlag
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: AG-Name
+          type: string
+          jsonPath: .spec.availabilityGroup.name
+        - name: Replicas
+          type: integer
+          jsonPath: .spec.availabilityGroup.replicas
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Primary
+          type: string
+          jsonPath: .status.primaryReplica
+        - name: Synced
+          type: integer
+          jsonPath: .status.synchronizedReplicas
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          description: SQLServerAG is the Schema for the sqlserverags API
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              description: SQLServerAGSpec defines the desired state of SQLServerAG
+              type: object
+              required:
+                - sqlServerRef
+                - availabilityGroup
+              properties:
+                sqlServerRef:
+                  description: Reference to the SQLServer resource
+                  type: object
+                  required:
+                    - name
+                  properties:
+                    name:
+                      type: string
+                availabilityGroup:
+                  description: Availability Group configuration
+                  type: object
+                  required:
+                    - name
+                    - primaryConfig
+                    - secondaryConfig
+                  properties:
+                    name:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                    replicas:
+                      type: integer
+                      minimum: 2
+                      maximum: 9
+                      default: 3
+                    primaryConfig:
+                      type: object
+                      properties:
+                        availabilityMode:
+                          type: string
+                          enum: [SynchronousCommit, AsynchronousCommit]
+                          default: SynchronousCommit
+                        failoverMode:
+                          type: string
+                          enum: [External]
+                          default: External
+                        readableSecondary:
+                          type: string
+                          enum: ["No", ReadOnly, All]
+                          default: ReadOnly
+                        sessionTimeout:
+                          type: integer
+                          default: 10
+                    secondaryConfig:
+                      type: object
+                      properties:
+                        availabilityMode:
+                          type: string
+                          enum: [SynchronousCommit, AsynchronousCommit]
+                          default: SynchronousCommit
+                        failoverMode:
+                          type: string
+                          enum: [External]
+                          default: External
+                        readableSecondary:
+                          type: string
+                          enum: ["No", ReadOnly, All]
+                          default: ReadOnly
+                        sessionTimeout:
+                          type: integer
+                          default: 10
+                    seedingMode:
+                      type: string
+                      enum: [Automatic, Manual]
+                      default: Automatic
+                    databases:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                          backupPath:
+                            type: string
+                    dbFailover:
+                      type: boolean
+                      default: true
+                    clusterType:
+                      type: string
+                      enum: [External]
+                      default: External
+                    endpointPort:
+                      type: integer
+                      default: 5022
+                    externalWriteLeaseValidity:
+                      type: string
+                      default: "20s"
+                failover:
+                  description: Failover configuration
+                  type: object
+                  properties:
+                    automatic:
+                      type: boolean
+                      default: true
+                    dataLossThreshold:
+                      type: integer
+                      default: 0
+                    healthCheckTimeout:
+                      type: string
+                      default: "30s"
+                    leaseTimeout:
+                      type: string
+                      default: "60s"
+                    requiredSynchronizedSecondaries:
+                      type: integer
+                      default: -1
+                endpoints:
+                  description: Service endpoints for AG
+                  type: object
+                  properties:
+                    primary:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                          enum: [ClusterIP, NodePort, LoadBalancer]
+                          default: ClusterIP
+                        port:
+                          type: integer
+                          default: 1433
+                        annotations:
+                          type: object
+                          additionalProperties:
+                            type: string
+                    secondary:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                          enum: [ClusterIP, NodePort, LoadBalancer]
+                          default: ClusterIP
+                        port:
+                          type: integer
+                          default: 1433
+                        annotations:
+                          type: object
+                          additionalProperties:
+                            type: string
+                sidecar:
+                  description: AG helper sidecar configuration
+                  type: object
+                  properties:
+                    image:
+                      type: string
+                      default: mssql-ag-helper:latest
+                    monitorInterval:
+                      type: string
+                      default: "10s"
+                    connectionTimeout:
+                      type: string
+                      default: "30s"
+            status:
+              description: SQLServerAGStatus defines the observed state
+              type: object
+              properties:
+                phase:
+                  type: string
+                  enum: [Pending, Creating, Synchronized, Degraded, Failed]
+                primaryReplica:
+                  type: string
+                synchronizedReplicas:
+                  type: integer
+                healthyDatabases:
+                  type: array
+                  items:
+                    type: string
+                replicas:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      role:
+                        type: string
+                        enum: [PRIMARY, SECONDARY, RESOLVING, CONFIGURATION_ONLY]
+                      availabilityMode:
+                        type: string
+                      synchronizationState:
+                        type: string
+                      connectedState:
+                        type: string
+                      sequenceNumber:
+                        type: integer
+                        format: int64
+                      isLocal:
+                        type: boolean
+                      health:
+                        type: string
+                        enum: [Healthy, Warning, Critical, Unknown]
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                lastFailoverTime:
+                  type: string
+                  format: date-time
+                observedGeneration:
+                  type: integer
+                  format: int64

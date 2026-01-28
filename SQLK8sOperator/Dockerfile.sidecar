@@ -1,0 +1,36 @@
+# Build stage for AG Helper sidecar
+FROM golang:1.22-alpine AS builder
+
+WORKDIR /workspace
+
+# Copy go mod files
+COPY go.mod go.mod
+COPY go.sum go.sum
+
+# Download dependencies
+RUN go mod download
+
+# Copy source code
+COPY cmd/ cmd/
+COPY pkg/ pkg/
+COPY internal/ internal/
+
+# Build the AG helper sidecar
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o mssql-ag-helper ./cmd/mssql-ag-helper
+
+# Runtime stage - using ubuntu for sqlcmd compatibility if needed
+FROM ubuntu:22.04
+
+# Install minimal dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /
+
+COPY --from=builder /workspace/mssql-ag-helper .
+
+# Run as mssql user (UID 10001)
+USER 10001:10001
+
+ENTRYPOINT ["/mssql-ag-helper"]

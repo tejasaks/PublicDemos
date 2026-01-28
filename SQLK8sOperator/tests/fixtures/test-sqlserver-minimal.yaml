@@ -1,0 +1,33 @@
+# Minimal SQLServer resource for testing
+# This uses the smallest valid configuration
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServer
+metadata:
+  name: test-minimal
+spec:
+  version: "2022"
+  edition: Developer
+  instance:
+    replicas: 1
+    resources:
+      limits:
+        cpu: "1"
+        memory: 2Gi
+      requests:
+        cpu: "250m"
+        memory: 1Gi
+    storage:
+      data:
+        size: 1Gi
+  credentials:
+    saPasswordSecretRef:
+      name: test-sa-password
+      key: password
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: test-sa-password
+type: Opaque
+stringData:
+  password: "TestP@ssw0rd123!"

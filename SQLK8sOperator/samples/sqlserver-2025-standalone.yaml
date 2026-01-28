@@ -1,0 +1,76 @@
+# SQL Server 2025 Standalone Instance
+# Using the latest SQL Server 2025 container image
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServer
+metadata:
+  name: mssql-2025-standalone
+  namespace: mssql
+spec:
+  # SQL Server 2025 - latest version
+  version: "2025"
+  
+  # Edition: Developer, Express, Standard, Enterprise
+  edition: Developer
+  
+  instance:
+    replicas: 1
+    
+    # SQL Server 2025 image
+    # The operator will use mcr.microsoft.com/mssql/server:2025-latest by default
+    # image: mcr.microsoft.com/mssql/server:2025-preview-ubuntu-22.04
+    
+    resources:
+      limits:
+        cpu: "4"
+        memory: 8Gi
+      requests:
+        cpu: "2"
+        memory: 4Gi
+    
+    storage:
+      data:
+        size: 20Gi
+        # storageClass: fast-ssd  # Optional
+      log:
+        size: 10Gi
+      tempdb:
+        size: 10Gi
+      backup:
+        size: 20Gi
+    
+    config:
+      agentEnabled: true
+      hadrEnabled: true
+      collation: SQL_Latin1_General_CP1_CI_AS
+      lcid: 1033
+      # Enable TLS for production
+      # tlsEnabled: true
+      # tlsCertSecretRef:
+      #   name: mssql-tls-cert
+  
+  credentials:
+    saPasswordSecretRef:
+      name: mssql-2025-sa-password
+      key: password
+  
+  service:
+    type: LoadBalancer
+    port: 1433
+    # loadBalancerIP: 10.0.0.100  # Optional: request specific IP
+    annotations:
+      service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+  
+  monitoring:
+    enabled: true
+    exporterImage: burningalchemist/sql_exporter:latest
+    exporterPort: 9399
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mssql-2025-sa-password
+  namespace: mssql
+type: Opaque
+stringData:
+  password: "YourStrong@Passw0rd!"

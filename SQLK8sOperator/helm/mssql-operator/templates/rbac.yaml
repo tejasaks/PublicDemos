@@ -1,0 +1,137 @@
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "mssql-operator.fullname" . }}
+  labels:
+    {{- include "mssql-operator.labels" . | nindent 4 }}
+rules:
+  # SQLServer resources
+  - apiGroups:
+      - mssql.microsoft.com
+    resources:
+      - sqlservers
+      - sqlserverags
+      - operatorconfigurations
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - mssql.microsoft.com
+    resources:
+      - sqlservers/status
+      - sqlserverags/status
+      - operatorconfigurations/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
+      - mssql.microsoft.com
+    resources:
+      - sqlservers/finalizers
+      - sqlserverags/finalizers
+    verbs:
+      - update
+  # Core resources
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+      - pods/log
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - services
+      - configmaps
+      - secrets
+      - endpoints
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - persistentvolumeclaims
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+  # Apps resources
+  - apiGroups:
+      - apps
+    resources:
+      - statefulsets
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  # Policy resources
+  - apiGroups:
+      - policy
+    resources:
+      - poddisruptionbudgets
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  # Coordination resources (for leader election)
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "mssql-operator.fullname" . }}
+  labels:
+    {{- include "mssql-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "mssql-operator.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "mssql-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

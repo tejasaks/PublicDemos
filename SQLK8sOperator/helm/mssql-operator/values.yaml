@@ -1,0 +1,130 @@
+# Default values for mssql-operator
+# This is a YAML-formatted file.
+
+# Operator image configuration
+image:
+  repository: mssql-operator
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Image pull secrets for private registries
+imagePullSecrets: []
+
+# Number of replicas for the operator
+replicaCount: 1
+
+# Service account configuration
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use
+  name: "mssql-operator"
+
+# RBAC configuration
+rbac:
+  # Specifies whether RBAC resources should be created
+  create: true
+
+# Pod annotations
+podAnnotations: {}
+
+# Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532
+
+# Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+
+# Resource limits and requests
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Node selector for operator pod
+nodeSelector: {}
+
+# Tolerations for operator pod
+tolerations: []
+
+# Affinity for operator pod
+affinity: {}
+
+# Leader election configuration
+leaderElection:
+  enabled: true
+  # Leader election resource name
+  resourceName: mssql-operator-leader-election
+
+# Metrics configuration
+metrics:
+  # Enable Prometheus metrics
+  enabled: true
+  # Metrics service port
+  port: 8080
+  # Create ServiceMonitor for Prometheus Operator
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+
+# Health probe configuration
+healthProbes:
+  port: 8081
+
+# Logging configuration
+logging:
+  # Log level: debug, info, warn, error
+  level: info
+  # Development mode (human-readable logs)
+  development: false
+
+# Operator configuration
+operator:
+  # Number of concurrent reconciliation workers
+  workers: 8
+  # Resync period for full reconciliation
+  resyncPeriod: 30m
+  # Namespace to watch (empty = all namespaces)
+  watchNamespace: ""
+
+# Default SQL Server configuration
+sqlServer:
+  # Default image for SQL Server 2022
+  image2022: mcr.microsoft.com/mssql/server:2022-latest
+  # Default image for SQL Server 2025
+  image2025: mcr.microsoft.com/mssql/server:2025-latest
+  # Default image for SQL Server 2019
+  image2019: mcr.microsoft.com/mssql/server:2019-latest
+
+# AG Helper sidecar configuration
+agHelper:
+  image:
+    repository: mssql-ag-helper
+    tag: latest
+    pullPolicy: IfNotPresent
+
+# Monitoring exporter configuration
+monitoring:
+  exporterImage: burningalchemist/sql_exporter:latest
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# NetworkPolicy
+networkPolicy:
+  enabled: false

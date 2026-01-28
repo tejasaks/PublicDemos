@@ -1,0 +1,45 @@
+# SQLServerAG resource for testing
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServerAG
+metadata:
+  name: test-ag
+spec:
+  sqlServerRef:
+    name: test-ag-cluster
+  availabilityGroup:
+    name: TestAG
+    replicas: 3
+    primaryConfig:
+      availabilityMode: SynchronousCommit
+      failoverMode: External
+      readableSecondary: ReadOnly
+      sessionTimeout: 10
+    secondaryConfig:
+      availabilityMode: SynchronousCommit
+      failoverMode: External
+      readableSecondary: ReadOnly
+      sessionTimeout: 10
+    seedingMode: Automatic
+    databases:
+      - name: TestDB
+    dbFailover: true
+    clusterType: External
+    endpointPort: 5022
+    externalWriteLeaseValidity: "20s"
+  failover:
+    automatic: true
+    dataLossThreshold: 0
+    healthCheckTimeout: "30s"
+    leaseTimeout: "60s"
+    requiredSynchronizedSecondaries: -1
+  endpoints:
+    primary:
+      type: ClusterIP
+      port: 1433
+    secondary:
+      type: ClusterIP
+      port: 1433
+  sidecar:
+    image: mssql-ag-helper:dev
+    monitorInterval: "10s"
+    connectionTimeout: "30s"

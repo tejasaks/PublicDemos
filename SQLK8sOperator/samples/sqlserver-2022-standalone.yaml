@@ -1,0 +1,87 @@
+# SQL Server 2022 Standalone Instance
+# This is a basic standalone SQL Server deployment
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServer
+metadata:
+  name: mssql-2022-standalone
+  namespace: mssql
+spec:
+  # SQL Server version - 2019, 2022, or 2025
+  version: "2022"
+  
+  # Edition: Developer, Express, Standard, Enterprise
+  edition: Developer
+  
+  instance:
+    # Single replica for standalone
+    replicas: 1
+    
+    # Optional: Override default image
+    # image: mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04
+    
+    # Resource requirements
+    resources:
+      limits:
+        cpu: "2"
+        memory: 4Gi
+      requests:
+        cpu: "1"
+        memory: 2Gi
+    
+    # Storage configuration
+    storage:
+      # Data volume - required
+      data:
+        size: 10Gi
+        # storageClass: standard  # Optional: use default SC
+      
+      # Log volume - optional but recommended
+      log:
+        size: 5Gi
+      
+      # TempDB volume - optional
+      tempdb:
+        size: 5Gi
+      
+      # Backup volume - optional
+      backup:
+        size: 10Gi
+    
+    # SQL Server configuration options
+    config:
+      agentEnabled: true
+      hadrEnabled: true
+      collation: SQL_Latin1_General_CP1_CI_AS
+      lcid: 1033  # English
+      # memoryLimitMB: 3072  # Optional: limit SQL memory
+      # traceFlags: [1222, 3226]  # Optional: enable trace flags
+  
+  # Authentication
+  credentials:
+    saPasswordSecretRef:
+      name: mssql-sa-password
+      key: password
+  
+  # Service configuration
+  service:
+    type: ClusterIP
+    port: 1433
+  
+  # Monitoring with SQL Exporter
+  monitoring:
+    enabled: true
+    exporterImage: burningalchemist/sql_exporter:latest
+    exporterPort: 9399
+
+---
+# Secret for SA password
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mssql-sa-password
+  namespace: mssql
+type: Opaque
+stringData:
+  # IMPORTANT: Use a strong password in production!
+  # Requirements: 8+ chars, uppercase, lowercase, number, special char
+  password: "YourStrong@Passw0rd!"

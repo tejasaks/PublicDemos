@@ -1,0 +1,161 @@
+# SQL Server with Active Directory Authentication
+# This sample shows how to configure Windows Authentication via Kerberos
+# for SQL Server on Linux running in Kubernetes
+#
+# Prerequisites:
+# 1. Active Directory domain with reachable Domain Controllers
+# 2. AD service account with permission to create SPNs
+# 3. Network connectivity from pods to domain controllers
+# 4. CoreDNS configured to forward AD domain lookups
+#
+# Reference: https://learn.microsoft.com/en-us/sql/linux/sql-server-linux-active-directory-authentication
+
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServer
+metadata:
+  name: mssql-with-ad
+  namespace: mssql
+spec:
+  version: "2022"
+  edition: Enterprise  # AD auth works with all editions
+  
+  instance:
+    replicas: 1
+    
+    resources:
+      limits:
+        cpu: "4"
+        memory: 8Gi
+      requests:
+        cpu: "2"
+        memory: 4Gi
+    
+    storage:
+      data:
+        size: 50Gi
+        storageClass: managed-premium
+      log:
+        size: 20Gi
+        storageClass: managed-premium
+      tempdb:
+        size: 10Gi
+      backup:
+        size: 50Gi
+    
+    config:
+      agentEnabled: true
+      hadrEnabled: true
+      collation: SQL_Latin1_General_CP1_CI_AS
+      lcid: 1033
+      tlsEnabled: true
+      tlsCertSecretRef:
+        name: mssql-tls-cert
+  
+  credentials:
+    saPasswordSecretRef:
+      name: mssql-ad-sa-password
+      key: password
+  
+  # Active Directory Authentication Configuration
+  # This enables Windows Authentication for SQL Server on Linux
+  activeDirectory:
+    # Enable AD authentication
+    enabled: true
+    
+    # Kerberos realm - typically the AD domain in UPPERCASE
+    realm: CONTOSO.COM
+    
+    # List of domain controller hostnames or IPs
+    # At least one DC must be reachable
+    domainControllers:
+      - dc1.contoso.com
+      - dc2.contoso.com
+    
+    # Secret containing AD service account credentials
+    # This account is used to:
+    # 1. Join SQL Server to the domain
+    # 2. Create/manage SPNs for the SQL Server service
+    serviceAccountSecretRef:
+      name: mssql-ad-service-account
+    
+    # SPN prefix (default: MSSQLSvc)
+    # The full SPN will be: MSSQLSvc/<FQDN>:1433
+    spnPrefix: MSSQLSvc
+    
+    # Optional: Pre-created keytab file
+    # If not provided, the operator will generate one
+    # keytabSecretRef:
+    #   name: mssql-keytab
+    
+    # NetBIOS domain name (short name)
+    netBIOSDomain: CONTOSO
+    
+    # DNS suffix for the domain
+    dnsSuffix: contoso.com
+    
+    # AD group that should have sysadmin access
+    # Members of this group can login with Windows auth
+    adminGroup: SQLServerAdmins
+  
+  service:
+    type: LoadBalancer
+    port: 1433
+    annotations:
+      # For Azure: internal load balancer
+      service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+      # DNS annotation for external-dns
+      external-dns.alpha.kubernetes.io/hostname: mssql.contoso.com
+  
+  monitoring:
+    enabled: true
+
+---
+# Secret for SA password
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mssql-ad-sa-password
+  namespace: mssql
+type: Opaque
+stringData:
+  password: "YourStrong@Passw0rd!"
+
+---
+# Secret for AD service account
+# This account needs permissions to create SPNs
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mssql-ad-service-account
+  namespace: mssql
+type: Opaque
+stringData:
+  # AD username (can be UPN or SAM format)
+  username: sqlsvc@contoso.com
+  # AD password
+  password: "ADServiceAccountPassword!"
+
+---
+# Optional: Pre-created keytab file
+# Generate with: ktutil or adutil
+# apiVersion: v1
+# kind: Secret
+# metadata:
+#   name: mssql-keytab
+#   namespace: mssql
+# type: Opaque
+# data:
+#   keytab: <base64-encoded-keytab-file>
+
+---
+# Optional: TLS certificate for SQL Server
+# Can be generated with cert-manager or provided externally
+# apiVersion: v1
+# kind: Secret
+# metadata:
+#   name: mssql-tls-cert
+#   namespace: mssql
+# type: kubernetes.io/tls
+# data:
+#   tls.crt: <base64-encoded-certificate>
+#   tls.key: <base64-encoded-private-key>

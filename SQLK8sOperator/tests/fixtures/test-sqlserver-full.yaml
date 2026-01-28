@@ -1,0 +1,68 @@
+# Full SQLServer resource with all options for testing
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServer
+metadata:
+  name: test-full
+  labels:
+    test: "true"
+    environment: "testing"
+spec:
+  version: "2022"
+  edition: Developer
+  instance:
+    replicas: 1
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    imagePullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: "2"
+        memory: 4Gi
+      requests:
+        cpu: "500m"
+        memory: 2Gi
+    storage:
+      data:
+        size: 5Gi
+      log:
+        size: 2Gi
+      tempdb:
+        size: 2Gi
+      backup:
+        size: 5Gi
+    config:
+      agentEnabled: true
+      hadrEnabled: true
+      collation: SQL_Latin1_General_CP1_CI_AS
+      lcid: 1033
+      memoryLimitMB: 3072
+      traceFlags:
+        - 1222
+        - 3226
+    nodeSelector:
+      kubernetes.io/os: linux
+  credentials:
+    saPasswordSecretRef:
+      name: test-full-sa-password
+      key: password
+  service:
+    type: ClusterIP
+    port: 1433
+    annotations:
+      test.annotation: "value"
+  monitoring:
+    enabled: true
+    exporterImage: burningalchemist/sql_exporter:latest
+    exporterPort: 9399
+  metadata:
+    labels:
+      custom-label: "test-value"
+    annotations:
+      custom-annotation: "test-value"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: test-full-sa-password
+type: Opaque
+stringData:
+  password: "TestP@ssw0rd123!"
