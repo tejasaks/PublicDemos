@@ -65,6 +65,11 @@ type AvailabilityGroupConfig struct {
 	// +kubebuilder:default=true
 	DBFailover bool `json:"dbFailover,omitempty"`
 
+	// AutomaticFailover enables controller-driven automatic failover when primary is lost
+	// When enabled, the controller will detect primary failure and promote a secondary
+	// +kubebuilder:default=true
+	AutomaticFailover bool `json:"automaticFailover,omitempty"`
+
 	// ClusterType is always External for Kubernetes
 	// +kubebuilder:validation:Enum=External
 	// +kubebuilder:default=External

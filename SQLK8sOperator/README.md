@@ -28,51 +28,73 @@ The operator architecture was informed by:
 ### Phase 1 (Current)
 - **Deploy SQL Server Instances**: Declarative management of SQL Server 2019, 2022, and 2025
 - **High Availability**: Availability Groups with automatic failover via AG Helper sidecar
+- **Graceful AG Setup**: AG Helper waits for AG configuration without errors or probe failures
 - **Upgrades**: Zero-downtime rolling upgrades using OnDelete StatefulSet strategy
 - **Scaling**: Scale replicas up/down with persistent storage
-- **Monitoring**: Prometheus metrics via SQL Exporter sidecar
+- **Monitoring**: Prometheus metrics via SQL Exporter sidecar + Grafana dashboards
 - **Active Directory**: Windows Authentication support for SQL Server on Linux
 
 ### Planned (Phase 1.1)
 - OpenShift support
+- Multiple AG monitoring per sidecar
 
 ### Planned (Phase 2)
 - Backup and Restore automation
 - Point-in-time recovery
+- Automated AG configuration via Jobs
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Kubernetes Cluster                           │
-│                                                                   │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │                MSSQL Operator (Deployment)                   │ │
-│  │  ┌─────────────┐  ┌─────────────────┐  ┌──────────────────┐ │ │
-│  │  │ SQLServer   │  │ SQLServerAG     │  │ Configuration    │ │ │
-│  │  │ Controller  │  │ Controller      │  │ Controller       │ │ │
-│  │  └─────────────┘  └─────────────────┘  └──────────────────┘ │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-│                              │                                    │
-│                              ▼                                    │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │               SQL Server StatefulSet                         │ │
-│  │  ┌─────────────────────────────────────────────────────────┐ │ │
-│  │  │ Pod 0 (Primary)                                          │ │ │
-│  │  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────┐│ │ │
-│  │  │  │ SQL Server  │ │ AG Helper   │ │ SQL Exporter        ││ │ │
-│  │  │  │ Container   │ │ Sidecar     │ │ (Monitoring)        ││ │ │
-│  │  │  └─────────────┘ └─────────────┘ └─────────────────────┘│ │ │
-│  │  └─────────────────────────────────────────────────────────┘ │ │
-│  │  ┌─────────────────────────────────────────────────────────┐ │ │
-│  │  │ Pod 1 (Secondary)                                        │ │ │
-│  │  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────┐│ │ │
-│  │  │  │ SQL Server  │ │ AG Helper   │ │ SQL Exporter        ││ │ │
-│  │  │  │ Container   │ │ Sidecar     │ │ (Monitoring)        ││ │ │
-│  │  │  └─────────────┘ └─────────────┘ └─────────────────────┘│ │ │
-│  │  └─────────────────────────────────────────────────────────┘ │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Kubernetes Cluster                               │
+│                                                                          │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │                    MSSQL Operator (Deployment)                      │ │
+│  │  ┌─────────────────┐  ┌───────────────────┐  ┌──────────────────┐  │ │
+│  │  │ SQLServer       │  │ SQLServerAG       │  │ Configuration    │  │ │
+│  │  │ Controller      │  │ Controller        │  │ Controller       │  │ │
+│  │  │                 │  │                   │  │                  │  │ │
+│  │  │ Creates:        │  │ Creates:          │  │ Manages:         │  │ │
+│  │  │ - StatefulSets  │  │ - Primary Svc     │  │ - Defaults       │  │ │
+│  │  │ - Services      │  │ - Secondary Svc   │  │ - Image versions │  │ │
+│  │  │ - Secrets       │  │ - Endpoints       │  │                  │  │ │
+│  │  └─────────────────┘  └───────────────────┘  └──────────────────┘  │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                    │                                     │
+│                                    ▼                                     │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │                    SQL Server StatefulSet                          │ │
+│  │                                                                     │ │
+│  │  ┌───────────────────────────────────────────────────────────────┐ │ │
+│  │  │ Pod 0 (Primary)                                                │ │ │
+│  │  │  ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐  │ │ │
+│  │  │  │ SQL Server      │ │ AG Helper       │ │ SQL Exporter    │  │ │ │
+│  │  │  │                 │ │ Sidecar         │ │                 │  │ │ │
+│  │  │  │ Port: 1433      │ │ Port: 8080      │ │ Port: 9399      │  │ │ │
+│  │  │  │                 │ │                 │ │                 │  │ │ │
+│  │  │  │ HADR Enabled    │ │ Health States:  │ │ Metrics:        │  │ │ │
+│  │  │  │ AG Databases    │ │ - Waiting       │ │ - CPU/Memory    │  │ │ │
+│  │  │  │ Endpoints       │ │ - Healthy       │ │ - Connections   │  │ │ │
+│  │  │  │                 │ │ - Warning       │ │ - Batch/sec     │  │ │ │
+│  │  │  │                 │ │ - Critical      │ │                 │  │ │ │
+│  │  │  └─────────────────┘ └─────────────────┘ └─────────────────┘  │ │ │
+│  │  └───────────────────────────────────────────────────────────────┘ │ │
+│  │                                                                     │ │
+│  │  ┌───────────────────────────────────────────────────────────────┐ │ │
+│  │  │ Pod 1, 2, ... (Secondaries) - Same container structure        │ │ │
+│  │  └───────────────────────────────────────────────────────────────┘ │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │                         Services                                    │ │
+│  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────┐ │ │
+│  │  │ <ag>-primary    │  │ <ag>-secondary  │  │ Prometheus/Grafana  │ │ │
+│  │  │ LoadBalancer    │  │ LoadBalancer    │  │ Monitoring Stack    │ │ │
+│  │  │ :1433           │  │ :1434           │  │ :9090 / :3000       │ │ │
+│  │  └─────────────────┘  └─────────────────┘  └─────────────────────┘ │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Quick Start
@@ -199,6 +221,433 @@ spec:
       - name: MyDatabase
 ```
 
+## Availability Group Architecture
+
+### Overview
+
+The operator uses a **sidecar pattern** for Availability Group management:
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│  SQL Server Pod                                                     │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  │
+│  │   SQL Server     │  │   AG Helper      │  │  SQL Exporter    │  │
+│  │   Container      │  │   Sidecar        │  │  (Metrics)       │  │
+│  │                  │  │                  │  │                  │  │
+│  │  - HADR enabled  │  │  - Monitors AG   │  │  - Prometheus    │  │
+│  │  - AG databases  │  │  - Failover API  │  │    metrics       │  │
+│  │  - Endpoints     │  │  - Health probes │  │                  │  │
+│  └──────────────────┘  └──────────────────┘  └──────────────────┘  │
+│           │                    │                                    │
+│           └────── localhost ───┘                                    │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+### AG Helper Sidecar Behavior
+
+The AG Helper sidecar is designed to be **AG-tolerant** - it gracefully handles the case where the Availability Group hasn't been configured yet.
+
+#### Health States
+
+| State | Description | Liveness Probe | Readiness Probe |
+|-------|-------------|----------------|-----------------|
+| **Waiting** | AG not configured yet, sidecar is waiting | ✅ Pass (200) | ❌ Fail (503) |
+| **Healthy** | AG configured, all replicas synchronized | ✅ Pass (200) | ✅ Pass (200) |
+| **Warning** | AG configured, some replicas synchronizing | ✅ Pass (200) | ✅ Pass (200) |
+| **Critical** | AG exists but is broken or unreachable | ❌ Fail (503) | ❌ Fail (503) |
+
+#### Sidecar HTTP Endpoints
+
+| Endpoint | Purpose | Use Case |
+|----------|---------|----------|
+| `/health` or `/healthz` | Liveness check - passes even when waiting | Kubernetes liveness probe |
+| `/ready` or `/readyz` | Readiness check - only passes when AG works | Kubernetes readiness probe |
+| `/state` | Full AG state (JSON) | Debugging, monitoring |
+| `/role` | Current replica role (PRIMARY/SECONDARY) | Service routing decisions |
+| `/failover` | Trigger manual failover (POST) | Administrative operations |
+| `/sequence` | Last hardened LSN for failover decisions | Failover target selection |
+| `/ags` | List all discovered AGs | Multi-AG environments |
+| `/state/{agName}` | Get specific AG state | Per-AG monitoring |
+| `/discover` | Force immediate AG discovery | Debugging, testing |
+
+#### Multi-AG Discovery Mode
+
+The AG Helper supports two monitoring modes:
+
+1. **Single AG Mode** (default): Specify `-ag-name=MyAG` to monitor a specific AG
+2. **Auto-Discovery Mode**: Omit `-ag-name` to automatically discover and monitor ALL AGs
+
+In auto-discovery mode, the sidecar:
+- Queries `sys.availability_groups` periodically to find all AGs
+- Automatically detects newly added AGs without pod restart
+- Logs when new AGs are detected or removed
+- Reports aggregate health across all AGs
+
+**Example: Auto-Discovery Mode**
+```yaml
+containers:
+  - name: ag-helper
+    image: sqlserver-operator/ag-helper:latest
+    args:
+      # Omit -ag-name for auto-discovery mode
+      - "-sql-host=localhost"
+      - "-sql-port=1433"
+```
+
+**Multi-AG Endpoints:**
+```bash
+# List all AGs
+curl http://pod-ip:8080/ags
+# Response: {"count":2,"ags":{"ProductionAG":{"health":"Healthy"},"ReportingAG":{"health":"Healthy"}}}
+
+# Get specific AG
+curl http://pod-ip:8080/state/ProductionAG
+# Response: {"agName":"ProductionAG","health":"Healthy","role":"PRIMARY",...}
+```
+
+#### What This Means for Deployment
+
+1. **Pods start immediately**: SQL Server starts without waiting for AG
+2. **Sidecar waits gracefully**: Reports "Waiting" status, not errors
+3. **No log spam**: Minimal logging until AG is configured
+4. **Readiness gates traffic**: K8s services only route to pods after AG is ready
+5. **Dynamic AG discovery**: New AGs are detected automatically (in auto-discovery mode)
+
+### AG Deployment Workflow
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│ 1. Deploy SQLServer CR (pods start with AG Helper sidecar)      │
+│    kubectl apply -f samples/sqlserver-availability-group.yaml   │
+│                                                                  │
+│    Status: Pods running, AG Helper reports "Waiting"            │
+│    Liveness: ✅ PASS  |  Readiness: ❌ FAIL                      │
+└──────────────────────────────┬───────────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ 2. Deploy SQLServerAG CR (creates K8s Services)                 │
+│    - Primary service: routes to current primary replica         │
+│    - Secondary service: routes to readable secondaries          │
+│                                                                  │
+│    Status: Services created, waiting for AG configuration       │
+└──────────────────────────────┬───────────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ 3. Configure AG via T-SQL (see samples/scripts/)                │
+│    - Run setup-availability-group.sql on primary                │
+│    - Run join-secondary.sql on each secondary                   │
+│                                                                  │
+│    Status: AG configured, databases seeding                     │
+└──────────────────────────────┬───────────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ 4. AG Helper detects AG automatically                           │
+│    - Transitions from "Waiting" to "Healthy"                    │
+│    - Readiness probe starts passing                             │
+│    - Services begin routing traffic                             │
+│                                                                  │
+│    Status: Fully operational                                    │
+│    Liveness: ✅ PASS  |  Readiness: ✅ PASS                      │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### Scenario: Adding a New Availability Group
+
+If you have an existing SQL Server deployment and want to add a new AG:
+
+#### Step 1: Update SQLServer CR to Enable HADR
+
+If not already enabled, update your SQLServer resource:
+
+```yaml
+spec:
+  instance:
+    replicas: 3  # Increase if needed
+    config:
+      hadrEnabled: true  # Required for AG
+      agentEnabled: true
+```
+
+```bash
+kubectl apply -f your-sqlserver.yaml
+```
+
+#### Step 2: Create the SQLServerAG Resource
+
+```yaml
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServerAG
+metadata:
+  name: new-ag-01
+  namespace: mssql
+spec:
+  description: "New AG for reporting workloads"
+  sqlServerRef:
+    name: your-sqlserver  # Reference to existing SQLServer
+  availabilityGroup:
+    name: ReportingAG
+    replicas: 3
+    databases:
+      - name: ReportingDB
+  endpoints:
+    primary:
+      type: LoadBalancer
+      port: 1433
+    secondary:
+      type: LoadBalancer
+      port: 1434
+```
+
+```bash
+kubectl apply -f new-ag.yaml
+```
+
+#### Step 3: Configure AG via T-SQL
+
+Connect to the primary replica and create the AG:
+
+```bash
+# Connect to primary
+kubectl exec -it your-sqlserver-0 -n mssql -- \
+  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'YourPassword' -C
+```
+
+```sql
+-- Create database
+CREATE DATABASE ReportingDB;
+ALTER DATABASE ReportingDB SET RECOVERY FULL;
+BACKUP DATABASE ReportingDB TO DISK = '/var/opt/mssql/backup/ReportingDB.bak';
+
+-- Create AG (see samples/scripts/setup-availability-group.sql for full script)
+CREATE AVAILABILITY GROUP ReportingAG
+    WITH (CLUSTER_TYPE = EXTERNAL, DB_FAILOVER = ON)
+    FOR DATABASE ReportingDB
+    REPLICA ON ...;
+```
+
+#### Step 4: Join Secondary Replicas
+
+```bash
+# On each secondary
+kubectl exec -it your-sqlserver-1 -n mssql -- \
+  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'YourPassword' -C \
+  -Q "ALTER AVAILABILITY GROUP ReportingAG JOIN WITH (CLUSTER_TYPE = EXTERNAL);"
+```
+
+#### Step 5: Verify AG Helper Detected the AG
+
+```bash
+# Check sidecar health
+kubectl exec -it your-sqlserver-0 -n mssql -c ag-helper -- \
+  curl -s localhost:8080/state | jq
+
+# Should show:
+# {
+#   "agName": "ReportingAG",
+#   "role": "PRIMARY",
+#   "health": "Healthy",
+#   ...
+# }
+```
+
+### Scenario: Multiple Availability Groups
+
+SQL Server supports multiple AGs on the same replicas. The AG Helper supports this in two ways:
+
+#### Option 1: Auto-Discovery Mode (Recommended)
+
+Omit the `-ag-name` flag to enable auto-discovery mode. The sidecar will automatically discover and monitor ALL AGs:
+
+```yaml
+# In your StatefulSet pod spec:
+containers:
+  - name: ag-helper
+    args:
+      # Omit -ag-name for auto-discovery
+      - "-sql-host=localhost"
+      - "-sql-port=1433"
+```
+
+With auto-discovery:
+- **New AGs are detected automatically** - no pod restart needed
+- **Removed AGs are cleaned up** - state map updated on next discovery
+- **Aggregate health reported** - worst health across all AGs determines overall health
+- **Per-AG APIs available** - use `/state/{agName}` for individual AG status
+
+**Check all AGs:**
+```bash
+kubectl exec -it your-sqlserver-0 -n mssql -c ag-helper -- \
+  curl -s localhost:8080/ags
+
+# Response:
+# {
+#   "count": 2,
+#   "ags": {
+#     "ProductionAG": {"health": "Healthy", "role": "PRIMARY", ...},
+#     "ReportingAG": {"health": "Healthy", "role": "SECONDARY", ...}
+#   }
+# }
+```
+
+#### Option 2: Single AG Mode
+
+Specify `-ag-name` to monitor only one specific AG:
+
+```yaml
+containers:
+  - name: ag-helper
+    args:
+      - "-ag-name=ProductionAG"  # Only monitor this AG
+      - "-sql-host=localhost"
+```
+
+#### Adding a New AG to an Existing Deployment
+
+With auto-discovery mode enabled:
+
+1. **Create the new AG via T-SQL** on the primary replica
+2. **The sidecar detects it** within the next monitoring interval (default: 10s)
+3. **Check detection**: `curl localhost:8080/ags`
+4. **Create SQLServerAG resource** for the new AG's K8s services
+
+No pod restarts required!
+
+### Automatic Failover
+
+The operator supports **controller-driven automatic failover** when the primary replica becomes unavailable.
+
+#### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    CONTROLLER-DRIVEN AUTOMATIC FAILOVER                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+        Normal Operation                 Primary Failure Detected
+        ─────────────────                ────────────────────────
+
+    ┌─────────────────────┐         ┌─────────────────────────────┐
+    │ Controller monitors │   ──►   │ No PRIMARY role detected    │
+    │ all AG Helper pods  │         │ from any sidecar            │
+    │ via /state endpoint │         └──────────────┬──────────────┘
+    └─────────────────────┘                        │
+                                                   ▼
+                                    ┌─────────────────────────────┐
+                                    │ 30-second grace period      │
+                                    │ (configurable)              │
+                                    └──────────────┬──────────────┘
+                                                   │
+                                                   ▼
+                          ┌────────────────────────────────────────────┐
+                          │ Select best failover candidate:           │
+                          │  1. Highest sequence number (least loss)  │
+                          │  2. Prefer SYNCHRONIZED over SYNCHRONIZING│
+                          │  3. Prefer Healthy over Warning           │
+                          └──────────────────┬─────────────────────────┘
+                                             │
+                                             ▼
+                          ┌────────────────────────────────────────────┐
+                          │ POST /failover to selected candidate      │
+                          │ (with allowDataLoss based on sync state)  │
+                          └──────────────────┬─────────────────────────┘
+                                             │
+                                             ▼
+                          ┌────────────────────────────────────────────┐
+                          │ New PRIMARY established                   │
+                          │ Kubernetes Events recorded                │
+                          │ 60-second cooldown before next failover   │
+                          └────────────────────────────────────────────┘
+```
+
+#### Configuration
+
+Enable automatic failover in your SQLServerAG spec:
+
+```yaml
+spec:
+  availabilityGroup:
+    name: ProductionAG
+    automaticFailover: true  # Enable controller-driven failover
+    
+  failover:
+    automatic: true
+    dataLossThreshold: 0        # Only allow synchronized failover
+    healthCheckTimeout: "30s"   # Grace period before failover
+```
+
+#### Failover Selection Algorithm
+
+When multiple secondaries are available, the controller selects the best candidate:
+
+| Priority | Criteria | Reason |
+|----------|----------|--------|
+| 1 | Highest sequence number | Minimizes data loss |
+| 2 | SYNCHRONIZED state | No data loss possible |
+| 3 | Healthy status | Stable replica |
+
+#### Events During Failover
+
+The controller emits Kubernetes events for visibility:
+
+```bash
+kubectl get events -n mssql --field-selector involvedObject.name=prod-ag-01
+
+# Example events:
+# NoPrimaryDetected    No primary replica detected, will failover in 30s if not recovered
+# ForceFailover        Forcing failover to sql-ag-prod01-1 with potential data loss
+# FailoverCompleted    Automatic failover completed to sql-ag-prod01-1
+# PrimaryRecovered     Primary replica is available again
+```
+
+#### Disabling Automatic Failover
+
+For manual-only failover control:
+
+```yaml
+spec:
+  availabilityGroup:
+    automaticFailover: false  # Disable automatic failover
+```
+
+With automatic failover disabled, you can still manually trigger failover:
+
+```bash
+# Manually failover to a specific pod
+kubectl exec -it sql-ag-prod01-1 -n mssql -c ag-helper -- \
+  curl -X POST localhost:8080/failover -d '{"allowDataLoss": false}'
+```
+
+### Troubleshooting AG Helper
+
+#### Check Sidecar Status
+
+```bash
+# View AG Helper logs
+kubectl logs your-sqlserver-0 -n mssql -c ag-helper
+
+# Check health endpoint
+kubectl exec -it your-sqlserver-0 -n mssql -c ag-helper -- \
+  curl -s localhost:8080/health
+
+# Get full state
+kubectl exec -it your-sqlserver-0 -n mssql -c ag-helper -- \
+  curl -s localhost:8080/state
+```
+
+#### Common Issues
+
+| Symptom | Cause | Solution |
+|---------|-------|----------|
+| Health: "Waiting" indefinitely | AG not configured via T-SQL | Run setup scripts |
+| Health: "Critical" | AG exists but this replica can't connect | Check SQL Server logs, endpoints |
+| Readiness failing | AG not synchronized | Wait for seeding, check `sys.dm_hadr_database_replica_states` |
+| Role shows "NOT_AVAILABLE" | HADR not enabled or AG doesn't exist | Enable `hadrEnabled: true` in spec |
+| Failover not triggering | `automaticFailover: false` | Enable in spec |
+| Multiple failovers in quick succession | Cooldown period active | Wait 60s between failovers |
+
 ## Resource Naming Constraints
 
 ### SQL Server NetBIOS Name Limit
@@ -231,6 +680,398 @@ spec:
 This allows you to search resources:
 ```bash
 kubectl get sqlserver -o jsonpath='{range .items[*]}{.metadata.name}: {.spec.description}{"\n"}{end}'
+```
+
+## Packaging & Distribution
+
+This section covers how to package the SQL Server Kubernetes Operator for distribution to other users in your organization. After following these steps, users can deploy SQL Server containers without building anything from scratch.
+
+### Overview
+
+The distribution package consists of:
+
+| Component | Description | How to Generate |
+|-----------|-------------|-----------------|
+| **Operator Image** | Controller managing SQL Server resources | `docker build` |
+| **AG Helper Image** | Sidecar for Availability Group monitoring | `docker build` |
+| **CRD Manifests** | Custom Resource Definitions | `controller-gen` |
+| **Deployment Manifests** | RBAC, ServiceAccount, Deployment | Pre-built in `deploy/` |
+| **Sample Configurations** | Example SQL Server deployments | Pre-built in `samples/` |
+
+### Step 1: Build Container Images
+
+#### Prerequisites
+
+- Go 1.22+ (for building)
+- Docker or Podman (for container images)
+- Access to a container registry (ACR, Docker Hub, ECR, etc.)
+
+#### Build the Operator Image
+
+```bash
+# Set your registry (examples)
+export REGISTRY=myregistry.azurecr.io/sqlserver-operator
+# or: export REGISTRY=docker.io/myorg/sqlserver-operator
+# or: export REGISTRY=ghcr.io/myorg/sqlserver-operator
+
+export VERSION=1.0.0
+
+# Build the operator image
+docker build -t ${REGISTRY}/operator:${VERSION} -f Dockerfile.operator .
+
+# Build the AG Helper sidecar image
+docker build -t ${REGISTRY}/ag-helper:${VERSION} -f Dockerfile.ag-helper .
+
+# Tag as latest
+docker tag ${REGISTRY}/operator:${VERSION} ${REGISTRY}/operator:latest
+docker tag ${REGISTRY}/ag-helper:${VERSION} ${REGISTRY}/ag-helper:latest
+```
+
+#### Push to Container Registry
+
+```bash
+# Login to your registry (example for ACR)
+az acr login --name myregistry
+
+# Push images
+docker push ${REGISTRY}/operator:${VERSION}
+docker push ${REGISTRY}/operator:latest
+docker push ${REGISTRY}/ag-helper:${VERSION}
+docker push ${REGISTRY}/ag-helper:latest
+```
+
+### Step 2: Generate CRD Manifests
+
+Use `controller-gen` to generate the Custom Resource Definition YAML files:
+
+```bash
+# Install controller-gen if not already installed
+go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest
+
+# Generate CRDs
+controller-gen crd paths="./pkg/apis/mssql.microsoft.com/v1alpha1" output:crd:dir=./deploy/crds
+
+# Verify generated CRDs
+ls -la deploy/crds/
+# Expected files:
+#   mssql.microsoft.com_sqlservers.yaml
+#   mssql.microsoft.com_sqlserverags.yaml
+#   mssql.microsoft.com_operatorconfigurations.yaml
+```
+
+### Step 3: Update Deployment Manifests
+
+Update the operator deployment to use your registry:
+
+```bash
+# Update image references in deployment manifest
+sed -i "s|image: .*operator:.*|image: ${REGISTRY}/operator:${VERSION}|g" deploy/operator.yaml
+sed -i "s|image: .*ag-helper:.*|image: ${REGISTRY}/ag-helper:${VERSION}|g" deploy/operator.yaml
+```
+
+Or manually edit [deploy/operator.yaml](deploy/operator.yaml):
+
+```yaml
+spec:
+  containers:
+    - name: operator
+      image: myregistry.azurecr.io/sqlserver-operator/operator:1.0.0  # Update this
+      env:
+        - name: AG_HELPER_IMAGE
+          value: myregistry.azurecr.io/sqlserver-operator/ag-helper:1.0.0  # And this
+```
+
+### Step 4: Create Distribution Package
+
+#### Option A: Simple ZIP/TAR Package
+
+Create a distribution archive with all necessary files:
+
+```bash
+# Create distribution directory
+mkdir -p dist/sqlserver-operator-${VERSION}
+
+# Copy required files
+cp -r deploy/ dist/sqlserver-operator-${VERSION}/
+cp -r samples/ dist/sqlserver-operator-${VERSION}/
+cp README.md dist/sqlserver-operator-${VERSION}/
+cp LICENSE dist/sqlserver-operator-${VERSION}/
+
+# Create installation script
+cat > dist/sqlserver-operator-${VERSION}/install.sh << 'EOF'
+#!/bin/bash
+set -e
+
+echo "Installing SQL Server Kubernetes Operator..."
+
+# Create namespace
+kubectl create namespace mssql-operator --dry-run=client -o yaml | kubectl apply -f -
+kubectl create namespace mssql --dry-run=client -o yaml | kubectl apply -f -
+
+# Install CRDs
+kubectl apply -f deploy/crds/
+
+# Install RBAC and ServiceAccounts
+kubectl apply -f deploy/rbac.yaml
+kubectl apply -f deploy/serviceaccount.yaml
+
+# Deploy operator
+kubectl apply -f deploy/operator.yaml
+
+# Wait for operator to be ready
+echo "Waiting for operator to be ready..."
+kubectl wait --for=condition=available --timeout=120s deployment/mssql-operator -n mssql-operator
+
+echo "✅ SQL Server Operator installed successfully!"
+echo ""
+echo "Next steps:"
+echo "  1. Create a secret for SA password:"
+echo "     kubectl create secret generic sql-sa-secret --from-literal=password='YourStrong@Passw0rd!' -n mssql"
+echo ""
+echo "  2. Deploy a SQL Server instance:"
+echo "     kubectl apply -f samples/sqlserver-2025-standalone.yaml"
+EOF
+chmod +x dist/sqlserver-operator-${VERSION}/install.sh
+
+# Create uninstall script
+cat > dist/sqlserver-operator-${VERSION}/uninstall.sh << 'EOF'
+#!/bin/bash
+set -e
+
+echo "Uninstalling SQL Server Kubernetes Operator..."
+
+# Delete operator
+kubectl delete -f deploy/operator.yaml --ignore-not-found
+
+# Delete RBAC
+kubectl delete -f deploy/rbac.yaml --ignore-not-found
+kubectl delete -f deploy/serviceaccount.yaml --ignore-not-found
+
+# Delete CRDs (WARNING: This deletes all SQL Server resources!)
+read -p "Delete CRDs? This will delete ALL SQLServer resources! (y/N): " confirm
+if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+    kubectl delete -f deploy/crds/ --ignore-not-found
+fi
+
+echo "✅ Uninstall complete"
+EOF
+chmod +x dist/sqlserver-operator-${VERSION}/uninstall.sh
+
+# Create archive
+cd dist
+tar -czvf sqlserver-operator-${VERSION}.tar.gz sqlserver-operator-${VERSION}/
+zip -r sqlserver-operator-${VERSION}.zip sqlserver-operator-${VERSION}/
+
+echo "Distribution packages created:"
+ls -la sqlserver-operator-${VERSION}.*
+```
+
+#### Option B: Helm Chart (Recommended for Enterprise)
+
+Create a Helm chart for more flexible deployment:
+
+```bash
+# Create Helm chart structure
+mkdir -p charts/sqlserver-operator/templates
+mkdir -p charts/sqlserver-operator/crds
+
+# Copy CRDs to Helm crds directory (auto-installed by Helm)
+cp deploy/crds/*.yaml charts/sqlserver-operator/crds/
+
+# Create Chart.yaml
+cat > charts/sqlserver-operator/Chart.yaml << EOF
+apiVersion: v2
+name: sqlserver-operator
+description: A Kubernetes operator for managing SQL Server instances
+type: application
+version: ${VERSION}
+appVersion: "${VERSION}"
+keywords:
+  - sqlserver
+  - database
+  - operator
+  - mssql
+maintainers:
+  - name: Your Team
+    email: team@example.com
+EOF
+
+# Create values.yaml
+cat > charts/sqlserver-operator/values.yaml << EOF
+# Operator configuration
+operator:
+  image:
+    repository: myregistry.azurecr.io/sqlserver-operator/operator
+    tag: "${VERSION}"
+    pullPolicy: IfNotPresent
+  
+  replicas: 1
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+# AG Helper sidecar configuration
+agHelper:
+  image:
+    repository: myregistry.azurecr.io/sqlserver-operator/ag-helper
+    tag: "${VERSION}"
+    pullPolicy: IfNotPresent
+
+# Namespace for SQL Server instances
+sqlNamespace: mssql
+
+# Image pull secrets (if using private registry)
+imagePullSecrets: []
+  # - name: regcred
+
+# RBAC settings
+rbac:
+  create: true
+
+# ServiceAccount settings
+serviceAccount:
+  create: true
+  name: mssql-operator
+EOF
+
+# Package Helm chart
+helm package charts/sqlserver-operator -d dist/
+```
+
+#### Option C: OCI Artifact (Modern Approach)
+
+Push manifests as OCI artifacts for GitOps workflows:
+
+```bash
+# Package as OCI artifact using ORAS
+oras push ${REGISTRY}/manifests:${VERSION} \
+  --config /dev/null:application/vnd.unknown.config.v1+json \
+  deploy/:application/vnd.cncf.helm.config.v1+json \
+  samples/:application/vnd.cncf.helm.config.v1+json
+```
+
+### Step 5: Document for End Users
+
+Create a quick-start guide for your organization:
+
+```markdown
+# SQL Server Kubernetes Operator - Quick Start
+
+## Prerequisites
+- Kubernetes cluster (1.25+)
+- kubectl configured
+- Access to container registry: myregistry.azurecr.io
+
+## Installation
+
+### Option 1: Using install script
+\`\`\`bash
+tar -xzf sqlserver-operator-1.0.0.tar.gz
+cd sqlserver-operator-1.0.0
+./install.sh
+\`\`\`
+
+### Option 2: Using Helm
+\`\`\`bash
+helm install sqlserver-operator ./sqlserver-operator-1.0.0.tgz \
+  --namespace mssql-operator \
+  --create-namespace
+\`\`\`
+
+### Option 3: Manual installation
+\`\`\`bash
+kubectl apply -f deploy/crds/
+kubectl apply -f deploy/rbac.yaml
+kubectl apply -f deploy/serviceaccount.yaml
+kubectl apply -f deploy/operator.yaml
+\`\`\`
+
+## Deploy Your First SQL Server
+
+1. Create SA password secret:
+\`\`\`bash
+kubectl create namespace mssql
+kubectl create secret generic sql-sa-secret \
+  --from-literal=password='YourStrong@Passw0rd!' \
+  -n mssql
+\`\`\`
+
+2. Deploy SQL Server:
+\`\`\`bash
+kubectl apply -f samples/sqlserver-2025-standalone.yaml
+\`\`\`
+
+3. Verify deployment:
+\`\`\`bash
+kubectl get sqlserver -n mssql
+kubectl get pods -n mssql
+\`\`\`
+```
+
+### Distribution Checklist
+
+Before sharing with your organization, verify:
+
+- [ ] Container images pushed to registry and accessible
+- [ ] Image pull secrets configured (if private registry)
+- [ ] CRDs generated and included in package
+- [ ] Deployment manifests updated with correct image references
+- [ ] Sample configurations tested and working
+- [ ] Install/uninstall scripts tested
+- [ ] Documentation reviewed and accurate
+- [ ] Version numbers consistent across all files
+
+### Registry Authentication
+
+If using a private registry, users need to configure image pull secrets:
+
+```bash
+# Create image pull secret
+kubectl create secret docker-registry regcred \
+  --docker-server=myregistry.azurecr.io \
+  --docker-username=<username> \
+  --docker-password=<password> \
+  --namespace mssql-operator
+
+kubectl create secret docker-registry regcred \
+  --docker-server=myregistry.azurecr.io \
+  --docker-username=<username> \
+  --docker-password=<password> \
+  --namespace mssql
+
+# Reference in deployments
+kubectl patch serviceaccount default -n mssql \
+  -p '{"imagePullSecrets": [{"name": "regcred"}]}'
+```
+
+### Versioning Strategy
+
+Recommended versioning approach:
+
+| Version | When to Use |
+|---------|-------------|
+| `1.0.0` | Initial stable release |
+| `1.0.1` | Bug fixes only |
+| `1.1.0` | New features, backward compatible |
+| `2.0.0` | Breaking changes |
+| `latest` | Always points to most recent stable |
+| `dev` | Development/testing builds |
+
+```bash
+# Tag and push multiple versions
+docker tag ${REGISTRY}/operator:${VERSION} ${REGISTRY}/operator:latest
+docker tag ${REGISTRY}/operator:${VERSION} ${REGISTRY}/operator:1.0
+docker tag ${REGISTRY}/operator:${VERSION} ${REGISTRY}/operator:1
+
+docker push ${REGISTRY}/operator:${VERSION}
+docker push ${REGISTRY}/operator:latest
+docker push ${REGISTRY}/operator:1.0
+docker push ${REGISTRY}/operator:1
 ```
 
 ## Development

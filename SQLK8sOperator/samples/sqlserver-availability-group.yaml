@@ -12,9 +12,9 @@ metadata:
   namespace: mssql
 spec:
   # Description for searchability and auditing
-  description: "Production SQL Server 2022 AG cluster for order processing"
+  description: "Production SQL Server 2025 AG cluster for order processing"
   
-  version: "2022"
+  version: "2025"
   edition: Developer  # AG works with Developer or Enterprise edition
   
   instance:
@@ -32,10 +32,10 @@ spec:
     storage:
       data:
         size: 50Gi
-        storageClass: managed-premium
+        # storageClass: managed-premium  # Azure only - comment out for minikube
       log:
         size: 20Gi
-        storageClass: managed-premium
+        # storageClass: managed-premium  # Azure only - comment out for minikube
       tempdb:
         size: 10Gi
       backup:
@@ -126,16 +126,20 @@ spec:
     
     # External write lease validity (SQL 2019+)
     externalWriteLeaseValidity: "20s"
+    
+    # Enable controller-driven automatic failover
+    # When true, controller detects primary failure and promotes best secondary
+    automaticFailover: true
   
-  # Failover configuration
+  # Failover configuration (fine-grained settings)
   failover:
-    # Enable automatic failover
+    # Enable automatic failover (matches automaticFailover above)
     automatic: true
     
-    # Data loss threshold (0 = no data loss allowed)
+    # Data loss threshold (0 = no data loss allowed, only sync replicas)
     dataLossThreshold: 0
     
-    # Health check timeout
+    # Health check timeout before declaring primary lost
     healthCheckTimeout: "30s"
     
     # Lease timeout for primary writes
@@ -178,3 +182,139 @@ metadata:
 type: Opaque
 stringData:
   password: "YourStrong@Passw0rd!"
+
+---
+# ============================================================================
+# MANUAL T-SQL SETUP STEPS
+# ============================================================================
+# The operator creates the SQL Server pods and monitoring infrastructure,
+# but the Availability Group and databases must be configured via T-SQL.
+#
+# After the SQLServer pods are running, execute these steps:
+#
+# 1. Connect to each replica and create the database mirroring endpoint:
+# ----------------------------------------------------------------------------
+# -- Run on ALL replicas (sql-ag-prod01-0, sql-ag-prod01-1, sql-ag-prod01-2)
+#
+# CREATE MASTER KEY ENCRYPTION BY PASSWORD = 'YourStrong@Passw0rd!';
+# GO
+#
+# CREATE CERTIFICATE AG_Cert
+#     WITH SUBJECT = 'AG Certificate';
+# GO
+#
+# CREATE ENDPOINT AG_Endpoint
+#     STATE = STARTED
+#     AS TCP (LISTENER_PORT = 5022)
+#     FOR DATABASE_MIRRORING (
+#         ROLE = ALL,
+#         AUTHENTICATION = CERTIFICATE AG_Cert,
+#         ENCRYPTION = REQUIRED ALGORITHM AES
+#     );
+# GO
+#
+# -- Backup cert on primary, restore on secondaries for auth
+# -- On primary (sql-ag-prod01-0):
+# BACKUP CERTIFICATE AG_Cert TO FILE = '/var/opt/mssql/data/AG_Cert.cer';
+#
+# -- Copy cert files between pods:
+# -- kubectl cp mssql/sql-ag-prod01-0:/var/opt/mssql/data/AG_Cert.cer ./AG_Cert_0.cer
+# -- kubectl cp ./AG_Cert_0.cer mssql/sql-ag-prod01-1:/var/opt/mssql/data/AG_Cert_0.cer
+# -- kubectl cp ./AG_Cert_0.cer mssql/sql-ag-prod01-2:/var/opt/mssql/data/AG_Cert_0.cer
+#
+# 2. Create the databases on the primary:
+# ----------------------------------------------------------------------------
+# -- Run on PRIMARY (sql-ag-prod01-0)
+#
+# CREATE DATABASE ApplicationDB;
+# GO
+# CREATE DATABASE ReportingDB;
+# GO
+#
+# -- Set to FULL recovery model (required for AG)
+# ALTER DATABASE ApplicationDB SET RECOVERY FULL;
+# ALTER DATABASE ReportingDB SET RECOVERY FULL;
+# GO
+#
+# -- Take full backups (required before adding to AG)
+# BACKUP DATABASE ApplicationDB TO DISK = '/var/opt/mssql/backup/ApplicationDB.bak';
+# BACKUP DATABASE ReportingDB TO DISK = '/var/opt/mssql/backup/ReportingDB.bak';
+# GO
+#
+# 3. Create the Availability Group on the primary:
+# ----------------------------------------------------------------------------
+# -- Run on PRIMARY (sql-ag-prod01-0)
+#
+# CREATE AVAILABILITY GROUP ProductionAG
+#     WITH (
+#         CLUSTER_TYPE = EXTERNAL,
+#         DB_FAILOVER = ON,
+#         REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = 1
+#     )
+#     FOR DATABASE ApplicationDB, ReportingDB
+#     REPLICA ON
+#         N'sql-ag-prod01-0' WITH (
+#             ENDPOINT_URL = N'TCP://sql-ag-prod01-0.sql-ag-prod01-pods.mssql.svc.cluster.local:5022',
+#             AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
+#             FAILOVER_MODE = EXTERNAL,
+#             SEEDING_MODE = AUTOMATIC,
+#             SECONDARY_ROLE (ALLOW_CONNECTIONS = READ_ONLY)
+#         ),
+#         N'sql-ag-prod01-1' WITH (
+#             ENDPOINT_URL = N'TCP://sql-ag-prod01-1.sql-ag-prod01-pods.mssql.svc.cluster.local:5022',
+#             AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
+#             FAILOVER_MODE = EXTERNAL,
+#             SEEDING_MODE = AUTOMATIC,
+#             SECONDARY_ROLE (ALLOW_CONNECTIONS = READ_ONLY)
+#         ),
+#         N'sql-ag-prod01-2' WITH (
+#             ENDPOINT_URL = N'TCP://sql-ag-prod01-2.sql-ag-prod01-pods.mssql.svc.cluster.local:5022',
+#             AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
+#             FAILOVER_MODE = EXTERNAL,
+#             SEEDING_MODE = AUTOMATIC,
+#             SECONDARY_ROLE (ALLOW_CONNECTIONS = READ_ONLY)
+#         );
+# GO
+#
+# 4. Join secondary replicas to the AG:
+# ----------------------------------------------------------------------------
+# -- Run on SECONDARY replicas (sql-ag-prod01-1 and sql-ag-prod01-2)
+#
+# ALTER AVAILABILITY GROUP ProductionAG JOIN WITH (CLUSTER_TYPE = EXTERNAL);
+# GO
+#
+# ALTER AVAILABILITY GROUP ProductionAG GRANT CREATE ANY DATABASE;
+# GO
+#
+# 5. Verify the AG status:
+# ----------------------------------------------------------------------------
+# -- Run on any replica
+#
+# SELECT
+#     ag.name AS ag_name,
+#     ar.replica_server_name,
+#     ars.role_desc,
+#     ars.synchronization_health_desc
+# FROM sys.availability_groups ag
+# JOIN sys.availability_replicas ar ON ag.group_id = ar.group_id
+# JOIN sys.dm_hadr_availability_replica_states ars ON ar.replica_id = ars.replica_id;
+# GO
+#
+# SELECT
+#     d.name AS database_name,
+#     drs.synchronization_state_desc,
+#     drs.is_primary_replica
+# FROM sys.dm_hadr_database_replica_states drs
+# JOIN sys.databases d ON drs.database_id = d.database_id;
+# GO
+#
+# ============================================================================
+# QUICK SETUP SCRIPT (after pods are running)
+# ============================================================================
+# Save the above steps to setup-ag.sql and run via kubectl exec:
+#
+# kubectl exec -it sql-ag-prod01-0 -n mssql -- \
+#   /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa \
+#   -P 'YourStrong@Passw0rd!' -C -i /path/to/setup-ag.sql
+#
+# ============================================================================

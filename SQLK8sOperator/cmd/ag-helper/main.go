@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -43,10 +44,10 @@ const (
 type SyncState string
 
 const (
-	StateSynchronized    SyncState = "SYNCHRONIZED"
-	StateSynchronizing   SyncState = "SYNCHRONIZING"
+	StateSynchronized     SyncState = "SYNCHRONIZED"
+	StateSynchronizing    SyncState = "SYNCHRONIZING"
 	StateNotSynchronizing SyncState = "NOT_SYNCHRONIZING"
-	StateSuspended       SyncState = "SUSPENDED"
+	StateSuspended        SyncState = "SUSPENDED"
 )
 
 // ConnectedState represents the connection state
@@ -59,29 +60,29 @@ const (
 
 // AGState represents the complete state of the AG from this replica's perspective
 type AGState struct {
-	AGName           string                   `json:"agName"`
-	LocalReplicaName string                   `json:"localReplicaName"`
-	Role             AGRole                   `json:"role"`
-	SyncState        SyncState                `json:"syncState"`
-	IsLocalPrimary   bool                     `json:"isLocalPrimary"`
-	SequenceNumber   int64                    `json:"sequenceNumber"`
-	Replicas         []ReplicaState           `json:"replicas"`
-	Databases        []DatabaseState          `json:"databases"`
-	LastUpdated      time.Time                `json:"lastUpdated"`
-	Health           string                   `json:"health"`
+	AGName           string          `json:"agName"`
+	LocalReplicaName string          `json:"localReplicaName"`
+	Role             AGRole          `json:"role"`
+	SyncState        SyncState       `json:"syncState"`
+	IsLocalPrimary   bool            `json:"isLocalPrimary"`
+	SequenceNumber   int64           `json:"sequenceNumber"`
+	Replicas         []ReplicaState  `json:"replicas"`
+	Databases        []DatabaseState `json:"databases"`
+	LastUpdated      time.Time       `json:"lastUpdated"`
+	Health           string          `json:"health"`
 	mu               sync.RWMutex
 }
 
 // ReplicaState represents the state of an AG replica
 type ReplicaState struct {
-	ReplicaName         string         `json:"replicaName"`
-	Role                AGRole         `json:"role"`
-	AvailabilityMode    string         `json:"availabilityMode"`
-	FailoverMode        string         `json:"failoverMode"`
+	ReplicaName          string         `json:"replicaName"`
+	Role                 AGRole         `json:"role"`
+	AvailabilityMode     string         `json:"availabilityMode"`
+	FailoverMode         string         `json:"failoverMode"`
 	SynchronizationState SyncState      `json:"synchronizationState"`
-	ConnectedState      ConnectedState `json:"connectedState"`
-	SequenceNumber      int64          `json:"sequenceNumber"`
-	IsLocal             bool           `json:"isLocal"`
+	ConnectedState       ConnectedState `json:"connectedState"`
+	SequenceNumber       int64          `json:"sequenceNumber"`
+	IsLocal              bool           `json:"isLocal"`
 }
 
 // DatabaseState represents the state of a database in the AG
@@ -105,14 +106,16 @@ type FailoverRequest struct {
 
 // AGHelper is the main struct for the AG helper sidecar
 type AGHelper struct {
-	agName            string
+	agName            string // Specific AG to monitor, or empty for auto-discovery
 	connectionString  string
 	db                *sql.DB
 	state             *AGState
+	allAGStates       map[string]*AGState // For multi-AG monitoring
 	monitorInterval   time.Duration
 	connectionTimeout time.Duration
 	httpPort          int
 	stopCh            chan struct{}
+	mu                sync.RWMutex // Protects allAGStates
 }
 
 // NewAGHelper creates a new AGHelper instance
@@ -127,7 +130,8 @@ func NewAGHelper(agName, connStr string, monitorInterval, connTimeout time.Durat
 			AGName:      agName,
 			LastUpdated: time.Now(),
 		},
-		stopCh: make(chan struct{}),
+		allAGStates: make(map[string]*AGState),
+		stopCh:      make(chan struct{}),
 	}
 }
 
@@ -153,6 +157,235 @@ func (h *AGHelper) Connect(ctx context.Context) error {
 	h.db = db
 	klog.Info("Connected to SQL Server")
 	return nil
+}
+
+// DiscoverAGs discovers all Availability Groups on this SQL Server instance
+func (h *AGHelper) DiscoverAGs(ctx context.Context) ([]string, error) {
+	query := `SELECT name FROM sys.availability_groups ORDER BY name`
+
+	rows, err := h.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query availability groups: %w", err)
+	}
+	defer rows.Close()
+
+	var agNames []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			klog.Warningf("Failed to scan AG name: %v", err)
+			continue
+		}
+		agNames = append(agNames, name)
+	}
+
+	return agNames, nil
+}
+
+// GetAGStateByName retrieves the state for a specific AG
+func (h *AGHelper) GetAGStateByName(ctx context.Context, agName string) (*AGState, error) {
+	state := &AGState{
+		AGName:      agName,
+		LastUpdated: time.Now(),
+	}
+
+	// Get local replica info for this specific AG
+	role, err := h.getRoleForAG(ctx, agName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get role for AG %s: %w", agName, err)
+	}
+	state.Role = role
+	state.IsLocalPrimary = role == RolePrimary
+
+	// Get sequence number
+	seqNum, err := h.getSequenceNumberForAG(ctx, agName)
+	if err != nil {
+		klog.V(4).Infof("Failed to get sequence number for AG %s: %v", agName, err)
+	}
+	state.SequenceNumber = seqNum
+
+	// Get all replicas for this AG
+	replicas, err := h.getReplicaStatesForAG(ctx, agName)
+	if err != nil {
+		klog.V(4).Infof("Failed to get replica states for AG %s: %v", agName, err)
+	}
+	state.Replicas = replicas
+
+	// Get database states for this AG
+	databases, err := h.getDatabaseStatesForAG(ctx, agName)
+	if err != nil {
+		klog.V(4).Infof("Failed to get database states for AG %s: %v", agName, err)
+	}
+	state.Databases = databases
+
+	// Determine overall health
+	state.Health = h.determineHealth(state)
+
+	// Find local replica name
+	for _, r := range state.Replicas {
+		if r.IsLocal {
+			state.LocalReplicaName = r.ReplicaName
+			state.SyncState = r.SynchronizationState
+			break
+		}
+	}
+
+	return state, nil
+}
+
+// getRoleForAG returns the role for a specific AG
+func (h *AGHelper) getRoleForAG(ctx context.Context, agName string) (AGRole, error) {
+	query := `
+		SELECT role_desc
+		FROM sys.dm_hadr_availability_replica_states ars
+		JOIN sys.availability_replicas ar ON ars.replica_id = ar.replica_id
+		WHERE is_local = 1 AND ar.group_id = (
+			SELECT group_id FROM sys.availability_groups WHERE name = @agName
+		)
+	`
+
+	var roleDesc string
+	err := h.db.QueryRowContext(ctx, query, sql.Named("agName", agName)).Scan(&roleDesc)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return RoleNotAvailable, nil
+		}
+		return RoleNotAvailable, err
+	}
+
+	return AGRole(roleDesc), nil
+}
+
+// getSequenceNumberForAG returns the sequence number for a specific AG
+func (h *AGHelper) getSequenceNumberForAG(ctx context.Context, agName string) (int64, error) {
+	query := `
+		SELECT MAX(last_hardened_lsn)
+		FROM sys.dm_hadr_database_replica_states drs
+		JOIN sys.availability_groups ag ON drs.group_id = ag.group_id
+		WHERE ag.name = @agName AND is_local = 1
+	`
+
+	var seqNum sql.NullInt64
+	err := h.db.QueryRowContext(ctx, query, sql.Named("agName", agName)).Scan(&seqNum)
+	if err != nil {
+		return 0, err
+	}
+
+	if seqNum.Valid {
+		return seqNum.Int64, nil
+	}
+	return 0, nil
+}
+
+// getReplicaStatesForAG retrieves states of all replicas for a specific AG
+func (h *AGHelper) getReplicaStatesForAG(ctx context.Context, agName string) ([]ReplicaState, error) {
+	query := `
+		SELECT 
+			ar.replica_server_name,
+			ars.role_desc,
+			ar.availability_mode_desc,
+			ar.failover_mode_desc,
+			ars.synchronization_health_desc,
+			ars.connected_state_desc,
+			ars.is_local,
+			ISNULL(MAX(drs.last_hardened_lsn), 0) as seq_num
+		FROM sys.availability_replicas ar
+		JOIN sys.dm_hadr_availability_replica_states ars ON ar.replica_id = ars.replica_id
+		LEFT JOIN sys.dm_hadr_database_replica_states drs ON ar.replica_id = drs.replica_id
+		WHERE ar.group_id = (SELECT group_id FROM sys.availability_groups WHERE name = @agName)
+		GROUP BY ar.replica_server_name, ars.role_desc, ar.availability_mode_desc, 
+		         ar.failover_mode_desc, ars.synchronization_health_desc, ars.connected_state_desc, ars.is_local
+	`
+
+	rows, err := h.db.QueryContext(ctx, query, sql.Named("agName", agName))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var replicas []ReplicaState
+	for rows.Next() {
+		var r ReplicaState
+		var syncHealth, connState string
+		err := rows.Scan(
+			&r.ReplicaName,
+			&r.Role,
+			&r.AvailabilityMode,
+			&r.FailoverMode,
+			&syncHealth,
+			&connState,
+			&r.IsLocal,
+			&r.SequenceNumber,
+		)
+		if err != nil {
+			klog.Warningf("Failed to scan replica row: %v", err)
+			continue
+		}
+
+		switch syncHealth {
+		case "HEALTHY":
+			r.SynchronizationState = StateSynchronized
+		case "PARTIALLY_HEALTHY":
+			r.SynchronizationState = StateSynchronizing
+		default:
+			r.SynchronizationState = StateNotSynchronizing
+		}
+
+		r.ConnectedState = ConnectedState(connState)
+		replicas = append(replicas, r)
+	}
+
+	return replicas, nil
+}
+
+// getDatabaseStatesForAG retrieves states of all databases for a specific AG
+func (h *AGHelper) getDatabaseStatesForAG(ctx context.Context, agName string) ([]DatabaseState, error) {
+	query := `
+		SELECT 
+			db.name,
+			ar.replica_server_name,
+			drs.is_primary_replica,
+			drs.synchronization_state_desc,
+			drs.is_suspended,
+			ISNULL(drs.suspend_reason_desc, ''),
+			ISNULL(drs.last_hardened_lsn, 0),
+			ISNULL(drs.last_commit_lsn, 0)
+		FROM sys.dm_hadr_database_replica_states drs
+		JOIN sys.databases db ON drs.database_id = db.database_id
+		JOIN sys.availability_replicas ar ON drs.replica_id = ar.replica_id
+		WHERE drs.group_id = (SELECT group_id FROM sys.availability_groups WHERE name = @agName)
+	`
+
+	rows, err := h.db.QueryContext(ctx, query, sql.Named("agName", agName))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var databases []DatabaseState
+	for rows.Next() {
+		var d DatabaseState
+		var syncState string
+		err := rows.Scan(
+			&d.DatabaseName,
+			&d.ReplicaName,
+			&d.IsPrimaryReplica,
+			&syncState,
+			&d.IsSuspended,
+			&d.SuspendReason,
+			&d.LastHardenedLSN,
+			&d.LastCommitLSN,
+		)
+		if err != nil {
+			klog.Warningf("Failed to scan database row: %v", err)
+			continue
+		}
+
+		d.SynchronizationState = SyncState(syncState)
+		databases = append(databases, d)
+	}
+
+	return databases, nil
 }
 
 // GetRole returns the current role of this replica
@@ -367,8 +600,14 @@ func (h *AGHelper) getDatabaseStates(ctx context.Context) ([]DatabaseState, erro
 
 // determineHealth calculates overall health based on state
 func (h *AGHelper) determineHealth(state *AGState) string {
+	// If AG doesn't exist yet, report as "Waiting" not "Critical"
+	// This allows the sidecar to run before AG is configured
 	if state.Role == RoleNotAvailable {
-		return "Critical"
+		// Check if AG actually exists in sys.availability_groups
+		if len(state.Replicas) == 0 {
+			return "Waiting" // AG not configured yet - this is OK during initial setup
+		}
+		return "Critical" // AG exists but this replica can't see it - real problem
 	}
 
 	syncedCount := 0
@@ -379,6 +618,10 @@ func (h *AGHelper) determineHealth(state *AGState) string {
 	}
 
 	if syncedCount == 0 {
+		// If we're primary with no synced secondaries, could be initial seeding
+		if state.IsLocalPrimary && len(state.Databases) == 0 {
+			return "Waiting" // No databases in AG yet
+		}
 		return "Critical"
 	}
 	if syncedCount < len(state.Replicas) {
@@ -421,9 +664,14 @@ func (h *AGHelper) Failover(ctx context.Context, allowDataLoss bool) error {
 }
 
 // MonitorLoop continuously monitors the AG state
+// Supports both single-AG mode (agName specified) and auto-discovery mode (agName empty)
 func (h *AGHelper) MonitorLoop(ctx context.Context) {
 	ticker := time.NewTicker(h.monitorInterval)
 	defer ticker.Stop()
+
+	lastHealth := ""
+	lastAGCount := 0
+	waitingLogCount := 0
 
 	for {
 		select {
@@ -432,19 +680,160 @@ func (h *AGHelper) MonitorLoop(ctx context.Context) {
 		case <-h.stopCh:
 			return
 		case <-ticker.C:
-			state, err := h.GetAGState(ctx)
-			if err != nil {
-				klog.Errorf("Failed to get AG state: %v", err)
-				continue
+			if h.agName != "" {
+				// Single AG mode - monitor specific AG
+				h.monitorSingleAG(ctx, &lastHealth, &waitingLogCount)
+			} else {
+				// Auto-discovery mode - discover and monitor all AGs
+				h.monitorAllAGs(ctx, &lastHealth, &lastAGCount)
 			}
-
-			h.state.mu.Lock()
-			h.state = state
-			h.state.mu.Unlock()
-
-			klog.V(4).Infof("AG State: role=%s, sync=%s, health=%s",
-				state.Role, state.SyncState, state.Health)
 		}
+	}
+}
+
+// monitorSingleAG monitors a specific AG (original behavior)
+func (h *AGHelper) monitorSingleAG(ctx context.Context, lastHealth *string, waitingLogCount *int) {
+	state, err := h.GetAGState(ctx)
+	if err != nil {
+		klog.Errorf("Failed to get AG state: %v", err)
+		return
+	}
+
+	h.state.mu.Lock()
+	h.state = state
+	h.state.mu.Unlock()
+
+	// Reduce log noise for "Waiting" state
+	if state.Health == "Waiting" {
+		*waitingLogCount++
+		// Only log every 6th iteration (once per minute with 10s interval)
+		if *waitingLogCount%6 == 1 {
+			klog.Infof("AG '%s' not configured yet, waiting... (role=%s)", h.agName, state.Role)
+		}
+	} else {
+		*waitingLogCount = 0
+		// Log state changes
+		if state.Health != *lastHealth {
+			klog.Infof("AG '%s' State changed: health=%s, role=%s, sync=%s",
+				h.agName, state.Health, state.Role, state.SyncState)
+		} else {
+			klog.V(4).Infof("AG '%s' State: role=%s, sync=%s, health=%s",
+				h.agName, state.Role, state.SyncState, state.Health)
+		}
+	}
+	*lastHealth = state.Health
+}
+
+// monitorAllAGs discovers and monitors all AGs on this SQL Server
+func (h *AGHelper) monitorAllAGs(ctx context.Context, lastHealth *string, lastAGCount *int) {
+	// Discover all AGs
+	agNames, err := h.DiscoverAGs(ctx)
+	if err != nil {
+		klog.Errorf("Failed to discover AGs: %v", err)
+		return
+	}
+
+	// Log when AG count changes (new AG added or removed)
+	if len(agNames) != *lastAGCount {
+		if len(agNames) == 0 {
+			klog.Info("No Availability Groups found, waiting for AG configuration...")
+		} else {
+			klog.Infof("Discovered %d Availability Group(s): %v", len(agNames), agNames)
+		}
+		*lastAGCount = len(agNames)
+	}
+
+	// Update states for all AGs
+	h.mu.Lock()
+	// Track which AGs we've seen this iteration
+	seenAGs := make(map[string]bool)
+
+	for _, agName := range agNames {
+		seenAGs[agName] = true
+
+		state, err := h.GetAGStateByName(ctx, agName)
+		if err != nil {
+			klog.Warningf("Failed to get state for AG '%s': %v", agName, err)
+			continue
+		}
+
+		// Check if this is a new AG or state changed
+		oldState, exists := h.allAGStates[agName]
+		if !exists {
+			klog.Infof("New AG detected: '%s' (health=%s, role=%s)", agName, state.Health, state.Role)
+		} else if oldState.Health != state.Health {
+			klog.Infof("AG '%s' State changed: health=%s->%s, role=%s",
+				agName, oldState.Health, state.Health, state.Role)
+		}
+
+		h.allAGStates[agName] = state
+	}
+
+	// Remove AGs that no longer exist
+	for agName := range h.allAGStates {
+		if !seenAGs[agName] {
+			klog.Infof("AG '%s' removed", agName)
+			delete(h.allAGStates, agName)
+		}
+	}
+	h.mu.Unlock()
+
+	// Update primary state for health endpoint (use first healthy AG, or first AG)
+	h.updatePrimaryState(agNames)
+}
+
+// updatePrimaryState sets the primary state for health endpoints in multi-AG mode
+func (h *AGHelper) updatePrimaryState(agNames []string) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	if len(agNames) == 0 {
+		// No AGs - set to waiting state
+		h.state.mu.Lock()
+		h.state = &AGState{
+			AGName:      "",
+			Health:      "Waiting",
+			Role:        RoleNotAvailable,
+			LastUpdated: time.Now(),
+		}
+		h.state.mu.Unlock()
+		return
+	}
+
+	// Find the "worst" health state across all AGs
+	// Priority: Critical > Warning > Waiting > Healthy
+	worstHealth := "Healthy"
+	var primaryState *AGState
+
+	for _, agName := range agNames {
+		state, exists := h.allAGStates[agName]
+		if !exists {
+			continue
+		}
+
+		if primaryState == nil {
+			primaryState = state
+		}
+
+		switch state.Health {
+		case "Critical":
+			worstHealth = "Critical"
+		case "Warning":
+			if worstHealth != "Critical" {
+				worstHealth = "Warning"
+			}
+		case "Waiting":
+			if worstHealth == "Healthy" {
+				worstHealth = "Waiting"
+			}
+		}
+	}
+
+	if primaryState != nil {
+		h.state.mu.Lock()
+		h.state = primaryState
+		h.state.Health = worstHealth // Use aggregate health
+		h.state.mu.Unlock()
 	}
 }
 
@@ -457,9 +846,13 @@ func (h *AGHelper) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	if h.state.Health == "Healthy" || h.state.Health == "Warning" {
+	// "Waiting" is acceptable for liveness - pod is alive, just waiting for AG setup
+	// "Healthy" and "Warning" are also OK
+	// Only "Critical" returns 503
+	switch h.state.Health {
+	case "Healthy", "Warning", "Waiting":
 		w.WriteHeader(http.StatusOK)
-	} else {
+	default:
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
 
@@ -478,6 +871,30 @@ func (h *AGHelper) handleState(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(h.state)
 }
 
+// handleReady returns readiness status (stricter than health)
+// Use for Kubernetes readiness probe - only ready when AG is functional
+func (h *AGHelper) handleReady(w http.ResponseWriter, r *http.Request) {
+	h.state.mu.RLock()
+	defer h.state.mu.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// For readiness, we require the AG to actually be configured and working
+	// "Waiting" means not ready to receive traffic
+	switch h.state.Health {
+	case "Healthy", "Warning":
+		w.WriteHeader(http.StatusOK)
+	default:
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ready":  h.state.Health == "Healthy" || h.state.Health == "Warning",
+		"status": h.state.Health,
+		"role":   h.state.Role,
+	})
+}
+
 // handleRole returns just the role
 func (h *AGHelper) handleRole(w http.ResponseWriter, r *http.Request) {
 	h.state.mu.RLock()
@@ -485,8 +902,8 @@ func (h *AGHelper) handleRole(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"role":       h.state.Role,
-		"isPrimary":  h.state.IsLocalPrimary,
+		"role":        h.state.Role,
+		"isPrimary":   h.state.IsLocalPrimary,
 		"replicaName": h.state.LocalReplicaName,
 	})
 }
@@ -531,15 +948,105 @@ func (h *AGHelper) handleSequence(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleAllAGs returns the state of all discovered AGs
+func (h *AGHelper) handleAllAGs(w http.ResponseWriter, r *http.Request) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Build response with all AG states
+	response := make(map[string]interface{})
+	for agName, state := range h.allAGStates {
+		state.mu.RLock()
+		response[agName] = map[string]interface{}{
+			"agName":      state.AGName,
+			"health":      state.Health,
+			"role":        state.Role,
+			"syncState":   state.SyncState,
+			"lastUpdated": state.LastUpdated.Format(time.RFC3339),
+		}
+		state.mu.RUnlock()
+	}
+
+	// Add summary
+	output := map[string]interface{}{
+		"count": len(h.allAGStates),
+		"ags":   response,
+	}
+
+	json.NewEncoder(w).Encode(output)
+}
+
+// handleAGByName returns the state of a specific AG by name
+func (h *AGHelper) handleAGByName(w http.ResponseWriter, r *http.Request) {
+	// Extract AG name from URL path (e.g., /state/myag)
+	path := strings.TrimPrefix(r.URL.Path, "/state/")
+	if path == "" || path == r.URL.Path {
+		http.Error(w, "AG name required in path", http.StatusBadRequest)
+		return
+	}
+
+	h.mu.RLock()
+	state, exists := h.allAGStates[path]
+	h.mu.RUnlock()
+
+	if !exists {
+		http.Error(w, fmt.Sprintf("AG '%s' not found", path), http.StatusNotFound)
+		return
+	}
+
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"agName":           state.AGName,
+		"health":           state.Health,
+		"role":             state.Role,
+		"syncState":        state.SyncState,
+		"sequenceNumber":   state.SequenceNumber,
+		"localReplicaName": state.LocalReplicaName,
+		"replicaCount":     len(state.Replicas),
+		"databaseCount":    len(state.Databases),
+		"lastUpdated":      state.LastUpdated.Format(time.RFC3339),
+	})
+}
+
+// handleDiscover forces an AG discovery and returns the list
+func (h *AGHelper) handleDiscover(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	agNames, err := h.DiscoverAGs(ctx)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to discover AGs: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"count": len(agNames),
+		"ags":   agNames,
+	})
+}
+
 // StartHTTPServer starts the HTTP server for the sidecar API
 func (h *AGHelper) StartHTTPServer(ctx context.Context) error {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", h.handleHealth)
-	mux.HandleFunc("/healthz", h.handleHealth)
+	mux.HandleFunc("/health", h.handleHealth)  // Liveness - passes even when waiting for AG
+	mux.HandleFunc("/healthz", h.handleHealth) // Alias for liveness
+	mux.HandleFunc("/ready", h.handleReady)    // Readiness - only passes when AG is functional
+	mux.HandleFunc("/readyz", h.handleReady)   // Alias for readiness
 	mux.HandleFunc("/state", h.handleState)
 	mux.HandleFunc("/role", h.handleRole)
 	mux.HandleFunc("/failover", h.handleFailover)
 	mux.HandleFunc("/sequence", h.handleSequence)
+
+	// Multi-AG endpoints
+	mux.HandleFunc("/ags", h.handleAllAGs)        // List all discovered AGs
+	mux.HandleFunc("/state/", h.handleAGByName)   // Get specific AG state (e.g., /state/MyAG)
+	mux.HandleFunc("/discover", h.handleDiscover) // Force AG discovery
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", h.httpPort),

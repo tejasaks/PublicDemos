@@ -23,9 +23,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	mssqlv1alpha1 "github.com/microsoft/mssql-operator/pkg/apis/mssql.microsoft.com/v1alpha1"
 	sqlservercontroller "github.com/microsoft/mssql-operator/internal/controller/sqlserver"
 	agcontroller "github.com/microsoft/mssql-operator/internal/controller/sqlserverag"
+	mssqlv1alpha1 "github.com/microsoft/mssql-operator/pkg/apis/mssql.microsoft.com/v1alpha1"
 )
 
 var (

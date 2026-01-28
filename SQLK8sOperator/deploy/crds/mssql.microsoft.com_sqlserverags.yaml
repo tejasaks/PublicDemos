@@ -1,0 +1,507 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.0
+  name: sqlserverags.mssql.microsoft.com
+spec:
+  group: mssql.microsoft.com
+  names:
+    kind: SQLServerAG
+    listKind: SQLServerAGList
+    plural: sqlserverags
+    shortNames:
+    - mssqlag
+    singular: sqlserverag
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.availabilityGroup.name
+      name: AG-Name
+      type: string
+    - jsonPath: .spec.availabilityGroup.replicas
+      name: Replicas
+      type: integer
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.primaryReplica
+      name: Primary
+      type: string
+    - jsonPath: .status.synchronizedReplicas
+      name: Synced
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: SQLServerAG is the Schema for the sqlserverags API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: SQLServerAGSpec defines the desired state of SQLServerAG
+              (Availability Group)
+            properties:
+              availabilityGroup:
+                description: AvailabilityGroup contains the AG configuration
+                properties:
+                  automaticFailover:
+                    default: true
+                    description: |-
+                      AutomaticFailover enables controller-driven automatic failover when primary is lost
+                      When enabled, the controller will detect primary failure and promote a secondary
+                    type: boolean
+                  clusterType:
+                    default: External
+                    description: ClusterType is always External for Kubernetes
+                    enum:
+                    - External
+                    type: string
+                  databases:
+                    description: Databases is the list of databases to include in
+                      the AG
+                    items:
+                      description: AGDatabase defines a database to include in the
+                        AG
+                      properties:
+                        backupPath:
+                          description: BackupPath is the path for initial backup (for
+                            manual seeding)
+                          type: string
+                        name:
+                          description: Name is the database name
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                  dbFailover:
+                    default: true
+                    description: DBFailover enables automatic failover based on database
+                      health
+                    type: boolean
+                  endpointPort:
+                    default: 5022
+                    description: EndpointPort is the port for the database mirroring
+                      endpoint
+                    format: int32
+                    type: integer
+                  externalWriteLeaseValidity:
+                    default: 20s
+                    description: ExternalWriteLeaseValidity is the duration for the
+                      external write lease (SQL 2019+)
+                    type: string
+                  name:
+                    description: Name is the name of the Availability Group
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                  primaryConfig:
+                    description: PrimaryConfig defines the primary replica configuration
+                    properties:
+                      availabilityMode:
+                        default: SynchronousCommit
+                        description: AvailabilityMode defines the synchronization
+                          mode
+                        enum:
+                        - SynchronousCommit
+                        - AsynchronousCommit
+                        type: string
+                      failoverMode:
+                        default: External
+                        description: FailoverMode is always External for Kubernetes-managed
+                          AG
+                        enum:
+                        - External
+                        type: string
+                      readableSecondary:
+                        default: ReadOnly
+                        description: ReadableSecondary defines read access to secondary
+                          replicas
+                        enum:
+                        - "No"
+                        - ReadOnly
+                        - All
+                        type: string
+                      sessionTimeout:
+                        default: 10
+                        description: SessionTimeout in seconds
+                        format: int32
+                        type: integer
+                    type: object
+                  replicas:
+                    default: 3
+                    description: Replicas is the number of AG replicas (typically
+                      2-5)
+                    format: int32
+                    maximum: 9
+                    minimum: 2
+                    type: integer
+                  secondaryConfig:
+                    description: SecondaryConfig defines the secondary replicas configuration
+                    properties:
+                      availabilityMode:
+                        default: SynchronousCommit
+                        description: AvailabilityMode defines the synchronization
+                          mode
+                        enum:
+                        - SynchronousCommit
+                        - AsynchronousCommit
+                        type: string
+                      failoverMode:
+                        default: External
+                        description: FailoverMode is always External for Kubernetes-managed
+                          AG
+                        enum:
+                        - External
+                        type: string
+                      readableSecondary:
+                        default: ReadOnly
+                        description: ReadableSecondary defines read access to secondary
+                          replicas
+                        enum:
+                        - "No"
+                        - ReadOnly
+                        - All
+                        type: string
+                      sessionTimeout:
+                        default: 10
+                        description: SessionTimeout in seconds
+                        format: int32
+                        type: integer
+                    type: object
+                  seedingMode:
+                    default: Automatic
+                    description: SeedingMode defines how databases are seeded to secondaries
+                    enum:
+                    - Automatic
+                    - Manual
+                    type: string
+                required:
+                - name
+                - primaryConfig
+                - secondaryConfig
+                type: object
+              endpoints:
+                description: Endpoints defines service endpoints for the AG
+                properties:
+                  primary:
+                    description: Primary endpoint configuration
+                    properties:
+                      annotations:
+                        additionalProperties:
+                          type: string
+                        description: Annotations for the service
+                        type: object
+                      port:
+                        default: 1433
+                        description: Port is the SQL Server port
+                        format: int32
+                        type: integer
+                      type:
+                        default: ClusterIP
+                        description: Type is the Kubernetes service type
+                        enum:
+                        - ClusterIP
+                        - NodePort
+                        - LoadBalancer
+                        type: string
+                    type: object
+                  secondary:
+                    description: Secondary endpoint configuration (for read-only routing)
+                    properties:
+                      annotations:
+                        additionalProperties:
+                          type: string
+                        description: Annotations for the service
+                        type: object
+                      port:
+                        default: 1433
+                        description: Port is the SQL Server port
+                        format: int32
+                        type: integer
+                      type:
+                        default: ClusterIP
+                        description: Type is the Kubernetes service type
+                        enum:
+                        - ClusterIP
+                        - NodePort
+                        - LoadBalancer
+                        type: string
+                    type: object
+                type: object
+              failover:
+                description: Failover contains failover behavior configuration
+                properties:
+                  automatic:
+                    default: true
+                    description: Automatic enables automatic failover
+                    type: boolean
+                  dataLossThreshold:
+                    default: 0
+                    description: DataLossThreshold defines acceptable data loss (0
+                      = no data loss)
+                    format: int32
+                    type: integer
+                  healthCheckTimeout:
+                    default: 30s
+                    description: HealthCheckTimeout is the timeout for health checks
+                    type: string
+                  leaseTimeout:
+                    default: 60s
+                    description: LeaseTimeout is the primary write lease duration
+                    type: string
+                  requiredSynchronizedSecondaries:
+                    default: -1
+                    description: |-
+                      RequiredSynchronizedSecondaries is the minimum number of synchronized secondaries
+                      required before committing on the primary (-1 for auto-calculate)
+                    format: int32
+                    type: integer
+                type: object
+              sidecar:
+                description: Sidecar contains configuration for the AG helper sidecar
+                properties:
+                  connectionTimeout:
+                    default: 30s
+                    description: ConnectionTimeout for SQL connections
+                    type: string
+                  image:
+                    default: mssql-ag-helper:latest
+                    description: Image is the AG helper sidecar image
+                    type: string
+                  monitorInterval:
+                    default: 10s
+                    description: MonitorInterval is how often to check AG health
+                    type: string
+                  resources:
+                    description: Resources for the sidecar container
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This is an alpha field and requires enabling the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                type: object
+              sqlServerRef:
+                description: SQLServerRef references the SQLServer instance to configure
+                  as an AG
+                properties:
+                  name:
+                    description: |-
+                      Name of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+            required:
+            - availabilityGroup
+            - sqlServerRef
+            type: object
+          status:
+            description: SQLServerAGStatus defines the observed state of SQLServerAG
+            properties:
+              conditions:
+                description: Conditions represent the latest available observations
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              healthyDatabases:
+                description: HealthyDatabases lists databases that are healthy in
+                  the AG
+                items:
+                  type: string
+                type: array
+              lastFailoverTime:
+                description: LastFailoverTime is when the last failover occurred
+                format: date-time
+                type: string
+              observedGeneration:
+                description: ObservedGeneration is the most recent generation observed
+                format: int64
+                type: integer
+              phase:
+                description: Phase represents the current AG lifecycle phase
+                enum:
+                - Pending
+                - Creating
+                - Synchronized
+                - Degraded
+                - Failed
+                type: string
+              primaryReplica:
+                description: PrimaryReplica is the name of the current primary replica
+                  pod
+                type: string
+              replicas:
+                description: Replicas contains status of each AG replica
+                items:
+                  description: AGReplicaStatus represents the status of an AG replica
+                  properties:
+                    availabilityMode:
+                      description: AvailabilityMode of this replica
+                      type: string
+                    connectedState:
+                      description: ConnectedState (CONNECTED, DISCONNECTED)
+                      type: string
+                    health:
+                      description: Health indicates overall replica health
+                      enum:
+                      - Healthy
+                      - Warning
+                      - Critical
+                      - Unknown
+                      type: string
+                    isLocal:
+                      description: IsLocal indicates if this is the local replica
+                      type: boolean
+                    name:
+                      description: Name is the replica name (pod name)
+                      type: string
+                    role:
+                      description: Role is the current role (PRIMARY, SECONDARY, RESOLVING)
+                      enum:
+                      - PRIMARY
+                      - SECONDARY
+                      - RESOLVING
+                      - CONFIGURATION_ONLY
+                      type: string
+                    sequenceNumber:
+                      description: SequenceNumber for determining promotion eligibility
+                      format: int64
+                      type: integer
+                    synchronizationState:
+                      description: SynchronizationState (SYNCHRONIZED, SYNCHRONIZING,
+                        NOT_SYNCHRONIZING)
+                      type: string
+                  required:
+                  - name
+                  - role
+                  type: object
+                type: array
+              synchronizedReplicas:
+                description: SynchronizedReplicas is the count of synchronized replicas
+                format: int32
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
