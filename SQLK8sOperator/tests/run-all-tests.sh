@@ -91,13 +91,6 @@ check_prerequisites() {
     fi
     log_success "kubectl found"
     
-    # Check helm
-    if ! command -v helm &>/dev/null; then
-        log_error "helm not found"
-        exit 1
-    fi
-    log_success "helm found"
-    
     # Check cluster connection
     if ! kubectl cluster-info &>/dev/null; then
         log_error "Cannot connect to Kubernetes cluster"

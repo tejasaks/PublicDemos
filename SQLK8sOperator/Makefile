@@ -87,27 +87,34 @@ docker-push-sidecar: ## Push docker image with the AG helper sidecar.
 
 ##@ Deployment
 
-.PHONY: install
-install: manifests ## Install CRDs into the K8s cluster specified in ~/.kube/config.
-	kubectl apply -f config/crd/bases
+.PHONY: install-crds
+install-crds: ## Install CRDs into the K8s cluster.
+	kubectl apply -f deploy/crds/
 
-.PHONY: uninstall
-uninstall: manifests ## Uninstall CRDs from the K8s cluster.
-	kubectl delete -f config/crd/bases
+.PHONY: uninstall-crds
+uninstall-crds: ## Uninstall CRDs from the K8s cluster.
+	kubectl delete -f deploy/crds/ --ignore-not-found=true
 
 .PHONY: deploy
-deploy: manifests ## Deploy operator to the K8s cluster.
-	helm upgrade --install mssql-operator ./helm/mssql-operator
+deploy: install-crds ## Deploy operator to the K8s cluster.
+	kubectl apply -f deploy/namespace.yaml
+	kubectl apply -f deploy/serviceaccount.yaml
+	kubectl apply -f deploy/rbac.yaml
+	kubectl apply -f deploy/deployment.yaml
 
 .PHONY: undeploy
 undeploy: ## Undeploy operator from the K8s cluster.
-	helm uninstall mssql-operator
+	kubectl delete -f deploy/deployment.yaml --ignore-not-found=true
+	kubectl delete -f deploy/rbac.yaml --ignore-not-found=true
+	kubectl delete -f deploy/serviceaccount.yaml --ignore-not-found=true
+	kubectl delete -f deploy/namespace.yaml --ignore-not-found=true
 
 ##@ Local Development (Minikube)
 
 .PHONY: minikube-setup
 minikube-setup: ## Setup minikube for local development.
-	./hack/setup-minikube.sh
+	./scripts/dev-setup.sh prereq
+	./scripts/dev-setup.sh start
 
 .PHONY: minikube-deploy
 minikube-deploy: docker-build docker-build-sidecar ## Build and deploy to minikube.

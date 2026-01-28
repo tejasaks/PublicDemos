@@ -63,12 +63,6 @@ check_prerequisites() {
         exit 1
     fi
     
-    # Check Helm
-    if ! command -v helm &> /dev/null; then
-        log_warn "Helm is not installed. Installing..."
-        curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-    fi
-    
     log_info "All prerequisites are met!"
 }
 
@@ -125,24 +119,16 @@ install_operator() {
     log_info "Installing operator..."
     cd "${PROJECT_ROOT}"
     
-    # Create namespace
-    kubectl create namespace mssql-system --dry-run=client -o yaml | kubectl apply -f -
-    
-    # Install CRDs
+    # Install CRDs first
     log_info "Installing CRDs..."
-    kubectl apply -f helm/mssql-operator/templates/crds/
+    kubectl apply -f deploy/crds/
     
-    # Install operator using Helm
-    log_info "Installing operator with Helm..."
-    helm upgrade --install mssql-operator ./helm/mssql-operator \
-        --namespace mssql-system \
-        --set image.repository=mssql-operator \
-        --set image.tag=dev \
-        --set image.pullPolicy=Never \
-        --set agHelper.image.repository=mssql-ag-helper \
-        --set agHelper.image.tag=dev \
-        --set agHelper.image.pullPolicy=Never \
-        --set replicaCount=1
+    # Install namespace, RBAC, and operator deployment
+    log_info "Installing operator resources..."
+    kubectl apply -f deploy/namespace.yaml
+    kubectl apply -f deploy/serviceaccount.yaml
+    kubectl apply -f deploy/rbac.yaml
+    kubectl apply -f deploy/deployment.yaml
     
     # Wait for operator to be ready
     log_info "Waiting for operator to be ready..."
@@ -150,6 +136,23 @@ install_operator() {
         -n mssql-system --timeout=120s
     
     log_info "Operator installed successfully!"
+}
+
+# Uninstall the operator
+uninstall_operator() {
+    log_info "Uninstalling operator..."
+    cd "${PROJECT_ROOT}"
+    
+    # Delete deployment, RBAC, serviceaccount, namespace
+    kubectl delete -f deploy/deployment.yaml --ignore-not-found=true
+    kubectl delete -f deploy/rbac.yaml --ignore-not-found=true
+    kubectl delete -f deploy/serviceaccount.yaml --ignore-not-found=true
+    kubectl delete -f deploy/namespace.yaml --ignore-not-found=true
+    
+    # Optionally delete CRDs (commented out to preserve data)
+    # kubectl delete -f deploy/crds/ --ignore-not-found=true
+    
+    log_info "Operator uninstalled. CRDs preserved (delete manually if needed)."
 }
 
 # Deploy sample SQL Server
@@ -267,6 +270,9 @@ main() {
         install)
             install_operator
             ;;
+        uninstall)
+            uninstall_operator
+            ;;
         deploy)
             deploy_sample "${2:-}"
             ;;
@@ -288,21 +294,23 @@ main() {
             show_status
             ;;
         *)
-            echo "Usage: $0 {prereq|start|build|install|deploy|status|cleanup|connect|all} [options]"
+            echo "Usage: $0 {prereq|start|build|install|uninstall|deploy|status|cleanup|connect|all} [options]"
             echo ""
             echo "Commands:"
-            echo "  prereq  - Check prerequisites"
-            echo "  start   - Start minikube cluster"
-            echo "  build   - Build operator and sidecar images"
-            echo "  install - Install operator using Helm"
+            echo "  prereq    - Check prerequisites (Docker, minikube, kubectl, Go)"
+            echo "  start     - Start minikube cluster"
+            echo "  build     - Build operator and sidecar images"
+            echo "  install   - Install CRDs and deploy operator"
+            echo "  uninstall - Remove operator (preserves CRDs)"
             echo "  deploy [yaml_file] - Deploy SQL Server from YAML file"
             echo "                       Default: samples/sqlserver-2025-standalone.yaml"
-            echo "  status  - Show cluster and resource status"
-            echo "  cleanup - Remove all resources"
-            echo "  connect - Port-forward to SQL Server"
-            echo "  all     - Run all steps (prereq, start, build, install, deploy)"
+            echo "  status    - Show cluster and resource status"
+            echo "  cleanup   - Remove all resources"
+            echo "  connect   - Port-forward to SQL Server"
+            echo "  all       - Run all steps (prereq, start, build, install, deploy)"
             echo ""
             echo "Examples:"
+            echo "  $0 all                                       # Full setup with SQL 2025"
             echo "  $0 deploy                                    # Deploy SQL 2025 standalone (default)"
             echo "  $0 deploy samples/sqlserver-2022-standalone.yaml"
             echo "  $0 deploy samples/sqlserver-with-ad.yaml"

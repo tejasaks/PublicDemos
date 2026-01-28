@@ -80,21 +80,22 @@ The operator architecture was informed by:
 ### Prerequisites
 
 - Kubernetes 1.28+
-- Helm 3.0+
 - kubectl configured
+- Docker (for building images)
 
 ### Installation
 
-1. **Install the operator using Helm:**
+1. **Install the operator:**
 
 ```bash
-# Add the Helm repository (when available)
-# helm repo add mssql-operator https://microsoft.github.io/mssql-operator
+# Install CRDs
+kubectl apply -f deploy/crds/
 
-# Or install from local chart
-helm install mssql-operator ./helm/mssql-operator \
-  --namespace mssql-system \
-  --create-namespace
+# Install operator (namespace, RBAC, deployment)
+kubectl apply -f deploy/namespace.yaml
+kubectl apply -f deploy/serviceaccount.yaml
+kubectl apply -f deploy/rbac.yaml
+kubectl apply -f deploy/deployment.yaml
 ```
 
 2. **Create a SQL Server instance:**
@@ -200,7 +201,14 @@ spec:
 
 ## Development
 
-### Setting Execute Permissions
+This section covers development workflows. Choose **one** of the two approaches based on your needs:
+
+| Approach | Use Case | Prerequisites |
+|----------|----------|---------------|
+| **Local Development (minikube)** | Full end-to-end testing with a local K8s cluster | Docker, minikube |
+| **Building Only** | Compile binaries/images without deploying | Go 1.22+, Docker (for images) |
+
+### Setting Execute Permissions (Required)
 
 Before running any shell scripts, ensure they have execute permissions:
 
@@ -212,40 +220,110 @@ chmod +x tests/*.sh
 
 > **Note**: This step is required on Linux/macOS. Windows users running via WSL or Git Bash may also need to run this.
 
-### Local Development with minikube
+---
+
+### Option A: Local Development with minikube (Recommended for Testing)
+
+This is the **recommended approach** for most developers. It sets up a complete local environment including:
+- minikube Kubernetes cluster
+- Operator images built and loaded into minikube
+- Operator deployed and running
+- Sample SQL Server instance
+
+#### Quick Start (All-in-One)
 
 ```bash
-# Run the development setup script (deploys SQL 2025 standalone by default)
+# Run everything with a single command (deploys SQL 2025 standalone by default)
 ./scripts/dev-setup.sh all
+```
 
-# Or step by step:
-./scripts/dev-setup.sh prereq  # Check prerequisites
-./scripts/dev-setup.sh start   # Start minikube
-./scripts/dev-setup.sh build   # Build operator images
-./scripts/dev-setup.sh install # Install operator
-./scripts/dev-setup.sh deploy  # Deploy SQL 2025 standalone (default)
-./scripts/dev-setup.sh status  # Check status
+#### Step-by-Step Execution
 
-# Deploy a specific configuration:
+If you prefer more control, run each step individually:
+
+| Step | Command | Description | Required? |
+|------|---------|-------------|-----------|
+| 1 | `./scripts/dev-setup.sh prereq` | Check/install prerequisites (minikube, kubectl, Go) | Yes |
+| 2 | `./scripts/dev-setup.sh start` | Start minikube cluster with recommended settings | Yes |
+| 3 | `./scripts/dev-setup.sh build` | Build operator and sidecar Docker images | Yes |
+| 4 | `./scripts/dev-setup.sh install` | Install CRDs and deploy operator | Yes |
+| 5 | `./scripts/dev-setup.sh deploy [yaml]` | Deploy a sample SQL Server instance | Optional |
+| 6 | `./scripts/dev-setup.sh status` | Check operator and SQL Server status | Optional |
+
+#### Deploy Specific Configurations
+
+```bash
+# Deploy SQL 2025 standalone (default)
+./scripts/dev-setup.sh deploy
+
+# Deploy SQL 2022 standalone
 ./scripts/dev-setup.sh deploy samples/sqlserver-2022-standalone.yaml
+
+# Deploy Availability Group (3 replicas)
 ./scripts/dev-setup.sh deploy samples/sqlserver-availability-group.yaml
+
+# Deploy with Active Directory
 ./scripts/dev-setup.sh deploy samples/sqlserver-with-ad.yaml
 ```
 
-### Building
+---
+
+### Option B: Building Only (Without Deployment)
+
+Use this approach when you only need to compile the code, build images, or run tests—without deploying to a cluster.
+
+#### Prerequisites
+
+- Go 1.22+ installed
+- Docker (only for building images)
+- No Kubernetes cluster required
+
+#### Available Make Targets
+
+| Command | Description | When to Use |
+|---------|-------------|-------------|
+| `make build` | Build operator binary to `bin/mssql-operator` | Local development, CI pipelines |
+| `make build-sidecar` | Build AG helper binary to `bin/mssql-ag-helper` | Testing sidecar changes |
+| `make docker-build` | Build operator Docker image | Preparing for deployment |
+| `make docker-build-sidecar` | Build AG helper Docker image | Preparing for deployment |
+| `make generate` | Generate DeepCopy functions from types | After modifying `*_types.go` files |
+| `make manifests` | Generate CRD YAML manifests | After modifying `*_types.go` files |
+| `make test` | Run unit tests with coverage | Before committing changes |
+| `make fmt` | Format Go code | Before committing changes |
+| `make vet` | Run Go static analysis | Before committing changes |
+| `make lint` | Run golangci-lint | Before committing changes |
+
+#### Typical Development Workflow
 
 ```bash
-# Build operator binary
-make build
+# 1. Make code changes to types
+vim pkg/apis/mssql.microsoft.com/v1alpha1/sqlserver_types.go
 
-# Build Docker images
-make docker-build
+# 2. Regenerate code and manifests
+make generate manifests
 
-# Run tests
+# 3. Build and test
+make build test
+
+# 4. Build Docker images (when ready to deploy)
+make docker-build docker-build-sidecar
+```
+
+---
+
+### Running Tests
+
+See [tests/README.md](tests/README.md) for comprehensive testing documentation.
+
+```bash
+# Run unit tests
 make test
 
-# Generate CRDs
-make manifests
+# Run end-to-end tests (requires operator deployed)
+./tests/run-all-tests.sh
+
+# Run specific test
+./tests/test-sqlserver-standalone.sh
 ```
 
 ## Configuration Files Reference
@@ -403,32 +481,29 @@ monitoring:
 
 **Custom Metrics:** The `customQueries` field accepts SQL Exporter configuration format. See [sql_exporter documentation](https://github.com/burningalchemist/sql_exporter) for query syntax.
 
-### Helm Values (Operator Configuration)
+### Operator Deployment Configuration
 
-**File:** `helm/mssql-operator/values.yaml`
+**File:** `deploy/deployment.yaml`
 
-Key operator settings:
+Key operator settings (via environment variables):
 
 ```yaml
-# Operator image (update for custom builds)
-image:
-  repository: mssql-operator
-  tag: latest
-
-# Default SQL Server images
-sqlServer:
-  image2022: mcr.microsoft.com/mssql/server:2022-latest
-  image2025: mcr.microsoft.com/mssql/server:2025-latest
-
-# AG Helper sidecar
-agHelper:
-  image:
-    repository: mssql-ag-helper
-    tag: latest
-
-# Monitoring exporter default
-monitoring:
-  exporterImage: burningalchemist/sql_exporter:latest
+env:
+  # Namespace where operator is deployed
+  - name: OPERATOR_NAMESPACE
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.namespace
+  
+  # AG Helper sidecar image
+  - name: AG_HELPER_IMAGE
+    value: "mssql-ag-helper:dev"
+  - name: AG_HELPER_IMAGE_PULL_POLICY
+    value: "Never"  # Use IfNotPresent for production
+  
+  # SQL Exporter image for monitoring
+  - name: SQL_EXPORTER_IMAGE
+    value: "burningalchemist/sql_exporter:latest"
 
 # Operator behavior
 operator:
@@ -473,7 +548,7 @@ Before deploying to production:
 
 ## Operator Configuration
 
-The operator can be configured via Helm values or the `OperatorConfiguration` CRD:
+The operator can be configured via environment variables in `deploy/deployment.yaml` or the `OperatorConfiguration` CRD:
 
 ```yaml
 apiVersion: mssql.microsoft.com/v1alpha1

@@ -13,7 +13,7 @@ log_step "Pre-requisite: Verify CRDs Installed"
 
 if ! kubectl get crd sqlservers.mssql.microsoft.com &>/dev/null; then
     log_info "Installing CRDs..."
-    kubectl apply -f "${PROJECT_ROOT}/helm/mssql-operator/templates/crds/"
+    kubectl apply -f "${PROJECT_ROOT}/deploy/crds/"
     sleep 5
 fi
 

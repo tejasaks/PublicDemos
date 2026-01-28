@@ -6,7 +6,8 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.14.0
   labels:
-    {{- include "mssql-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/name: mssql-operator
+    app.kubernetes.io/part-of: mssql-operator
 spec:
   group: mssql.microsoft.com
   names:

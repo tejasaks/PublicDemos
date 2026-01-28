@@ -20,8 +20,11 @@ cleanup_operator() {
     
     log_step "Cleaning Up Operator"
     
-    # Uninstall Helm release
-    helm uninstall mssql-operator-test -n "${OPERATOR_NAMESPACE}" 2>/dev/null || true
+    # Delete operator resources
+    kubectl delete deployment mssql-operator -n "${OPERATOR_NAMESPACE}" 2>/dev/null || true
+    kubectl delete clusterrolebinding mssql-operator 2>/dev/null || true
+    kubectl delete clusterrole mssql-operator 2>/dev/null || true
+    kubectl delete serviceaccount mssql-operator -n "${OPERATOR_NAMESPACE}" 2>/dev/null || true
     
     # Delete CRDs
     kubectl delete crd sqlservers.mssql.microsoft.com 2>/dev/null || true
@@ -36,26 +39,46 @@ cleanup_operator() {
 trap 'cleanup_operator; test_result' EXIT
 
 # ============================================================================
-# Test 1: Helm Chart Lint
+# Test 1: Validate YAML Manifests
 # ============================================================================
-log_step "Test 1: Helm Chart Lint"
+log_step "Test 1: Validate YAML Manifests"
 
 cd "${PROJECT_ROOT}"
 
-if helm lint ./helm/mssql-operator; then
-    log_success "Helm chart linting passed"
-else
-    log_error "Helm chart linting failed"
-fi
+# Check that all deploy files exist
+for file in namespace.yaml serviceaccount.yaml rbac.yaml deployment.yaml; do
+    if [[ -f "deploy/${file}" ]]; then
+        log_success "Found deploy/${file}"
+    else
+        log_error "Missing deploy/${file}"
+    fi
+done
+
+# Check CRD files
+for file in sqlserver-crd.yaml sqlserverag-crd.yaml; do
+    if [[ -f "deploy/crds/${file}" ]]; then
+        log_success "Found deploy/crds/${file}"
+    else
+        log_error "Missing deploy/crds/${file}"
+    fi
+done
 
 # ============================================================================
 # Test 2: Create Operator Namespace
 # ============================================================================
 log_step "Test 2: Create Operator Namespace"
 
-create_test_namespace "${OPERATOR_NAMESPACE}"
+# Create namespace with custom name for testing
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${OPERATOR_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: mssql-operator
+EOF
 
-if resource_exists "namespace" "default"; then
+if kubectl get namespace "${OPERATOR_NAMESPACE}" &>/dev/null; then
     log_success "Namespace created: ${OPERATOR_NAMESPACE}"
 else
     log_error "Failed to create namespace"
@@ -66,7 +89,7 @@ fi
 # ============================================================================
 log_step "Test 3: Install CRDs"
 
-kubectl apply -f "${PROJECT_ROOT}/helm/mssql-operator/templates/crds/" 2>/dev/null || true
+kubectl apply -f "${PROJECT_ROOT}/deploy/crds/"
 
 # Verify CRDs are installed
 sleep 5
@@ -84,23 +107,109 @@ else
 fi
 
 # ============================================================================
-# Test 4: Install Operator via Helm
+# Test 4: Install Operator Resources
 # ============================================================================
-log_step "Test 4: Install Operator via Helm"
+log_step "Test 4: Install Operator Resources"
 
-helm upgrade --install mssql-operator-test "${PROJECT_ROOT}/helm/mssql-operator" \
-    --namespace "${OPERATOR_NAMESPACE}" \
-    --set image.repository=mssql-operator \
-    --set image.tag=dev \
-    --set image.pullPolicy=Never \
-    --set replicaCount=1 \
-    --wait \
-    --timeout 120s
+# Create ServiceAccount
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mssql-operator
+  namespace: ${OPERATOR_NAMESPACE}
+EOF
 
 if [[ $? -eq 0 ]]; then
-    log_success "Operator installed via Helm"
+    log_success "ServiceAccount created"
 else
-    log_error "Failed to install operator"
+    log_error "Failed to create ServiceAccount"
+fi
+
+# Apply RBAC (uses cluster-scoped resources)
+kubectl apply -f "${PROJECT_ROOT}/deploy/rbac.yaml"
+
+if [[ $? -eq 0 ]]; then
+    log_success "RBAC resources created"
+else
+    log_error "Failed to create RBAC resources"
+fi
+
+# Create Deployment with custom namespace
+cat <<EOF | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mssql-operator
+  namespace: ${OPERATOR_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: mssql-operator
+    app: mssql-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mssql-operator
+      app: mssql-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mssql-operator
+        app: mssql-operator
+    spec:
+      serviceAccountName: mssql-operator
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: operator
+          image: mssql-operator:dev
+          imagePullPolicy: Never
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          ports:
+            - containerPort: 8080
+              name: metrics
+            - containerPort: 8081
+              name: health
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          env:
+            - name: OPERATOR_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: AG_HELPER_IMAGE
+              value: "mssql-ag-helper:dev"
+            - name: AG_HELPER_IMAGE_PULL_POLICY
+              value: "Never"
+EOF
+
+if [[ $? -eq 0 ]]; then
+    log_success "Operator Deployment created"
+else
+    log_error "Failed to create Deployment"
 fi
 
 # ============================================================================
@@ -108,10 +217,10 @@ fi
 # ============================================================================
 log_step "Test 5: Verify Operator Deployment"
 
-wait_for "deployment/mssql-operator-test" "condition=Available" 120 "${OPERATOR_NAMESPACE}"
+wait_for "deployment/mssql-operator" "condition=Available" 120 "${OPERATOR_NAMESPACE}"
 
 # Check replica count
-READY_REPLICAS=$(kubectl get deployment mssql-operator-test \
+READY_REPLICAS=$(kubectl get deployment mssql-operator \
     -n "${OPERATOR_NAMESPACE}" -o jsonpath='{.status.readyReplicas}')
 assert_equals "1" "${READY_REPLICAS}" "Operator should have 1 ready replica"
 
@@ -120,7 +229,7 @@ assert_equals "1" "${READY_REPLICAS}" "Operator should have 1 ready replica"
 # ============================================================================
 log_step "Test 6: Verify ServiceAccount"
 
-if resource_exists "serviceaccount/mssql-operator-test" "${OPERATOR_NAMESPACE}"; then
+if resource_exists "serviceaccount/mssql-operator" "${OPERATOR_NAMESPACE}"; then
     log_success "ServiceAccount exists"
 else
     log_error "ServiceAccount not found"
@@ -131,13 +240,13 @@ fi
 # ============================================================================
 log_step "Test 7: Verify RBAC"
 
-if kubectl get clusterrole mssql-operator-test &>/dev/null; then
+if kubectl get clusterrole mssql-operator &>/dev/null; then
     log_success "ClusterRole exists"
 else
     log_error "ClusterRole not found"
 fi
 
-if kubectl get clusterrolebinding mssql-operator-test &>/dev/null; then
+if kubectl get clusterrolebinding mssql-operator &>/dev/null; then
     log_success "ClusterRoleBinding exists"
 else
     log_error "ClusterRoleBinding not found"

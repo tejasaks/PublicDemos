@@ -6,7 +6,7 @@ This directory contains end-to-end tests for the MSSQL Kubernetes Operator.
 
 | Test | Description | Duration |
 |------|-------------|----------|
-| `test-operator-deployment.sh` | Validates operator installation via Helm | ~2 min |
+| `test-operator-deployment.sh` | Validates operator installation | ~2 min |
 | `test-crd-validation.sh` | Validates CRD schema and validation rules | ~1 min |
 | `test-sqlserver-standalone.sh` | Tests standalone SQL Server deployment | ~5 min |
 | `test-sqlserver-ag.sh` | Tests Availability Group deployment | ~10 min |
@@ -16,7 +16,6 @@ This directory contains end-to-end tests for the MSSQL Kubernetes Operator.
 
 - Kubernetes cluster (minikube, kind, or remote cluster)
 - kubectl configured and connected
-- Helm 3.x installed
 - Operator images built and available
 
 ## Setting Execute Permissions

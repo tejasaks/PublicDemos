@@ -1,0 +1,86 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mssql-operator
+  labels:
+    app.kubernetes.io/name: mssql-operator
+    app.kubernetes.io/part-of: mssql-operator
+rules:
+  # Core API resources
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/exec
+      - pods/log
+      - services
+      - endpoints
+      - persistentvolumeclaims
+      - configmaps
+      - secrets
+      - events
+      - serviceaccounts
+    verbs: ["*"]
+
+  # Apps API
+  - apiGroups: ["apps"]
+    resources:
+      - statefulsets
+      - deployments
+      - replicasets
+    verbs: ["*"]
+
+  # MSSQL Custom Resources
+  - apiGroups: ["mssql.microsoft.com"]
+    resources:
+      - sqlservers
+      - sqlservers/status
+      - sqlservers/finalizers
+      - sqlserverags
+      - sqlserverags/status
+      - sqlserverags/finalizers
+      - operatorconfigurations
+      - operatorconfigurations/status
+    verbs: ["*"]
+
+  # Required for leader election
+  - apiGroups: ["coordination.k8s.io"]
+    resources:
+      - leases
+    verbs: ["*"]
+
+  # Required for webhook (if needed)
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources:
+      - validatingwebhookconfigurations
+      - mutatingwebhookconfigurations
+    verbs: ["*"]
+
+  # Required for reading nodes (for topology awareness)
+  - apiGroups: [""]
+    resources:
+      - nodes
+    verbs: ["get", "list", "watch"]
+
+  # Policy for pod disruption budgets
+  - apiGroups: ["policy"]
+    resources:
+      - poddisruptionbudgets
+    verbs: ["*"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mssql-operator
+  labels:
+    app.kubernetes.io/name: mssql-operator
+    app.kubernetes.io/part-of: mssql-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mssql-operator
+subjects:
+  - kind: ServiceAccount
+    name: mssql-operator
+    namespace: mssql-system
