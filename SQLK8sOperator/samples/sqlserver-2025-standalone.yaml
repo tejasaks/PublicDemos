@@ -1,11 +1,17 @@
 # SQL Server 2025 Standalone Instance
 # Using the latest SQL Server 2025 container image
+#
+# Note: Resource name must be max 13 characters due to SQL Server 
+# NetBIOS name limit (15 chars - 2 for pod suffix)
 apiVersion: mssql.microsoft.com/v1alpha1
 kind: SQLServer
 metadata:
-  name: mssql-2025-standalone
+  name: sql2025-dev01  # Max 13 chars!
   namespace: mssql
 spec:
+  # Description for searchability and auditing
+  description: "SQL Server 2025 Developer instance for team Alpha"
+  
   # SQL Server 2025 - latest version
   version: "2025"
   
@@ -50,15 +56,17 @@ spec:
   
   credentials:
     saPasswordSecretRef:
-      name: mssql-2025-sa-password
+      name: sql2025-dev01-sa
       key: password
   
   service:
-    type: LoadBalancer
+    type: LoadBalancer  # External access by default
     port: 1433
+    # For minikube: use 'minikube tunnel' to get external IP
+    # Alternative: use NodePort for direct node access
+    # type: NodePort
+    # nodePort: 31433
     # loadBalancerIP: 10.0.0.100  # Optional: request specific IP
-    annotations:
-      service.beta.kubernetes.io/azure-load-balancer-internal: "true"
   
   monitoring:
     enabled: true
@@ -69,7 +77,7 @@ spec:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: mssql-2025-sa-password
+  name: sql2025-dev01-sa  # Match the SQLServer name
   namespace: mssql
 type: Opaque
 stringData:

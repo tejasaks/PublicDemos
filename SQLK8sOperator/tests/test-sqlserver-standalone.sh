@@ -10,7 +10,7 @@ test_init "sqlserver-standalone"
 
 # Configuration
 SA_PASSWORD="TestP@ssw0rd123!"
-SQLSERVER_NAME="test-standalone"
+SQLSERVER_NAME="tst-sa-01"  # Max 13 chars due to SQL Server NetBIOS limit
 
 # ============================================================================
 # Pre-requisites

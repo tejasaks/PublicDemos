@@ -51,6 +51,12 @@ spec:
               type: string
             metadata:
               type: object
+              properties:
+                name:
+                  type: string
+                  maxLength: 13
+                  pattern: "^[a-z][a-z0-9-]*$"
+                  description: "Name must be max 13 chars (SQL Server hostname limit is 15, minus 2 for pod suffix)"
             spec:
               description: SQLServerSpec defines the desired state of SQLServer
               type: object
@@ -58,6 +64,10 @@ spec:
                 - credentials
                 - instance
               properties:
+                description:
+                  description: Human-readable description of this SQL Server instance for identification and auditing
+                  type: string
+                  maxLength: 256
                 version:
                   description: SQL Server version (2019, 2022, 2025)
                   type: string

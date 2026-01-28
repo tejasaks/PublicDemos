@@ -55,15 +55,16 @@ assert_equals "mssqlag" "${CRD_SHORTNAME}" "CRD should have 'mssqlag' shortname"
 # ============================================================================
 log_step "Test 3: Valid SQLServer Resource Creation"
 
-# Create a valid SQLServer resource
+# Create a valid SQLServer resource (name max 13 chars)
 cat <<EOF | kubectl apply -n "${TEST_NAMESPACE}" -f -
 apiVersion: mssql.microsoft.com/v1alpha1
 kind: SQLServer
 metadata:
-  name: test-valid-sqlserver
+  name: test-sql-01
 spec:
   version: "2022"
   edition: Developer
+  description: "Test SQL Server for CRD validation"
   instance:
     replicas: 1
     storage:
@@ -75,10 +76,38 @@ spec:
       key: password
 EOF
 
-if resource_exists "sqlserver/test-valid-sqlserver" "${TEST_NAMESPACE}"; then
+if resource_exists "sqlserver/test-sql-01" "${TEST_NAMESPACE}"; then
     log_success "Valid SQLServer resource created successfully"
 else
     log_error "Failed to create valid SQLServer resource"
+fi
+
+# ============================================================================
+# Test 3b: Name Length Validation (max 13 chars)
+# ============================================================================
+log_step "Test 3b: Name Length Validation"
+
+# Try to create SQLServer with name > 13 chars (should be rejected)
+if cat <<EOF | kubectl apply -n "${TEST_NAMESPACE}" -f - 2>&1 | grep -qi "invalid\|denied\|error\|too long\|maxLength"; then
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServer
+metadata:
+  name: test-very-long-name-invalid
+spec:
+  version: "2022"
+  edition: Developer
+  instance:
+    replicas: 1
+    storage:
+      data:
+        size: 1Gi
+  credentials:
+    saPasswordSecretRef:
+      name: test-sa-password
+EOF
+    log_success "Name exceeding 13 chars correctly rejected"
+else
+    log_warn "Name length validation may not be enforced"
 fi
 
 # ============================================================================
@@ -92,7 +121,7 @@ for version in "2019" "2022" "2025"; do
 apiVersion: mssql.microsoft.com/v1alpha1
 kind: SQLServer
 metadata:
-  name: test-version-${version}
+  name: tst-v${version}
 spec:
   version: "${version}"
   edition: Developer
@@ -106,7 +135,7 @@ spec:
       name: test-sa-password
 EOF
 
-    if resource_exists "sqlserver/test-version-${version}" "${TEST_NAMESPACE}"; then
+    if resource_exists "sqlserver/tst-v${version}" "${TEST_NAMESPACE}"; then
         log_success "Version ${version} accepted"
     else
         log_error "Version ${version} rejected unexpectedly"
@@ -118,7 +147,7 @@ if cat <<EOF | kubectl apply -n "${TEST_NAMESPACE}" -f - 2>&1 | grep -qi "invali
 apiVersion: mssql.microsoft.com/v1alpha1
 kind: SQLServer
 metadata:
-  name: test-version-invalid
+  name: tst-v2018
 spec:
   version: "2018"
   edition: Developer
@@ -142,11 +171,13 @@ fi
 log_step "Test 5: SQLServer Edition Validation"
 
 for edition in "Developer" "Express" "Standard" "Enterprise"; do
+    # Create short name: tst-dev, tst-exp, tst-std, tst-ent
+    SHORT_ED=$(echo ${edition} | cut -c1-3 | tr '[:upper:]' '[:lower:]')
     cat <<EOF | kubectl apply -n "${TEST_NAMESPACE}" -f - 2>/dev/null
 apiVersion: mssql.microsoft.com/v1alpha1
 kind: SQLServer
 metadata:
-  name: test-edition-$(echo ${edition} | tr '[:upper:]' '[:lower:]')
+  name: tst-${SHORT_ED}
 spec:
   version: "2022"
   edition: "${edition}"
@@ -160,7 +191,7 @@ spec:
       name: test-sa-password
 EOF
 
-    if resource_exists "sqlserver/test-edition-$(echo ${edition} | tr '[:upper:]' '[:lower:]')" "${TEST_NAMESPACE}"; then
+    if resource_exists "sqlserver/tst-${SHORT_ED}" "${TEST_NAMESPACE}"; then
         log_success "Edition ${edition} accepted"
     else
         log_error "Edition ${edition} rejected unexpectedly"
@@ -177,7 +208,7 @@ cat <<EOF | kubectl apply -n "${TEST_NAMESPACE}" -f - 2>/dev/null
 apiVersion: mssql.microsoft.com/v1alpha1
 kind: SQLServer
 metadata:
-  name: test-replicas-valid
+  name: tst-rep3
 spec:
   version: "2022"
   edition: Developer
@@ -191,7 +222,7 @@ spec:
       name: test-sa-password
 EOF
 
-REPLICAS=$(kubectl get sqlserver test-replicas-valid -n "${TEST_NAMESPACE}" \
+REPLICAS=$(kubectl get sqlserver tst-rep3 -n "${TEST_NAMESPACE}" \
     -o jsonpath='{.spec.instance.replicas}' 2>/dev/null)
 assert_equals "3" "${REPLICAS}" "Replicas should be 3"
 
@@ -206,8 +237,9 @@ kind: SQLServerAG
 metadata:
   name: test-ag
 spec:
+  description: "Test AG for CRD validation"
   sqlServerRef:
-    name: test-valid-sqlserver
+    name: test-sql-01
   availabilityGroup:
     name: TestAG
     replicas: 3
@@ -252,7 +284,7 @@ if cat <<EOF | kubectl apply -n "${TEST_NAMESPACE}" -f - 2>&1 | grep -qi "requir
 apiVersion: mssql.microsoft.com/v1alpha1
 kind: SQLServer
 metadata:
-  name: test-missing-creds
+  name: tst-nocreds
 spec:
   version: "2022"
   edition: Developer
@@ -272,7 +304,7 @@ if cat <<EOF | kubectl apply -n "${TEST_NAMESPACE}" -f - 2>&1 | grep -qi "requir
 apiVersion: mssql.microsoft.com/v1alpha1
 kind: SQLServer
 metadata:
-  name: test-missing-storage
+  name: tst-nostor
 spec:
   version: "2022"
   edition: Developer
@@ -318,11 +350,11 @@ fi
 # ============================================================================
 log_step "Test 11: Resource Deletion"
 
-kubectl delete sqlserver test-valid-sqlserver -n "${TEST_NAMESPACE}" --wait=false
+kubectl delete sqlserver test-sql-01 -n "${TEST_NAMESPACE}" --wait=false
 
 sleep 2
 
-if ! resource_exists "sqlserver/test-valid-sqlserver" "${TEST_NAMESPACE}"; then
+if ! resource_exists "sqlserver/test-sql-01" "${TEST_NAMESPACE}"; then
     log_success "SQLServer resource deleted successfully"
 else
     log_info "SQLServer resource pending deletion (finalizer may be processing)"

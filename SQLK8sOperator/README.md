@@ -199,6 +199,40 @@ spec:
       - name: MyDatabase
 ```
 
+## Resource Naming Constraints
+
+### SQL Server NetBIOS Name Limit
+
+**Important:** SQL Server resource names must be **maximum 13 characters**.
+
+This is due to SQL Server's NetBIOS name limit of 15 characters. Since Kubernetes pods get a 2-character suffix (e.g., `-0`, `-1`), the base name must be ≤13 characters.
+
+| ✅ Valid Names | ❌ Invalid Names |
+|----------------|------------------|
+| `sql2022-dev01` | `mssql-2022-standalone` (21 chars) |
+| `sql-ag-prod01` | `my-production-sqlserver` (23 chars) |
+| `sqlprod-01` | `sqlserver-availability-group` (28 chars) |
+
+The CRD enforces this with validation:
+```yaml
+metadata:
+  name: sql2022-dev01  # Max 13 characters!
+```
+
+### Description Field for Searchability
+
+Both SQLServer and SQLServerAG CRDs support a `description` field for auditing and searchability:
+
+```yaml
+spec:
+  description: "Production SQL Server for order processing - Team Alpha"
+```
+
+This allows you to search resources:
+```bash
+kubectl get sqlserver -o jsonpath='{range .items[*]}{.metadata.name}: {.spec.description}{"\n"}{end}'
+```
+
 ## Development
 
 This section covers development workflows. Choose **one** of the two approaches based on your needs:
@@ -587,7 +621,9 @@ spec:
 
 ## Monitoring
 
-The operator integrates with Prometheus via the SQL Exporter sidecar:
+### SQL Exporter Sidecar
+
+Each SQL Server pod includes a SQL Exporter sidecar for metrics:
 
 ```yaml
 spec:
@@ -598,6 +634,82 @@ spec:
 ```
 
 Metrics are exposed at `/metrics` on port 9399.
+
+### Prometheus + Grafana Stack
+
+Deploy a complete monitoring stack with pre-configured SQL Server dashboards:
+
+```bash
+# Deploy monitoring stack
+./scripts/dev-setup.sh monitoring
+
+# Or during full setup
+./scripts/dev-setup.sh all-with-monitoring
+```
+
+**Manual deployment:**
+```bash
+kubectl apply -f deploy/monitoring/prometheus.yaml
+kubectl apply -f deploy/monitoring/grafana.yaml
+```
+
+**Prometheus configuration:**
+- Retention: 7 days / 1GB (configurable in `prometheus.yaml`)
+- Auto-discovers SQL pods with `prometheus.io/scrape: "true"` annotation
+- Accessible at `prometheus.monitoring:9090`
+
+**Grafana configuration:**
+- Pre-configured with SQL Server Overview dashboard
+- Default credentials: `admin / admin`
+- Accessible at `grafana.monitoring:3000`
+
+**Access dashboards:**
+```bash
+# Port forward Grafana
+kubectl port-forward -n monitoring svc/grafana 3000:3000
+# Open: http://localhost:3000
+
+# Port forward Prometheus
+kubectl port-forward -n monitoring svc/prometheus 9090:9090
+# Open: http://localhost:9090
+```
+
+## External Access
+
+### LoadBalancer (Default)
+
+Sample files use `LoadBalancer` service type by default:
+
+```yaml
+service:
+  type: LoadBalancer
+  port: 1433
+```
+
+**For minikube:**
+```bash
+# Start tunnel in a separate terminal (keeps running)
+minikube tunnel
+
+# Get external IP
+kubectl get svc -n mssql
+```
+
+### NodePort Alternative
+
+For environments without LoadBalancer support:
+
+```yaml
+service:
+  type: NodePort
+  port: 1433
+  nodePort: 31433  # Optional: specific port
+```
+
+Connect using `minikube ip`:
+```bash
+sqlcmd -S $(minikube ip),31433 -U sa -P 'YourPassword'
+```
 
 ## Contributing
 

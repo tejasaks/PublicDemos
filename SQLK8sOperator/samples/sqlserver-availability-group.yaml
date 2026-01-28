@@ -1,13 +1,19 @@
 # SQL Server Availability Group Configuration
 # This creates a 3-replica AG with automatic failover
 # managed by the AG Helper sidecar
+#
+# Note: Resource name must be max 13 characters due to SQL Server 
+# NetBIOS name limit (15 chars - 2 for pod suffix)
 
 apiVersion: mssql.microsoft.com/v1alpha1
 kind: SQLServer
 metadata:
-  name: mssql-ag-cluster
+  name: sql-ag-prod01  # Max 13 chars!
   namespace: mssql
 spec:
+  # Description for searchability and auditing
+  description: "Production SQL Server 2022 AG cluster for order processing"
+  
   version: "2022"
   edition: Developer  # AG works with Developer or Enterprise edition
   
@@ -48,18 +54,19 @@ spec:
           - labelSelector:
               matchLabels:
                 app: mssql
-                mssql.microsoft.com/instance: mssql-ag-cluster
+                mssql.microsoft.com/instance: sql-ag-prod01
             topologyKey: kubernetes.io/hostname
   
   credentials:
     saPasswordSecretRef:
-      name: mssql-ag-sa-password
+      name: sql-ag-prod01-sa
       key: password
   
   # Basic service for individual pod access
   service:
-    type: ClusterIP
+    type: LoadBalancer  # External access by default
     port: 1433
+    # For minikube: use 'minikube tunnel' to get external IP
   
   monitoring:
     enabled: true
@@ -69,12 +76,15 @@ spec:
 apiVersion: mssql.microsoft.com/v1alpha1
 kind: SQLServerAG
 metadata:
-  name: production-ag
+  name: prod-ag-01  # Max 13 chars!
   namespace: mssql
 spec:
+  # Description for searchability and auditing
+  description: "Production AG for order processing with 3 sync replicas"
+  
   # Reference to the SQLServer resource
   sqlServerRef:
-    name: mssql-ag-cluster
+    name: sql-ag-prod01
   
   availabilityGroup:
     # Name of the AG (as it appears in SQL Server)
@@ -138,17 +148,20 @@ spec:
   endpoints:
     # Primary endpoint - routes to current primary
     primary:
-      type: LoadBalancer
+      type: LoadBalancer  # External access by default
       port: 1433
-      annotations:
-        service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+      # For minikube: use 'minikube tunnel' to get external IP
+      # Alternative: use NodePort
+      # type: NodePort
+      # nodePort: 31433
     
-    # Secondary endpoint - routes to readable secondaries
+    # Secondary endpoint - routes to readable secondaries  
     secondary:
       type: LoadBalancer
-      port: 1433
-      annotations:
-        service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+      port: 1434
+      # Alternative: use NodePort
+      # type: NodePort
+      # nodePort: 31434
   
   # AG Helper sidecar configuration
   sidecar:
@@ -160,7 +173,7 @@ spec:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: mssql-ag-sa-password
+  name: sql-ag-prod01-sa
   namespace: mssql
 type: Opaque
 stringData:

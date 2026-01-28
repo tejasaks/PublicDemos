@@ -61,6 +61,10 @@ spec:
                 - sqlServerRef
                 - availabilityGroup
               properties:
+                description:
+                  description: Human-readable description of this Availability Group for identification and auditing
+                  type: string
+                  maxLength: 256
                 sqlServerRef:
                   description: Reference to the SQLServer resource
                   type: object

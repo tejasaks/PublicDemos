@@ -183,6 +183,42 @@ deploy_sample() {
     log_info "Watch status with: kubectl get sqlserver -n mssql -w"
 }
 
+# Deploy monitoring stack (Prometheus + Grafana)
+deploy_monitoring() {
+    log_info "Deploying monitoring stack (Prometheus + Grafana)..."
+    
+    # Deploy Prometheus
+    log_info "Deploying Prometheus..."
+    kubectl apply -f "${PROJECT_ROOT}/deploy/monitoring/prometheus.yaml"
+    
+    # Wait for Prometheus to be ready
+    log_info "Waiting for Prometheus to be ready..."
+    kubectl wait --for=condition=available deployment/prometheus -n monitoring --timeout=120s || true
+    
+    # Deploy Grafana
+    log_info "Deploying Grafana..."
+    kubectl apply -f "${PROJECT_ROOT}/deploy/monitoring/grafana.yaml"
+    
+    # Wait for Grafana to be ready
+    log_info "Waiting for Grafana to be ready..."
+    kubectl wait --for=condition=available deployment/grafana -n monitoring --timeout=120s || true
+    
+    log_info "Monitoring stack deployed!"
+    echo ""
+    log_info "Access Grafana:"
+    echo "  kubectl port-forward -n monitoring svc/grafana 3000:3000"
+    echo "  Open: http://localhost:3000"
+    echo "  Credentials: admin / admin"
+    echo ""
+    log_info "Access Prometheus:"
+    echo "  kubectl port-forward -n monitoring svc/prometheus 9090:9090"
+    echo "  Open: http://localhost:9090"
+    echo ""
+    log_info "For external access with LoadBalancer (minikube):"
+    echo "  minikube tunnel"
+    echo "  Then: kubectl get svc -n monitoring"
+}
+
 # Show status
 show_status() {
     log_info "Cluster Status:"
@@ -201,6 +237,14 @@ show_status() {
     
     log_info "Pods:"
     kubectl get pods -n mssql
+    echo ""
+    
+    # Show monitoring if deployed
+    if kubectl get namespace monitoring &>/dev/null; then
+        log_info "Monitoring:"
+        kubectl get pods -n monitoring
+        echo ""
+    fi
 }
 
 # Cleanup
@@ -276,6 +320,9 @@ main() {
         deploy)
             deploy_sample "${2:-}"
             ;;
+        monitoring)
+            deploy_monitoring
+            ;;
         status)
             show_status
             ;;
@@ -293,8 +340,17 @@ main() {
             deploy_sample
             show_status
             ;;
+        all-with-monitoring)
+            check_prerequisites
+            start_minikube
+            build_operator
+            install_operator
+            deploy_monitoring
+            deploy_sample
+            show_status
+            ;;
         *)
-            echo "Usage: $0 {prereq|start|build|install|uninstall|deploy|status|cleanup|connect|all} [options]"
+            echo "Usage: $0 {prereq|start|build|install|uninstall|deploy|monitoring|status|cleanup|connect|all|all-with-monitoring} [options]"
             echo ""
             echo "Commands:"
             echo "  prereq    - Check prerequisites (Docker, minikube, kubectl, Go)"
@@ -304,16 +360,19 @@ main() {
             echo "  uninstall - Remove operator (preserves CRDs)"
             echo "  deploy [yaml_file] - Deploy SQL Server from YAML file"
             echo "                       Default: samples/sqlserver-2025-standalone.yaml"
+            echo "  monitoring - Deploy Prometheus + Grafana monitoring stack"
             echo "  status    - Show cluster and resource status"
             echo "  cleanup   - Remove all resources"
             echo "  connect   - Port-forward to SQL Server"
             echo "  all       - Run all steps (prereq, start, build, install, deploy)"
+            echo "  all-with-monitoring - Full setup including Prometheus/Grafana"
             echo ""
             echo "Examples:"
             echo "  $0 all                                       # Full setup with SQL 2025"
+            echo "  $0 all-with-monitoring                       # Full setup with monitoring"
+            echo "  $0 monitoring                                # Deploy monitoring only"
             echo "  $0 deploy                                    # Deploy SQL 2025 standalone (default)"
             echo "  $0 deploy samples/sqlserver-2022-standalone.yaml"
-            echo "  $0 deploy samples/sqlserver-with-ad.yaml"
             echo "  $0 deploy samples/sqlserver-availability-group.yaml"
             exit 1
             ;;

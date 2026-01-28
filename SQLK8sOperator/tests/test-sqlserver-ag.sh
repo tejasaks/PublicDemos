@@ -10,7 +10,7 @@ test_init "sqlserver-ag"
 
 # Configuration
 SA_PASSWORD="TestP@ssw0rd123!"
-SQLSERVER_NAME="test-ag-cluster"
+SQLSERVER_NAME="tst-ag-01"  # Max 13 chars due to SQL Server NetBIOS limit
 AG_NAME="test-ag"
 REPLICA_COUNT=3
 

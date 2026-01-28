@@ -1,11 +1,17 @@
 # SQL Server 2022 Standalone Instance
 # This is a basic standalone SQL Server deployment
+#
+# Note: Resource name must be max 13 characters due to SQL Server 
+# NetBIOS name limit (15 chars - 2 for pod suffix)
 apiVersion: mssql.microsoft.com/v1alpha1
 kind: SQLServer
 metadata:
-  name: mssql-2022-standalone
+  name: sql2022-dev01  # Max 13 chars!
   namespace: mssql
 spec:
+  # Description for searchability and auditing
+  description: "SQL Server 2022 Developer instance for development workloads"
+  
   # SQL Server version - 2019, 2022, or 2025
   version: "2022"
   
@@ -59,13 +65,17 @@ spec:
   # Authentication
   credentials:
     saPasswordSecretRef:
-      name: mssql-sa-password
+      name: sql2022-dev01-sa
       key: password
   
   # Service configuration
   service:
-    type: ClusterIP
+    type: LoadBalancer  # External access by default
     port: 1433
+    # For minikube: use 'minikube tunnel' to get external IP
+    # Alternative: use NodePort for direct node access
+    # type: NodePort
+    # nodePort: 31433
   
   # Monitoring with SQL Exporter
   monitoring:
@@ -78,7 +88,7 @@ spec:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: mssql-sa-password
+  name: sql2022-dev01-sa
   namespace: mssql
 type: Opaque
 stringData:
