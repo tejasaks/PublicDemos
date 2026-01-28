@@ -16,7 +16,7 @@ COPY pkg/ pkg/
 COPY internal/ internal/
 
 # Build the AG helper sidecar
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o mssql-ag-helper ./cmd/mssql-ag-helper
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o mssql-ag-helper ./cmd/ag-helper
 
 # Runtime stage - using ubuntu for sqlcmd compatibility if needed
 FROM ubuntu:22.04

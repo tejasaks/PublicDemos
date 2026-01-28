@@ -63,7 +63,7 @@ build: generate fmt vet ## Build operator binary.
 
 .PHONY: build-sidecar
 build-sidecar: ## Build AG helper sidecar binary.
-	go build -o bin/mssql-ag-helper ./cmd/mssql-ag-helper
+	go build -o bin/mssql-ag-helper ./cmd/ag-helper
 
 .PHONY: run
 run: manifests generate fmt vet ## Run operator from your host.
