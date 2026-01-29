@@ -14,6 +14,11 @@ import (
 
 // SQLServerAGSpec defines the desired state of SQLServerAG (Availability Group)
 type SQLServerAGSpec struct {
+	// Description is an optional human-readable description for auditing and searchability
+	// +optional
+	// +kubebuilder:validation:MaxLength=1024
+	Description string `json:"description,omitempty"`
+
 	// SQLServerRef references the SQLServer instance to configure as an AG
 	SQLServerRef corev1.LocalObjectReference `json:"sqlServerRef"`
 

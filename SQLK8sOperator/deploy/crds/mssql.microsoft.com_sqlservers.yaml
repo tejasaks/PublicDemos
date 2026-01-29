@@ -152,6 +152,11 @@ spec:
                 required:
                 - saPasswordSecretRef
                 type: object
+              description:
+                description: Description is an optional human-readable description
+                  for auditing and searchability
+                maxLength: 1024
+                type: string
               edition:
                 default: Developer
                 description: Edition is the SQL Server edition

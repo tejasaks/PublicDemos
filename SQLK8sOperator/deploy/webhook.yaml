@@ -1,0 +1,132 @@
+# Validating Webhook Configuration for MSSQL Operator
+# Provides admission control for SQLServer and SQLServerAG resources
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mssql-operator-webhook
+  namespace: mssql-operator
+  labels:
+    app: mssql-operator
+    component: webhook
+spec:
+  ports:
+    - port: 443
+      targetPort: 9443
+      name: webhook
+  selector:
+    app: mssql-operator
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: mssql-operator-validating-webhook
+  labels:
+    app: mssql-operator
+webhooks:
+  - name: validate.sqlserver.mssql.microsoft.com
+    admissionReviewVersions: ["v1", "v1beta1"]
+    sideEffects: None
+    # Timeout for webhook call (fail-open after this)
+    timeoutSeconds: 10
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    clientConfig:
+      service:
+        name: mssql-operator-webhook
+        namespace: mssql-operator
+        path: /validate-mssql-microsoft-com-v1alpha1-sqlserver
+      # CA bundle will be injected by cert-manager or manually
+      caBundle: ""
+    rules:
+      - apiGroups: ["mssql.microsoft.com"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["sqlservers"]
+        scope: Namespaced
+    # Don't validate resources in system namespaces
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: ["kube-system", "kube-public", "kube-node-lease"]
+
+  - name: validate.sqlserverag.mssql.microsoft.com
+    admissionReviewVersions: ["v1", "v1beta1"]
+    sideEffects: None
+    timeoutSeconds: 10
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    clientConfig:
+      service:
+        name: mssql-operator-webhook
+        namespace: mssql-operator
+        path: /validate-mssql-microsoft-com-v1alpha1-sqlserverag
+      caBundle: ""
+    rules:
+      - apiGroups: ["mssql.microsoft.com"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["sqlserverags"]
+        scope: Namespaced
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: ["kube-system", "kube-public", "kube-node-lease"]
+
+---
+# Certificate for webhook TLS
+# Option 1: Use cert-manager (recommended for production)
+# Uncomment the following if cert-manager is installed
+#
+# apiVersion: cert-manager.io/v1
+# kind: Certificate
+# metadata:
+#   name: mssql-operator-webhook-cert
+#   namespace: mssql-operator
+# spec:
+#   secretName: mssql-operator-webhook-tls
+#   dnsNames:
+#     - mssql-operator-webhook.mssql-operator.svc
+#     - mssql-operator-webhook.mssql-operator.svc.cluster.local
+#   issuerRef:
+#     name: mssql-operator-selfsigned-issuer
+#     kind: Issuer
+#
+# ---
+# apiVersion: cert-manager.io/v1
+# kind: Issuer
+# metadata:
+#   name: mssql-operator-selfsigned-issuer
+#   namespace: mssql-operator
+# spec:
+#   selfSigned: {}
+
+---
+# Option 2: Manual TLS certificate secret
+# Generate with:
+#   openssl req -x509 -newkey rsa:4096 -keyout tls.key -out tls.crt -days 365 -nodes \
+#     -subj "/CN=mssql-operator-webhook.mssql-operator.svc" \
+#     -addext "subjectAltName=DNS:mssql-operator-webhook.mssql-operator.svc,DNS:mssql-operator-webhook.mssql-operator.svc.cluster.local"
+#
+# Then create secret:
+#   kubectl create secret tls mssql-operator-webhook-tls --cert=tls.crt --key=tls.key -n mssql-operator
+#
+# And update the caBundle in ValidatingWebhookConfiguration with base64 of tls.crt:
+#   cat tls.crt | base64 | tr -d '\n'
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mssql-operator-webhook-tls
+  namespace: mssql-operator
+  labels:
+    app: mssql-operator
+type: kubernetes.io/tls
+data:
+  # Placeholder - replace with actual certificate data
+  # tls.crt and tls.key should be base64 encoded
+  tls.crt: ""
+  tls.key: ""

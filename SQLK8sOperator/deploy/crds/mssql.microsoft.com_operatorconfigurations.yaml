@@ -221,6 +221,50 @@ spec:
                       checks
                     type: string
                 type: object
+              validation:
+                description: Validation contains validation behavior configuration
+                properties:
+                  clusterCapabilityChecks:
+                    default: true
+                    description: ClusterCapabilityChecks enables validation of cluster
+                      capabilities (StorageClass, etc.)
+                    type: boolean
+                  nodeValidation:
+                    default: block
+                    description: NodeValidation controls node selector validation
+                    enum:
+                    - block
+                    - warn
+                    type: string
+                  passwordComplexity:
+                    default: enforce
+                    description: PasswordComplexity controls password complexity validation
+                    enum:
+                    - enforce
+                    - warn
+                    type: string
+                  secretValidation:
+                    default: warn
+                    description: SecretValidation controls how Secret validation failures
+                      are handled
+                    enum:
+                    - block
+                    - warn
+                    type: string
+                  storageClassValidation:
+                    default: block
+                    description: StorageClassValidation controls how StorageClass
+                      validation failures are handled
+                    enum:
+                    - block
+                    - warn
+                    type: string
+                  validationTimeout:
+                    default: 3s
+                    description: ValidationTimeout is the maximum time to wait for
+                      cluster capability checks
+                    type: string
+                type: object
               workers:
                 default: 8
                 description: Workers is the number of concurrent reconciliation workers

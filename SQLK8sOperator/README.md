@@ -109,72 +109,148 @@ The operator architecture was informed by:
 
 1. **Install the operator:**
 
-```bash
-# Install CRDs
-kubectl apply -f deploy/crds/
+   This step installs the Custom Resource Definitions (CRDs) and the operator itself into your Kubernetes cluster.
 
-# Install operator (namespace, RBAC, deployment)
-kubectl apply -f deploy/namespace.yaml
-kubectl apply -f deploy/serviceaccount.yaml
-kubectl apply -f deploy/rbac.yaml
-kubectl apply -f deploy/deployment.yaml
-```
+   ```bash
+   # Install CRDs (defines SQLServer and SQLServerAG resource types)
+   kubectl apply -f deploy/crds/
 
-2. **Create a SQL Server instance:**
+   # Install operator components (namespace, RBAC, deployment)
+   kubectl apply -f deploy/namespace.yaml
+   kubectl apply -f deploy/serviceaccount.yaml
+   kubectl apply -f deploy/rbac.yaml
+   kubectl apply -f deploy/deployment.yaml
+   ```
 
-```yaml
-apiVersion: mssql.microsoft.com/v1alpha1
-kind: SQLServer
-metadata:
-  name: my-sqlserver
-  namespace: mssql
-spec:
-  version: "2022"
-  edition: Developer
-  instance:
-    replicas: 1
-    resources:
-      limits:
-        cpu: "2"
-        memory: 4Gi
-      requests:
-        cpu: "1"
-        memory: 2Gi
-    storage:
-      data:
-        size: 10Gi
-  credentials:
-    saPasswordSecretRef:
-      name: mssql-sa-password
-      key: password
-  service:
-    type: ClusterIP
-    port: 1433
-  monitoring:
-    enabled: true
-```
+2. **Create the SA password secret:**
 
-3. **Apply the manifest:**
+   Before creating a SQL Server instance, you must create a Kubernetes Secret containing the SA (system administrator) password. The password must meet [SQL Server complexity requirements](#password-requirements).
 
-```bash
-# Create namespace
-kubectl create namespace mssql
+   ```bash
+   # Create namespace for your SQL Server resources
+   kubectl create namespace mssql
 
-# Create SA password secret
-kubectl create secret generic mssql-sa-password \
-  --from-literal=password='YourStrong@Passw0rd!' \
-  -n mssql
+   # Create the SA password secret
+   # Replace 'YourStrong@Passw0rd!' with your actual password
+   kubectl create secret generic mssql-sa-password \
+     --from-literal=password='YourStrong@Passw0rd!' \
+     -n mssql
+   ```
 
-# Apply SQL Server manifest
-kubectl apply -f my-sqlserver.yaml
-```
+   > **Important:** The password must be at least 8 characters and contain characters from at least 3 of these categories: uppercase letters, lowercase letters, digits, and special characters.
 
-4. **Check status:**
+3. **Create a SQL Server manifest file:**
 
-```bash
-kubectl get sqlserver -n mssql
-kubectl get pods -n mssql
-```
+   In this step, you will create a YAML manifest file that describes your desired SQL Server configuration. This file tells the operator what kind of SQL Server instance to deploy.
+
+   **Option A: Using `cat` (Linux/macOS/WSL)**
+   ```bash
+   cat > my-sqlserver.yaml << 'EOF'
+   apiVersion: mssql.microsoft.com/v1alpha1
+   kind: SQLServer
+   metadata:
+     name: my-sqlserver
+     namespace: mssql
+   spec:
+     version: "2022"
+     edition: Developer
+     instance:
+       replicas: 1
+       resources:
+         limits:
+           cpu: "2"
+           memory: 4Gi
+         requests:
+           cpu: "1"
+           memory: 2Gi
+       storage:
+         data:
+           size: 10Gi
+     credentials:
+       saPasswordSecretRef:
+         name: mssql-sa-password
+         key: password
+     service:
+       type: ClusterIP
+       port: 1433
+     monitoring:
+       enabled: true
+   EOF
+   ```
+
+   **Option B: Using `nano` or any text editor**
+   ```bash
+   nano my-sqlserver.yaml
+   # Paste the YAML content above, then save with Ctrl+O, exit with Ctrl+X
+   ```
+
+   **Option C: Using PowerShell (Windows)**
+   ```powershell
+   @"
+   apiVersion: mssql.microsoft.com/v1alpha1
+   kind: SQLServer
+   metadata:
+     name: my-sqlserver
+     namespace: mssql
+   spec:
+     version: "2022"
+     edition: Developer
+     instance:
+       replicas: 1
+       resources:
+         limits:
+           cpu: "2"
+           memory: 4Gi
+         requests:
+           cpu: "1"
+           memory: 2Gi
+       storage:
+         data:
+           size: 10Gi
+     credentials:
+       saPasswordSecretRef:
+         name: mssql-sa-password
+         key: password
+     service:
+       type: ClusterIP
+       port: 1433
+     monitoring:
+       enabled: true
+   "@ | Out-File -FilePath my-sqlserver.yaml -Encoding UTF8
+   ```
+
+   > **Note:** The `name: my-sqlserver` must be **13 characters or fewer** due to SQL Server NetBIOS naming requirements. See [Resource Naming Constraints](#resource-naming-constraints) for details.
+
+4. **Apply the manifest to deploy SQL Server:**
+
+   Now apply the manifest file you created. The operator will read this file and create all the necessary Kubernetes resources (StatefulSet, Services, PVCs, etc.) to run SQL Server.
+
+   ```bash
+   kubectl apply -f my-sqlserver.yaml
+   ```
+
+   This command submits your configuration to Kubernetes. The operator will then:
+   - Create a StatefulSet for SQL Server pods
+   - Create PersistentVolumeClaims for data storage
+   - Create Services for network access
+   - Configure monitoring if enabled
+
+5. **Check status:**
+
+   Monitor your SQL Server deployment to ensure it's running properly.
+
+   ```bash
+   # Check the SQLServer custom resource status
+   kubectl get sqlserver -n mssql
+
+   # Check the pods are running
+   kubectl get pods -n mssql
+
+   # View detailed status
+   kubectl describe sqlserver my-sqlserver -n mssql
+   ```
+
+   Wait until the pod shows `Running` status and the SQLServer resource shows a healthy state.
 
 ## Custom Resources
 
@@ -375,20 +451,23 @@ spec:
 kubectl apply -f your-sqlserver.yaml
 ```
 
-#### Step 2: Create the SQLServerAG Resource
+#### Step 2: Create the SQLServerAG Manifest File
 
-```yaml
+Create a YAML manifest file that describes your Availability Group configuration. This file tells the operator to create Kubernetes Services for the AG endpoints.
+
+**Option A: Using `cat` (Linux/macOS/WSL)**
+```bash
+cat > new-ag.yaml << 'EOF'
 apiVersion: mssql.microsoft.com/v1alpha1
 kind: SQLServerAG
 metadata:
   name: new-ag-01
   namespace: mssql
 spec:
-  description: "New AG for reporting workloads"
   sqlServerRef:
     name: your-sqlserver  # Reference to existing SQLServer
   availabilityGroup:
-    name: ReportingAG
+    name: ReportingAG     # SQL Server AG name (max 128 chars, SQL identifier rules)
     replicas: 3
     databases:
       - name: ReportingDB
@@ -399,24 +478,39 @@ spec:
     secondary:
       type: LoadBalancer
       port: 1434
+EOF
 ```
+
+**Option B: Using a text editor**
+```bash
+nano new-ag.yaml
+# Paste the YAML content above, save and exit
+```
+
+> **Note:** The `metadata.name` must be 13 characters or fewer. The `availabilityGroup.name` follows [SQL identifier rules](#resource-name-validation) and can be up to 128 characters.
+
+#### Step 3: Apply the SQLServerAG Manifest
 
 ```bash
 kubectl apply -f new-ag.yaml
 ```
 
-#### Step 3: Configure AG via T-SQL
+This creates:
+- A Service for the primary replica endpoint (routing to the current primary)
+- A Service for secondary replicas (for read-only workloads)
 
-Connect to the primary replica and create the AG:
+#### Step 4: Configure AG via T-SQL
+
+Connect to the primary replica pod and create the Availability Group using SQL commands. This step requires manual T-SQL execution because AG configuration involves inter-replica communication that must be coordinated.
 
 ```bash
-# Connect to primary
+# Connect to primary pod's SQL Server instance
 kubectl exec -it your-sqlserver-0 -n mssql -- \
   /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'YourPassword' -C
 ```
 
 ```sql
--- Create database
+-- Create database that will be part of the AG
 CREATE DATABASE ReportingDB;
 ALTER DATABASE ReportingDB SET RECOVERY FULL;
 BACKUP DATABASE ReportingDB TO DISK = '/var/opt/mssql/backup/ReportingDB.bak';
@@ -428,29 +522,52 @@ CREATE AVAILABILITY GROUP ReportingAG
     REPLICA ON ...;
 ```
 
-#### Step 4: Join Secondary Replicas
+> **Tip:** See `samples/scripts/setup-availability-group.sql` for a complete, production-ready script.
+
+#### Step 5: Join Secondary Replicas
+
+Each secondary replica must join the Availability Group. Execute this command on each secondary pod:
 
 ```bash
-# On each secondary
+# Join the first secondary (pod index 1)
 kubectl exec -it your-sqlserver-1 -n mssql -- \
+  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'YourPassword' -C \
+  -Q "ALTER AVAILABILITY GROUP ReportingAG JOIN WITH (CLUSTER_TYPE = EXTERNAL);"
+
+# Join the second secondary (pod index 2), if applicable
+kubectl exec -it your-sqlserver-2 -n mssql -- \
   /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'YourPassword' -C \
   -Q "ALTER AVAILABILITY GROUP ReportingAG JOIN WITH (CLUSTER_TYPE = EXTERNAL);"
 ```
 
-#### Step 5: Verify AG Helper Detected the AG
+#### Step 6: Verify AG Helper Detected the AG
+
+Once the AG is configured, the AG Helper sidecar automatically detects it and transitions from "Waiting" to "Healthy" status.
 
 ```bash
-# Check sidecar health
+# Check sidecar health endpoint
 kubectl exec -it your-sqlserver-0 -n mssql -c ag-helper -- \
   curl -s localhost:8080/state | jq
 
-# Should show:
+# Expected output (healthy state):
 # {
 #   "agName": "ReportingAG",
 #   "role": "PRIMARY",
 #   "health": "Healthy",
 #   ...
 # }
+```
+
+**Verification commands:**
+```bash
+# Check if pods are ready (readiness probes passing)
+kubectl get pods -n mssql
+
+# Check the SQLServerAG resource status
+kubectl get sqlserverag -n mssql
+
+# Check the services were created
+kubectl get svc -n mssql | grep -E 'primary|secondary'
 ```
 
 ### Scenario: Multiple Availability Groups
@@ -681,6 +798,187 @@ This allows you to search resources:
 ```bash
 kubectl get sqlserver -o jsonpath='{range .items[*]}{.metadata.name}: {.spec.description}{"\n"}{end}'
 ```
+
+## Input Validation & Security
+
+The operator includes comprehensive input validation to prevent misconfigurations and ensure security. Validation occurs at multiple layers:
+
+### Validation Layers
+
+| Layer | When | Purpose |
+|-------|------|---------|
+| **CRD Schema** | `kubectl apply` time | Basic type checking, enum validation, required fields |
+| **Admission Webhook** | Before resource creation | Cluster capability checks, security validation |
+| **Controller** | During reconciliation | Runtime validation, state-dependent checks |
+| **AG Helper Sidecar** | SQL execution | SQL injection prevention, identifier sanitization |
+
+### Password Requirements
+
+The SA (system administrator) password must meet SQL Server's complexity requirements:
+
+| Requirement | Description |
+|-------------|-------------|
+| **Minimum Length** | At least 8 characters |
+| **Complexity** | Must contain characters from at least 3 of these 4 categories: |
+| | - Uppercase letters (A-Z) |
+| | - Lowercase letters (a-z) |
+| | - Digits (0-9) |
+| | - Special characters (!@#$%^&*()-_=+[]{}|;:,.<>?) |
+
+**Valid password examples:**
+- `MyP@ssw0rd!` ✅ (uppercase, lowercase, digit, special)
+- `Str0ng#Pass` ✅ (uppercase, lowercase, digit, special)
+- `SQLServer2022!` ✅ (uppercase, lowercase, digit, special)
+
+**Invalid password examples:**
+- `password` ❌ (too simple, only lowercase)
+- `12345678` ❌ (only digits)
+- `Pass123` ❌ (only 7 characters)
+
+### Resource Name Validation
+
+| Resource | Max Length | Pattern | Example |
+|----------|------------|---------|---------|
+| SQLServer name | 13 chars | `[a-z0-9][-a-z0-9]*[a-z0-9]` | `sql-prod-01` |
+| SQLServerAG name | 13 chars | `[a-z0-9][-a-z0-9]*[a-z0-9]` | `ag-orders` |
+| Secret name | 253 chars | Kubernetes DNS subdomain | `mssql-sa-password` |
+| AG name (SQL) | 128 chars | SQL identifier rules | `ProductionAG` |
+| Database name | 128 chars | SQL identifier rules | `OrdersDB` |
+
+**SQL Identifier Rules:**
+- Must start with a letter (a-z, A-Z), underscore (_), at sign (@), or number sign (#)
+- Subsequent characters can include letters, digits, @, $, #, or _
+- Cannot be a SQL Server reserved keyword (warning issued)
+
+### Storage Class Validation
+
+Before creating a SQL Server instance, the operator validates that the specified StorageClass exists in your cluster.
+
+**Behavior:**
+- If the StorageClass exists → Resource is created
+- If the StorageClass does NOT exist → Resource creation is **blocked** with a helpful error message
+
+**Example error:**
+```
+Error: StorageClass 'managed-premium' not found in cluster. 
+Available StorageClasses: [standard, local-path]. 
+Update spec.instance.storage.data.storageClass or remove to use cluster default.
+```
+
+**How to fix:**
+1. List available StorageClasses: `kubectl get storageclass`
+2. Update your manifest to use an available StorageClass
+3. Or remove the `storageClass` field to use the cluster default
+
+### Secret Validation
+
+The operator checks if referenced Secrets exist before creating resources.
+
+**Behavior:**
+- If the Secret exists → Resource is created
+- If the Secret does NOT exist → Resource creation proceeds with a **warning**
+
+**Example warning:**
+```
+Warning: Secret 'mssql-sa-password' not found in namespace 'mssql'. 
+Create it with: kubectl create secret generic mssql-sa-password --from-literal=password=<password> -n mssql
+```
+
+> **Note:** The operator warns rather than blocks for missing Secrets because the Secret might be created by another process (e.g., external-secrets operator, GitOps pipeline).
+
+### Memory Validation
+
+SQL Server requires a minimum of 2GB of RAM. The operator validates memory limits to prevent deployment failures.
+
+| Memory Limit | Result |
+|--------------|--------|
+| `≥ 2Gi` | ✅ Allowed |
+| `< 2Gi` | ❌ Blocked with error |
+| Not specified | ⚠️ Warning issued |
+
+### Port Validation
+
+| Port Range | Result |
+|------------|--------|
+| `1-65535` | ✅ Valid |
+| `< 1024` | ⚠️ Warning (privileged port) |
+| `0` or `> 65535` | ❌ Invalid |
+
+### Security Validations
+
+The operator includes security validations to prevent injection attacks:
+
+#### SQL Injection Prevention
+
+User-provided values (database names, AG names, paths) are validated for potential SQL injection patterns:
+
+| Blocked Pattern | Reason |
+|-----------------|--------|
+| `'; DROP TABLE` | SQL statement injection |
+| `--` | SQL comment injection |
+| `/*` or `*/` | Block comment injection |
+| `xp_` or `sp_` | System procedure prefix |
+| `EXEC(` or `EXECUTE(` | Dynamic execution |
+| `UNION`, `SELECT`, `DELETE`, `UPDATE`, `INSERT` | SQL keywords |
+| `OR 1=1`, `' OR '` | Tautology injection |
+
+#### Path Traversal Prevention
+
+File paths (backup paths, certificate paths) are validated to prevent directory traversal attacks:
+
+| Blocked Pattern | Reason |
+|-----------------|--------|
+| `..` | Parent directory traversal |
+| Null bytes (`\x00`) | Path injection |
+| Shell metacharacters (`;`, `|`, `&`, `` ` ``) | Command injection |
+
+#### Container Image Validation
+
+Container image references are validated to prevent command injection:
+
+| Validation | Example Invalid Value |
+|------------|----------------------|
+| No spaces | `nginx latest` ❌ |
+| No shell metacharacters | `nginx; rm -rf /` ❌ |
+| Valid format | `my.registry.io/image:tag` ✅ |
+
+### AG Helper Sidecar Protections
+
+The AG Helper sidecar includes additional runtime protections:
+
+1. **SQL Identifier Sanitization**: AG names and database names are sanitized using SQL Server's `QUOTENAME`-style escaping before use in dynamic SQL
+2. **Input Truncation**: Long inputs are truncated before logging to prevent log injection
+3. **Read-only Operations**: Most sidecar operations are read-only queries against system views
+
+### Validation Configuration
+
+The operator's validation behavior can be configured via the OperatorConfiguration CRD:
+
+```yaml
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: OperatorConfiguration
+metadata:
+  name: default
+spec:
+  validation:
+    clusterCapabilityChecks: true       # Enable/disable cluster checks
+    validationTimeout: "3s"             # Timeout for cluster API calls
+    storageClassValidation: "block"     # "block" or "warn"
+    secretValidation: "warn"            # "block" or "warn"
+    passwordComplexity: "enforce"       # "enforce" or "warn"
+    nodeValidation: "block"             # "block" or "warn"
+```
+
+### Validation Timeout Behavior
+
+To prevent slow cluster APIs from blocking deployments, validation operations have a configurable timeout (default: 3 seconds).
+
+| Scenario | Behavior |
+|----------|----------|
+| Validation completes within timeout | Normal block/warn behavior |
+| Validation times out | Resource is **allowed** with a warning |
+
+This ensures that intermittent API issues don't prevent legitimate deployments.
 
 ## Packaging & Distribution
 

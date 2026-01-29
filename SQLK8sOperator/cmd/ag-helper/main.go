@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -49,6 +50,49 @@ const (
 	StateNotSynchronizing SyncState = "NOT_SYNCHRONIZING"
 	StateSuspended        SyncState = "SUSPENDED"
 )
+
+// SQL Identifier validation pattern
+// SQL Server allows identifiers that start with letter, _, @, or #
+// and contain letters, digits, @, $, #, or _
+var sqlIdentifierPattern = regexp.MustCompile(`^[a-zA-Z_@#][a-zA-Z0-9_@#$]{0,127}$`)
+
+// validateSQLIdentifier validates a SQL Server identifier
+func validateSQLIdentifier(name string, fieldName string) error {
+	if name == "" {
+		return nil // Empty is allowed for auto-discovery mode
+	}
+	if len(name) > 128 {
+		return fmt.Errorf("%s '%s' exceeds maximum length of 128 characters", fieldName, truncateString(name, 20))
+	}
+	if !sqlIdentifierPattern.MatchString(name) {
+		return fmt.Errorf("%s '%s' contains invalid characters", fieldName, truncateString(name, 20))
+	}
+	return nil
+}
+
+// sanitizeSQLIdentifier safely escapes a SQL identifier for use in dynamic SQL
+// Uses bracket notation with proper escaping
+func sanitizeSQLIdentifier(name string) string {
+	if name == "" {
+		return ""
+	}
+	// Validate first - if invalid, return empty to prevent injection
+	if !sqlIdentifierPattern.MatchString(name) {
+		klog.Errorf("Invalid SQL identifier rejected: %s", truncateString(name, 20))
+		return ""
+	}
+	// Escape any existing brackets (shouldn't exist per pattern, but defense in depth)
+	escaped := strings.ReplaceAll(name, "]", "]]")
+	return "[" + escaped + "]"
+}
+
+// truncateString shortens a string for display in logs
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
 
 // ConnectedState represents the connection state
 type ConnectedState string
@@ -633,6 +677,11 @@ func (h *AGHelper) determineHealth(state *AGState) string {
 // Failover performs a failover to this replica
 // Ported from mssql-server-ha: Failover()
 func (h *AGHelper) Failover(ctx context.Context, allowDataLoss bool) error {
+	// Validate AG name before using in SQL
+	if err := validateSQLIdentifier(h.agName, "AG name"); err != nil {
+		return fmt.Errorf("invalid AG name: %w", err)
+	}
+
 	role, err := h.GetRole(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get current role: %w", err)
@@ -643,14 +692,20 @@ func (h *AGHelper) Failover(ctx context.Context, allowDataLoss bool) error {
 		return nil
 	}
 
+	// Sanitize AG name for safe SQL execution
+	safeAGName := sanitizeSQLIdentifier(h.agName)
+	if safeAGName == "" {
+		return fmt.Errorf("AG name sanitization failed")
+	}
+
 	var failoverQuery string
 	if allowDataLoss {
 		// Force failover with potential data loss
-		failoverQuery = fmt.Sprintf(`ALTER AVAILABILITY GROUP [%s] FORCE_FAILOVER_ALLOW_DATA_LOSS`, h.agName)
+		failoverQuery = fmt.Sprintf(`ALTER AVAILABILITY GROUP %s FORCE_FAILOVER_ALLOW_DATA_LOSS`, safeAGName)
 		klog.Warning("Performing force failover with potential data loss")
 	} else {
 		// Normal failover (requires sync)
-		failoverQuery = fmt.Sprintf(`ALTER AVAILABILITY GROUP [%s] FAILOVER`, h.agName)
+		failoverQuery = fmt.Sprintf(`ALTER AVAILABILITY GROUP %s FAILOVER`, safeAGName)
 		klog.Info("Performing planned failover")
 	}
 

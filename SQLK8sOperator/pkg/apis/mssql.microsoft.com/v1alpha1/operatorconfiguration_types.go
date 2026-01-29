@@ -35,6 +35,10 @@ type OperatorConfigurationSpec struct {
 	// +kubebuilder:default="5m"
 	RepairPeriod string `json:"repairPeriod,omitempty"`
 
+	// Validation contains validation behavior configuration
+	// +optional
+	Validation *ValidationConfiguration `json:"validation,omitempty"`
+
 	// ResourceDefaults contains default resource configurations
 	// +optional
 	ResourceDefaults *ResourceDefaults `json:"resourceDefaults,omitempty"`
@@ -54,6 +58,37 @@ type OperatorConfigurationSpec struct {
 	// ActiveDirectory contains AD defaults
 	// +optional
 	ActiveDirectory *ActiveDirectoryDefaults `json:"activeDirectory,omitempty"`
+}
+
+// ValidationConfiguration defines validation behavior for the operator
+type ValidationConfiguration struct {
+	// ClusterCapabilityChecks enables validation of cluster capabilities (StorageClass, etc.)
+	// +kubebuilder:default=true
+	ClusterCapabilityChecks bool `json:"clusterCapabilityChecks,omitempty"`
+
+	// ValidationTimeout is the maximum time to wait for cluster capability checks
+	// +kubebuilder:default="3s"
+	ValidationTimeout string `json:"validationTimeout,omitempty"`
+
+	// StorageClassValidation controls how StorageClass validation failures are handled
+	// +kubebuilder:validation:Enum=block;warn
+	// +kubebuilder:default="block"
+	StorageClassValidation string `json:"storageClassValidation,omitempty"`
+
+	// SecretValidation controls how Secret validation failures are handled
+	// +kubebuilder:validation:Enum=block;warn
+	// +kubebuilder:default="warn"
+	SecretValidation string `json:"secretValidation,omitempty"`
+
+	// PasswordComplexity controls password complexity validation
+	// +kubebuilder:validation:Enum=enforce;warn
+	// +kubebuilder:default="enforce"
+	PasswordComplexity string `json:"passwordComplexity,omitempty"`
+
+	// NodeValidation controls node selector validation
+	// +kubebuilder:validation:Enum=block;warn
+	// +kubebuilder:default="block"
+	NodeValidation string `json:"nodeValidation,omitempty"`
 }
 
 // ResourceDefaults contains default resource settings

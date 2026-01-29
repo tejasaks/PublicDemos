@@ -16,6 +16,9 @@ metadata:
   name: mssql-with-ad
   namespace: mssql
 spec:
+  # Description for searchability and auditing
+  description: "SQL Server 2022 with Active Directory authentication for enterprise workloads"
+  
   version: "2022"
   edition: Enterprise  # AD auth works with all editions
   
@@ -33,10 +36,10 @@ spec:
     storage:
       data:
         size: 50Gi
-        storageClass: managed-premium
+        # storageClass: managed-premium  # Azure only - comment out for other clusters
       log:
         size: 20Gi
-        storageClass: managed-premium
+        # storageClass: managed-premium  # Azure only - comment out for other clusters
       tempdb:
         size: 10Gi
       backup:

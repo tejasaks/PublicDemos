@@ -17,6 +17,11 @@ import (
 
 // SQLServerSpec defines the desired state of SQLServer
 type SQLServerSpec struct {
+	// Description is an optional human-readable description for auditing and searchability
+	// +optional
+	// +kubebuilder:validation:MaxLength=1024
+	Description string `json:"description,omitempty"`
+
 	// Version is the SQL Server version (e.g., "2022", "2025")
 	// +kubebuilder:validation:Enum="2019";"2022";"2025"
 	// +kubebuilder:default="2022"

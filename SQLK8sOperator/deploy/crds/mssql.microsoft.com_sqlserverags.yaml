@@ -201,6 +201,11 @@ spec:
                 - primaryConfig
                 - secondaryConfig
                 type: object
+              description:
+                description: Description is an optional human-readable description
+                  for auditing and searchability
+                maxLength: 1024
+                type: string
               endpoints:
                 description: Endpoints defines service endpoints for the AG
                 properties:
