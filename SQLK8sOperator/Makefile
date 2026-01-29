@@ -41,6 +41,11 @@ manifests: controller-gen tidy ## Generate CRD manifests.
 	$(CONTROLLER_GEN) crd paths="./pkg/apis/mssql.microsoft.com/v1alpha1" output:crd:dir=./deploy/crds
 	@echo "CRDs generated in deploy/crds/"
 
+.PHONY: generate-install-yaml
+generate-install-yaml: ## Generate the combined install.yaml for direct URL installation.
+	@echo "Generating install.yaml..."
+	@./scripts/generate-install-yaml.sh $(VERSION) $(IMG)
+
 .PHONY: generate
 generate: controller-gen tidy ## Generate code (DeepCopy functions).
 	$(CONTROLLER_GEN) object paths="./pkg/apis/mssql.microsoft.com/v1alpha1"
@@ -165,13 +170,14 @@ docker-push-all: ## Push all Docker images to registry.
 	@echo "Images pushed to $(REGISTRY)"
 
 .PHONY: release
-release: manifests docker-build-all docker-push-all ## Build, push images and generate manifests for release.
+release: manifests generate-install-yaml docker-build-all docker-push-all ## Build, push images and generate manifests for release.
 	@echo ""
 	@echo "Release $(VERSION) complete!"
 	@echo "Images: $(REGISTRY)/operator:$(VERSION), $(REGISTRY)/ag-helper:$(VERSION)"
+	@echo "Install manifest: install.yaml"
 
 .PHONY: dist
-dist: manifests ## Create distribution package for sharing.
+dist: manifests generate-install-yaml ## Create distribution package for sharing.
 	@echo "Creating distribution package v$(VERSION)..."
 	@mkdir -p dist/sqlserver-operator-$(VERSION)
 	@cp -r deploy/ dist/sqlserver-operator-$(VERSION)/
@@ -222,6 +228,7 @@ clean: ## Clean build artifacts and distribution packages.
 	rm -rf dist/
 	rm -f cover.out
 	@echo "Cleaned build artifacts"
+	@echo "Note: install.yaml is preserved (commit it to enable direct URL installation)"
 
 .PHONY: version
 version: ## Display the current version.

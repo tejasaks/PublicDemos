@@ -50,7 +50,7 @@ metadata:
   namespace: mssql
 spec:
   description: "Production SQL Server AG cluster"
-  version: "2022"
+  version: "2025"
   edition: Developer  # Use Enterprise for production
   instance:
     replicas: 3

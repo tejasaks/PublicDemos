@@ -6,12 +6,110 @@ Guide for end users to install the SQL Server Kubernetes Operator.
 
 ## Table of Contents
 
+- [Where to Get the Operator](#where-to-get-the-operator)
 - [Prerequisites](#prerequisites)
 - [Installation Methods](#installation-methods)
 - [Post-Installation](#post-installation)
 - [Verification](#verification)
 - [Upgrading](#upgrading)
 - [Uninstalling](#uninstalling)
+
+## Where to Get the Operator
+
+Before installing, you need to know where the operator artifacts are published. The operator is distributed through:
+
+| Artifact | Location | Description |
+|----------|----------|-------------|
+| Container Images | `ghcr.io/yourorg/mssql-operator` | Operator container image |
+| Installation YAML | GitHub Releases | Single-file Kubernetes manifest |
+| Helm Chart | Helm Repository | Packaged Helm chart |
+
+### Option A: Use a Published Release (Recommended)
+
+If your organization has already built and published the operator, obtain these URLs from your platform team:
+
+- **GitHub Releases URL**: `https://github.com/yourorg/mssql-operator/releases`
+- **Container Registry**: `ghcr.io/yourorg/mssql-operator`
+- **Helm Repository**: `https://yourorg.github.io/mssql-operator`
+
+Replace `yourorg` with your actual GitHub organization name throughout this guide.
+
+### Option B: Build and Publish Your Own
+
+If you need to build and publish the operator yourself, follow these steps:
+
+#### Step 1: Clone the Repository
+
+```bash
+git clone https://github.com/yourorg/mssql-operator.git
+cd mssql-operator
+```
+
+#### Step 2: Build the Container Images
+
+```bash
+# Set your registry and version
+export REGISTRY=ghcr.io/yourorg
+export VERSION=v1.0.0
+
+# Build and push the operator image
+make docker-build docker-push IMG=$REGISTRY/mssql-operator:$VERSION
+```
+
+**Expected output:**
+```
+docker build -t ghcr.io/yourorg/mssql-operator:v1.0.0 .
+...
+docker push ghcr.io/yourorg/mssql-operator:v1.0.0
+The push refers to repository [ghcr.io/yourorg/mssql-operator]
+v1.0.0: digest: sha256:abc123... size: 1234
+```
+
+#### Step 3: Generate the Installation Manifest
+
+```bash
+# Generate the install.yaml with your image
+cd config/manager && kustomize edit set image controller=$REGISTRY/mssql-operator:$VERSION
+cd ../..
+kustomize build config/default > install.yaml
+```
+
+**Verify the file was created:**
+```bash
+ls -lh install.yaml
+
+# Expected output:
+# -rw-r--r--  1 user  staff  45K Jan 15 10:00 install.yaml
+```
+
+#### Step 4: Create a GitHub Release
+
+```bash
+# Tag the release
+git tag -a $VERSION -m "Release $VERSION"
+git push origin $VERSION
+
+# Create a GitHub release and upload artifacts
+gh release create $VERSION install.yaml --title "Release $VERSION" --notes "SQL Server Kubernetes Operator $VERSION"
+```
+
+**Expected output:**
+```
+https://github.com/yourorg/mssql-operator/releases/tag/v1.0.0
+```
+
+Now users can install using:
+```bash
+kubectl apply -f https://github.com/yourorg/mssql-operator/releases/download/v1.0.0/install.yaml
+```
+
+#### Step 5: Set Up a Helm Repository (Optional)
+
+For Helm-based installations, see [Helm Chart Packaging](helm-chart.md).
+
+> **For complete build and release instructions**, see:
+> - [Building Guide](../development/building.md) - Building from source
+> - [Packaging Guide](packaging.md) - Creating release artifacts
 
 ## Prerequisites
 
@@ -72,9 +170,145 @@ All nodes should show `Ready` status.
 
 Choose the installation method that best fits your environment.
 
-### Method 1: kubectl apply (Quickest)
+### Method 0: Direct URL (Fastest - Recommended for Quick Start)
 
-The fastest way to get started for testing or development.
+The absolute fastest way to install. A single command pulls the installation manifest directly from this repository and applies it.
+
+> **This is the recommended method for quick evaluation and getting started.**
+
+**Step 1: Install directly from the repository**
+
+```bash
+# Option A: Apply directly from URL (Linux/macOS/Windows with curl)
+kubectl apply -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/install.yaml
+```
+
+**Expected output:**
+```
+namespace/mssql-system created
+namespace/mssql created
+serviceaccount/mssql-operator created
+clusterrole.rbac.authorization.k8s.io/mssql-operator-role created
+clusterrolebinding.rbac.authorization.k8s.io/mssql-operator-rolebinding created
+customresourcedefinition.apiextensions.k8s.io/sqlservers.mssql.microsoft.com created
+customresourcedefinition.apiextensions.k8s.io/sqlserverags.mssql.microsoft.com created
+deployment.apps/mssql-operator created
+```
+
+**Or download first, then apply (useful for air-gapped environments):**
+
+```bash
+# Option B: Download first, then apply
+# Linux/macOS:
+wget https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/install.yaml
+kubectl apply -f install.yaml
+
+# Windows PowerShell:
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/install.yaml" -OutFile "install.yaml"
+kubectl apply -f install.yaml
+```
+
+**Expected output (wget):**
+```
+--2024-01-15 10:00:00--  https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/install.yaml
+Resolving raw.githubusercontent.com... 185.199.108.133
+Connecting to raw.githubusercontent.com... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 15234 (15K) [text/plain]
+Saving to: 'install.yaml'
+
+install.yaml              100%[=====================================>]  14.88K  --.-KB/s    in 0.001s  
+
+2024-01-15 10:00:00 (14.9 MB/s) - 'install.yaml' saved [15234/15234]
+```
+
+**Step 2: Verify the installation**
+
+```bash
+# Check operator pod is running
+kubectl get pods -n mssql-system
+```
+
+**Expected output:**
+```
+NAME                              READY   STATUS    RESTARTS   AGE
+mssql-operator-7d8f9c6b4d-x2k9m   1/1     Running   0          30s
+```
+
+```bash
+# Check CRDs are installed
+kubectl get crds | grep mssql
+```
+
+**Expected output:**
+```
+sqlserverags.mssql.microsoft.com    2024-01-15T10:00:00Z
+sqlservers.mssql.microsoft.com      2024-01-15T10:00:00Z
+```
+
+**Step 3: Deploy your first SQL Server instance**
+
+```bash
+# Create a secret for the SA password
+kubectl create secret generic mssql-secret \
+  --from-literal=SA_PASSWORD='YourStrong!Passw0rd' \
+  -n mssql
+```
+
+**Expected output:**
+```
+secret/mssql-secret created
+```
+
+```bash
+# Apply a sample SQL Server deployment
+kubectl apply -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/samples/sqlserver-2025-standalone.yaml
+```
+
+**Expected output:**
+```
+sqlserver.mssql.microsoft.com/mssql-standalone created
+```
+
+```bash
+# Watch the SQL Server pod come up
+kubectl get pods -n mssql -w
+```
+
+**Expected output (after ~1-2 minutes):**
+```
+NAME                 READY   STATUS    RESTARTS   AGE
+mssql-standalone-0   1/1     Running   0          90s
+```
+
+**To uninstall:**
+
+```bash
+# Remove all SQL Server instances first
+kubectl delete sqlservers --all -A
+kubectl delete sqlserverags --all -A
+
+# Then remove the operator
+kubectl delete -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/install.yaml
+```
+
+**Expected output:**
+```
+namespace "mssql-system" deleted
+namespace "mssql" deleted
+serviceaccount "mssql-operator" deleted
+clusterrole.rbac.authorization.k8s.io "mssql-operator-role" deleted
+clusterrolebinding.rbac.authorization.k8s.io "mssql-operator-rolebinding" deleted
+customresourcedefinition.apiextensions.k8s.io "sqlservers.mssql.microsoft.com" deleted
+customresourcedefinition.apiextensions.k8s.io "sqlserverags.mssql.microsoft.com" deleted
+deployment.apps "mssql-operator" deleted
+```
+
+---
+
+### Method 1: kubectl apply from Releases
+
+Use this method for production environments where you want a specific versioned release.
 
 **Step 1: Install the latest release**
 
@@ -368,7 +602,7 @@ metadata:
   name: sql-test
   namespace: mssql
 spec:
-  version: "2022"
+  version: "2025"
   edition: Developer
   instance:
     replicas: 1
@@ -426,7 +660,7 @@ kubectl get sqlserver -n mssql
 **Expected output:**
 ```
 NAME       VERSION   EDITION     STATUS   AGE
-sql-test   2022      Developer   Ready    2m
+sql-test   2025      Developer   Ready    2m
 ```
 
 **Step 6: Get detailed information (optional)**
@@ -459,7 +693,7 @@ sqlcmd -S localhost,1433 -U sa -P 'YourStr0ng!Passw0rd' -C -Q "SELECT @@VERSION"
 
 **Expected output:**
 ```
-Microsoft SQL Server 2022 (RTM-CU15) - 16.0.4150.1 (X64)
+Microsoft SQL Server 2025 (RTM-CU1) - 17.0.1001.1 (X64)
         ...
 ```
 

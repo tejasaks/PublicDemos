@@ -372,7 +372,7 @@ main() {
             echo "  $0 all-with-monitoring                       # Full setup with monitoring"
             echo "  $0 monitoring                                # Deploy monitoring only"
             echo "  $0 deploy                                    # Deploy SQL 2025 standalone (default)"
-            echo "  $0 deploy samples/sqlserver-2022-standalone.yaml"
+            echo "  $0 deploy samples/sqlserver-2025-standalone.yaml"
             echo "  $0 deploy samples/sqlserver-availability-group.yaml"
             exit 1
             ;;

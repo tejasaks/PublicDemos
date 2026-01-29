@@ -25,7 +25,7 @@ spec:
   description: string
   
   # SQL Server version
-  version: "2019" | "2022" | "2025"  # Default: "2022"
+  version: "2019" | "2022" | "2025"  # Default: "2025"
   
   # SQL Server edition
   edition: Developer | Express | Standard | Enterprise  # Default: Developer
@@ -299,7 +299,7 @@ metadata:
   name: sql-prod-01
   namespace: production
 spec:
-  version: "2022"
+  version: "2025"
   edition: Standard
   instance:
     replicas: 1

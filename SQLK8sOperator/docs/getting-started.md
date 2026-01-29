@@ -110,7 +110,7 @@ metadata:
   name: my-sqlserver
   namespace: mssql
 spec:
-  version: "2022"
+  version: "2025"
   edition: Developer
   instance:
     replicas: 1
@@ -153,7 +153,7 @@ metadata:
   name: my-sqlserver
   namespace: mssql
 spec:
-  version: "2022"
+  version: "2025"
   edition: Developer
   instance:
     replicas: 1
@@ -205,7 +205,7 @@ kubectl get sqlserver -n mssql
 
 # Expected output:
 # NAME           VERSION   EDITION     REPLICAS   READY   STATUS    AGE
-# my-sqlserver   2022      Developer   1          1       Running   2m
+# my-sqlserver   2025      Developer   1          1       Running   2m
 ```
 
 ### Check the Pods

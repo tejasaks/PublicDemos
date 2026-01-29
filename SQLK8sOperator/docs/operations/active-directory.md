@@ -218,7 +218,7 @@ metadata:
   name: sql-prod
   namespace: mssql
 spec:
-  version: "2022"
+  version: \"2025\"
   edition: Enterprise
   
   instance:

@@ -72,7 +72,7 @@ metadata:
   name: multiag
   namespace: mssql
 spec:
-  version: "2022"
+  version: \"2025\"
   edition: Enterprise  # Enterprise required for multiple AGs
   instance:
     replicas: 3

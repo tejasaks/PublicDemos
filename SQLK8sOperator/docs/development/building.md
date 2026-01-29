@@ -39,28 +39,83 @@ make help
 
 ## Prerequisites
 
+Before building, ensure you have the required tools installed.
+
+**Step 1: Check Go version**
+
 ```bash
-# Check Go version
-go version  # Requires 1.21+
+go version
+```
 
-# Check Docker
+**Expected output (requires 1.21+):**
+```
+go version go1.21.5 linux/amd64
+```
+
+If Go is not installed, download from https://go.dev/dl/
+
+**Step 2: Check Docker**
+
+```bash
 docker version
+```
 
-# Install build tools
+**Expected output:**
+```
+Client:
+ Version:           24.0.7
+ ...
+Server:
+ Engine:
+  Version:          24.0.7
+```
+
+**Step 3: Install additional build tools**
+
+```bash
 make install-tools
+```
+
+**Expected output:**
+```
+go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.14.0
+go install sigs.k8s.io/kustomize/kustomize/v5@v5.3.0
+```
+
+**Step 4: Verify tools are available**
+
+```bash
+controller-gen --version
+kustomize version
 ```
 
 ## Building the Operator
 
 ### Build Binary
 
+**Build for your current platform:**
+
 ```bash
-# Build for current platform
 make build
+```
 
-# Output: bin/manager
+**Expected output:**
+```
+go build -o bin/manager cmd/main.go
+```
 
-# Build with specific flags
+**Verify the binary was created:**
+
+```bash
+ls -lh bin/manager
+
+# Expected output:
+# -rwxr-xr-x  1 user  staff  45M Jan 15 10:00 bin/manager
+```
+
+**Build with specific flags (for cross-compilation):**
+
+```bash
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
   -ldflags="-w -s -X main.version=v1.0.0" \
   -o bin/manager cmd/main.go
@@ -68,15 +123,48 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
 
 ### Build Docker Image
 
+**Build with default tag:**
+
 ```bash
-# Build with default tag
 make docker-build IMG=mssql-operator:latest
+```
 
-# Build with version tag
-make docker-build IMG=myregistry/mssql-operator:v1.0.0
+**Expected output:**
+```
+docker build -t mssql-operator:latest .
+[+] Building 45.2s (15/15) FINISHED
+ => [internal] load build definition from Dockerfile
+ => [internal] load .dockerignore
+ => [internal] load metadata for gcr.io/distroless/static:nonroot
+ ...
+ => exporting to image
+ => => naming to docker.io/library/mssql-operator:latest
+```
 
-# Build and push
-make docker-build docker-push IMG=myregistry/mssql-operator:v1.0.0
+**Build with version tag for your registry:**
+
+```bash
+make docker-build IMG=ghcr.io/yourorg/mssql-operator:v1.0.0
+```
+
+**Build and push to registry:**
+
+```bash
+# First, log in to your registry
+docker login ghcr.io
+
+# Then build and push
+make docker-build docker-push IMG=ghcr.io/yourorg/mssql-operator:v1.0.0
+```
+
+**Expected output:**
+```
+docker build -t ghcr.io/yourorg/mssql-operator:v1.0.0 .
+...
+docker push ghcr.io/yourorg/mssql-operator:v1.0.0
+The push refers to repository [ghcr.io/yourorg/mssql-operator]
+abc123: Pushed
+v1.0.0: digest: sha256:... size: 1234
 ```
 
 ### Dockerfile
@@ -123,6 +211,75 @@ controller-gen crd:crdVersions=v1 \
   paths="./..." \
   output:crd:artifacts:config=config/crd/bases
 ```
+
+### Generate install.yaml (Combined Installation Manifest)
+
+The `install.yaml` file at the repository root enables users to install the operator with a single command directly from a URL. This file must be regenerated whenever you change any deployment manifests.
+
+**Generate install.yaml:**
+
+```bash
+make generate-install-yaml VERSION=v1.0.0 IMG=ghcr.io/yourorg/mssql-operator:v1.0.0
+```
+
+**Expected output:**
+```
+Generating install.yaml...
+  Version: v1.0.0
+  Image: ghcr.io/yourorg/mssql-operator:v1.0.0
+  Output: /path/to/SQLK8sOperator/install.yaml
+
+  Added: deploy/namespace.yaml
+  Added: deploy/serviceaccount.yaml
+  Added: deploy/rbac.yaml
+
+Adding CRDs...
+  Added: deploy/crds/mssql.microsoft.com_sqlserverags.yaml
+  Added: deploy/crds/mssql.microsoft.com_sqlservers.yaml
+
+Adding deployment with image substitution...
+  Added: deploy/deployment.yaml (with image: ghcr.io/yourorg/mssql-operator:v1.0.0)
+
+==========================================
+install.yaml generated successfully!
+  Lines: 2500
+  Size: 85K
+==========================================
+```
+
+**On Windows PowerShell:**
+
+```powershell
+.\scripts\generate-install-yaml.ps1 -Version "v1.0.0" -Image "ghcr.io/yourorg/mssql-operator:v1.0.0"
+```
+
+**Verify the install.yaml:**
+
+```bash
+# Check image reference
+grep "image:.*mssql-operator" install.yaml
+
+# Expected output:
+# image: ghcr.io/yourorg/mssql-operator:v1.0.0
+
+# Check file size
+ls -lh install.yaml
+
+# Expected output:
+# -rw-r--r--  1 user  staff  85K Jan 15 10:00 install.yaml
+```
+
+> **Important:** The `install.yaml` is what enables direct URL installation:
+> ```bash
+> kubectl apply -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/install.yaml
+> ```
+> **Always commit the updated `install.yaml` after regenerating it.**
+
+**When to regenerate install.yaml:**
+- After modifying any file in `deploy/`
+- After regenerating CRDs with `make manifests`
+- Before creating a new release
+- After changing the operator image version
 
 ### Generate Code
 

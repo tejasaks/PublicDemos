@@ -307,7 +307,7 @@ credentials:
 Storage StorageSpec `json:"storage"`
 
 // Optional with default
-// +kubebuilder:default="2022"
+// +kubebuilder:default="2025"
 Version string `json:"version,omitempty"`
 
 // Optional without default

@@ -4,18 +4,51 @@ A Kubernetes operator for managing SQL Server instances with high availability, 
 
 [![Go Version](https://img.shields.io/badge/Go-1.21+-blue.svg)](https://go.dev)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-1.26+-blue.svg)](https://kubernetes.io)
-[![SQL Server](https://img.shields.io/badge/SQL%20Server-2019%20|%202022-orange.svg)](https://www.microsoft.com/sql-server)
+[![SQL Server](https://img.shields.io/badge/SQL%20Server-2019%20|%202022%20|%202025-orange.svg)](https://www.microsoft.com/sql-server)
+
+## ⚡ Quick Start (30 seconds)
+
+Get up and running immediately with a single command:
+
+```bash
+# Install the operator directly from this repository
+kubectl apply -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/install.yaml
+```
+
+That's it! The operator is now installed. Verify with:
+
+```bash
+kubectl get pods -n mssql-system
+# Expected: mssql-operator-xxx   1/1   Running
+```
+
+**Deploy your first SQL Server:**
+
+```bash
+# Create a password secret
+kubectl create secret generic mssql-secret --from-literal=SA_PASSWORD='YourStrong!Passw0rd' -n mssql
+
+# Deploy SQL Server 2025
+kubectl apply -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/samples/sqlserver-2025-standalone.yaml
+
+# Watch it come up
+kubectl get pods -n mssql -w
+```
+
+→ See [Installation Guide](docs/distribution/end-user-installation.md) for more options including Helm and Kustomize.
+
+---
 
 ## Features
 
-- **Deploy SQL Server Instances**: Declarative management of SQL Server 2019 and 2022
+- **Deploy SQL Server Instances**: Declarative management of SQL Server 2019, 2022, and 2025
 - **High Availability**: Availability Groups with automatic failover
 - **Zero-Downtime Upgrades**: Rolling upgrades with AG failover
 - **Scaling**: Scale replicas with persistent storage
 - **Monitoring**: Prometheus metrics and Grafana dashboards
 - **Active Directory**: Windows Authentication support
 
-## Quick Start
+## Detailed Quick Start
 
 ### Prerequisites
 
@@ -26,6 +59,10 @@ A Kubernetes operator for managing SQL Server instances with high availability, 
 ### Install the Operator
 
 ```bash
+# Option 1: Direct from repository (recommended for quick start)
+kubectl apply -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/install.yaml
+
+# Option 2: From GitHub Releases (for versioned releases)
 kubectl apply -f https://github.com/yourorg/mssql-operator/releases/latest/download/install.yaml
 ```
 
@@ -46,7 +83,7 @@ metadata:
   name: sql-demo
   namespace: mssql
 spec:
-  version: "2022"
+  version: "2025"
   edition: Developer
   instance:
     replicas: 1

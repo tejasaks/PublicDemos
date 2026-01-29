@@ -108,7 +108,7 @@ Packaging and installation.
 
 | Operator Version | SQL Server | Kubernetes | Go |
 |-----------------|------------|------------|-----|
-| v1.0.x | 2019, 2022 | 1.26+ | 1.21+ |
+| v1.0.x | 2019, 2022, 2025 | 1.26+ | 1.21+ |
 
 ## Getting Help
 

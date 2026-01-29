@@ -73,7 +73,7 @@ metadata:
   namespace: mssql
 spec:
   description: "Development SQL Server for local testing"
-  version: "2022"
+  version: "2025"
   edition: Developer
   instance:
     replicas: 1
@@ -190,7 +190,7 @@ metadata:
   namespace: production
 spec:
   description: "Production SQL Server for application backend"
-  version: "2022"
+  version: "2025"
   edition: Standard  # Or Enterprise for advanced features
   instance:
     replicas: 1
@@ -247,7 +247,7 @@ kubectl get sqlserver -n production
 
 # Expected output:
 # NAME          VERSION   EDITION    STATUS   AGE
-# sql-prod-01   2022      Standard   Ready    2m
+# sql-prod-01   2025      Standard   Ready    2m
 
 kubectl get pods -n production
 
@@ -318,7 +318,7 @@ metadata:
   name: sql-ha-01
   namespace: production
 spec:
-  version: "2022"
+  version: "2025"
   edition: Developer  # Enterprise for production
   instance:
     replicas: 3
@@ -444,7 +444,7 @@ metadata:
   name: sql-ad-01
   namespace: enterprise
 spec:
-  version: "2022"
+  version: "2025"
   edition: Enterprise
   instance:
     replicas: 1
@@ -535,7 +535,7 @@ metadata:
   name: sql-team-a
   namespace: team-a-sql
 spec:
-  version: "2022"
+  version: "2025"
   edition: Developer
   instance:
     replicas: 1
@@ -568,7 +568,7 @@ metadata:
   name: sql-team-b
   namespace: team-b-sql
 spec:
-  version: "2022"
+  version: "2025"
   edition: Developer
   instance:
     replicas: 1
@@ -606,8 +606,8 @@ kubectl get sqlserver --all-namespaces
 
 # Expected output:
 # NAMESPACE     NAME         VERSION   EDITION     STATUS   AGE
-# team-a-sql    sql-team-a   2022      Developer   Ready    2m
-# team-b-sql    sql-team-b   2022      Developer   Ready    2m
+# team-a-sql    sql-team-a   2025      Developer   Ready    2m
+# team-b-sql    sql-team-b   2025      Developer   Ready    2m
 ```
 
 ### Resource Quotas
@@ -771,8 +771,8 @@ Pre-built sample configurations are available in the [samples/](../../samples/) 
 
 | File | Description |
 |------|-------------|
-| `sqlserver-2022-standalone.yaml` | Basic 2022 standalone instance |
-| `sqlserver-2025-standalone.yaml` | SQL Server 2025 instance |
+| `sqlserver-2025-standalone.yaml` | Basic 2025 standalone instance (recommended) |
+| `sqlserver-2022-standalone.yaml` | SQL Server 2022 instance |
 | `sqlserver-availability-group.yaml` | 3-replica AG with services |
 | `sqlserver-with-ad.yaml` | Active Directory authentication |
 

@@ -83,7 +83,7 @@ func TestSQLServerReconciler_validateSpec(t *testing.T) {
         {
             name: "valid spec",
             spec: mssqlv1alpha1.SQLServerSpec{
-                Version:  "2022",
+                Version:  "2025",
                 Edition:  "Developer",
                 Instance: mssqlv1alpha1.InstanceSpec{
                     Replicas: 1,
@@ -102,7 +102,7 @@ func TestSQLServerReconciler_validateSpec(t *testing.T) {
         {
             name: "invalid edition",
             spec: mssqlv1alpha1.SQLServerSpec{
-                Version: "2022",
+                Version: "2025",
                 Edition: "Invalid",
             },
             wantErr: true,
@@ -129,7 +129,7 @@ func TestSQLServerReconciler_buildStatefulSet(t *testing.T) {
             Namespace: "default",
         },
         Spec: mssqlv1alpha1.SQLServerSpec{
-            Version:  "2022",
+            Version:  "2025",
             Edition:  "Developer",
             Instance: mssqlv1alpha1.InstanceSpec{
                 Replicas: 3,
@@ -334,7 +334,7 @@ var _ = Describe("SQLServer Controller", func() {
                     Namespace: "default",
                 },
                 Spec: mssqlv1alpha1.SQLServerSpec{
-                    Version:  "2022",
+                    Version:  "2025",
                     Edition:  "Developer",
                     Instance: mssqlv1alpha1.InstanceSpec{
                         Replicas: 1,
