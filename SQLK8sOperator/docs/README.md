@@ -54,6 +54,7 @@ High availability configuration and management.
 | [Failover Management](availability-groups/failover-management.md) | Automatic and manual failover |
 | [Multi-AG Scenarios](availability-groups/multi-ag-scenarios.md) | Multiple AGs on same cluster |
 | [AG Helper Reference](availability-groups/ag-helper-reference.md) | Complete sidecar API |
+| [Controller Workflow Details](availability-groups/controller-workflow-details.md) | Deep dive into AG Helper & Controller internals |
 
 ---
 

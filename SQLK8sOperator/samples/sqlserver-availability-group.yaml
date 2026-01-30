@@ -4,6 +4,25 @@
 #
 # Note: Resource name must be max 13 characters due to SQL Server 
 # NetBIOS name limit (15 chars - 2 for pod suffix)
+#
+# ============================================================================
+# SECRETS HANDLING
+# ============================================================================
+# This manifest includes Secret definitions for convenience (dev/test).
+# For PRODUCTION deployments, you should:
+#   1. Pre-create secrets using a secure method (kubectl, external-secrets, vault)
+#   2. Remove or comment out the Secret sections in this file
+#   3. Ensure the secretRef fields point to your pre-created secrets
+#
+# To pre-create secrets before deploying:
+#   kubectl create namespace mssql
+#   kubectl create secret generic sql-ag-prod01-sa -n mssql \
+#     --from-literal=password='<your-sa-password>'
+#   kubectl create secret generic sql-ag-prod01-aghelper -n mssql \
+#     --from-literal=username=ag_helper --from-literal=password='<your-aghelper-password>'
+#
+# Then apply this manifest WITHOUT the Secret sections (or they will be overwritten).
+# ============================================================================
 
 apiVersion: mssql.microsoft.com/v1alpha1
 kind: SQLServer
@@ -173,15 +192,81 @@ spec:
     monitorInterval: "10s"
     connectionTimeout: "30s"
 
+  # Health Check Credentials for AG Helper
+  # These are the SQL login credentials used by the AG Helper sidecar
+  # to monitor Availability Group health. Uses a dedicated least-privilege
+  # login following the Pacemaker pattern from Microsoft's SQL Server docs.
+  #
+  # Required permissions for the health check login:
+  #   - VIEW SERVER STATE
+  #   - ALTER ANY AVAILABILITY GROUP
+  #
+  # Option 1: Using Kubernetes secrets (RECOMMENDED for production)
+  availabilityGroup:
+    # ...other fields defined above...
+    healthCheckCredentials:
+      secretRef:
+        usernameSecret:
+          name: sql-ag-prod01-aghelper
+          key: username
+        passwordSecret:
+          name: sql-ag-prod01-aghelper
+          key: password
+    
+    # Optional: Per-replica credential overrides
+    # Use when replicas need different credentials (uncommon)
+    # replicaCredentials:
+    #   "0":
+    #     secretRef:
+    #       usernameSecret:
+    #         name: sql-ag-prod01-aghelper-0
+    #         key: username
+    #       passwordSecret:
+    #         name: sql-ag-prod01-aghelper-0
+    #         key: password
+
+# ============================================================================
+# SECRETS SECTION (FOR DEV/TEST CONVENIENCE)
+# ============================================================================
+# The secrets below are included for quick dev/test deployments.
+# For PRODUCTION: Remove or comment out this entire section and pre-create
+# secrets using kubectl, external-secrets operator, HashiCorp Vault, or
+# your organization's secret management solution.
+#
+# If you have PRE-CREATED these secrets, comment out or delete the Secret
+# resources below to avoid overwriting your existing secrets.
+# ============================================================================
+
 ---
+# AG Helper credentials secret
+# Required SQL permissions for this login:
+#   - VIEW SERVER STATE
+#   - ALTER ANY AVAILABILITY GROUP
+# See docs/availability-groups/deployment-guide.md (Step 2.5) for T-SQL
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sql-ag-prod01-aghelper
+  namespace: mssql
+  labels:
+    app.kubernetes.io/component: ag-helper
+type: Opaque
+stringData:
+  username: "ag_helper"
+  password: "AGHelper@Passw0rd!"  # CHANGE THIS in production!
+
+---
+# SA password secret
 apiVersion: v1
 kind: Secret
 metadata:
   name: sql-ag-prod01-sa
   namespace: mssql
+  labels:
+    app.kubernetes.io/component: mssql
 type: Opaque
 stringData:
-  password: "YourStrong@Passw0rd!"
+  password: "YourStrong@Passw0rd!"  # CHANGE THIS in production!
 
 ---
 # ============================================================================
@@ -221,6 +306,25 @@ stringData:
 # -- kubectl cp mssql/sql-ag-prod01-0:/var/opt/mssql/data/AG_Cert.cer ./AG_Cert_0.cer
 # -- kubectl cp ./AG_Cert_0.cer mssql/sql-ag-prod01-1:/var/opt/mssql/data/AG_Cert_0.cer
 # -- kubectl cp ./AG_Cert_0.cer mssql/sql-ag-prod01-2:/var/opt/mssql/data/AG_Cert_0.cer
+#
+# 1b. Create the AG Helper health check login:
+# ----------------------------------------------------------------------------
+# -- Run on ALL replicas (sql-ag-prod01-0, sql-ag-prod01-1, sql-ag-prod01-2)
+# -- This creates a dedicated least-privilege login for AG health monitoring
+# -- following the Pacemaker pattern from Microsoft's SQL Server Linux docs
+#
+# -- Create the login
+# CREATE LOGIN ag_helper WITH PASSWORD = 'AGHelper@Passw0rd!';
+# GO
+#
+# -- Grant required permissions for AG health monitoring
+# GRANT VIEW SERVER STATE TO ag_helper;
+# GRANT ALTER ANY AVAILABILITY GROUP TO ag_helper;
+# GO
+#
+# -- Note: This login does NOT need sysadmin or db_owner rights
+# -- It only needs VIEW SERVER STATE to read AG/replica state from DMVs
+# -- and ALTER ANY AVAILABILITY GROUP to perform failover operations
 #
 # 2. Create the databases on the primary:
 # ----------------------------------------------------------------------------

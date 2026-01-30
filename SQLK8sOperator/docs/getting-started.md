@@ -133,8 +133,11 @@ This project includes ready-to-use sample manifests in the [samples/](../samples
 |-------------|-------------|
 | [sqlserver-2025-standalone.yaml](../samples/sqlserver-2025-standalone.yaml) | Basic SQL Server 2025 standalone instance (recommended starting point) |
 | [sqlserver-2022-standalone.yaml](../samples/sqlserver-2022-standalone.yaml) | SQL Server 2022 standalone instance |
-| [sqlserver-availability-group.yaml](../samples/sqlserver-availability-group.yaml) | 3-replica Availability Group with services |
+| [sqlserver-availability-group.yaml](../samples/sqlserver-availability-group.yaml) | 3-replica Availability Group with full configuration |
+| [sqlserverag-minimal.yaml](../samples/sqlserverag-minimal.yaml) | Minimal AG using CRD defaults |
 | [sqlserver-with-ad.yaml](../samples/sqlserver-with-ad.yaml) | Active Directory authentication configuration |
+
+> **Note on AG Samples:** The Availability Group samples include Secret definitions for SA and AG Helper credentials for dev/test convenience. For production, see the [AG Deployment Guide](availability-groups/deployment-guide.md#step-25-create-ag-helper-credentials) for guidance on pre-creating secrets securely.
 
 You can apply a sample directly:
 

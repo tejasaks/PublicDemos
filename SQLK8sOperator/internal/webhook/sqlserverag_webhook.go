@@ -150,6 +150,152 @@ func (v *SQLServerAGValidator) validate(ctx context.Context, ag *mssqlv1alpha1.S
 		}
 	}
 
+	// 10. Validate HealthCheckCredentials
+	credResult := v.validateHealthCheckCredentials(ctx, ag)
+	result.Merge(credResult)
+
+	return result
+}
+
+// validateHealthCheckCredentials validates the AG Helper credential configuration
+func (v *SQLServerAGValidator) validateHealthCheckCredentials(ctx context.Context, ag *mssqlv1alpha1.SQLServerAG) *validation.ValidationResult {
+	result := validation.NewValidationResult()
+
+	creds := ag.Spec.AvailabilityGroup.HealthCheckCredentials
+
+	// Check if any credentials are specified
+	hasSecretRef := creds.SecretRef != nil
+	hasPlainText := creds.Username != "" || creds.Password != ""
+
+	// Cross-field validation: must use one method or the other, not both
+	if hasSecretRef && hasPlainText {
+		result.AddError("healthCheckCredentials: specify either secretRef OR plain text username/password, not both")
+	}
+
+	// If neither is specified, that's OK - will fall back to SA credentials with warning
+	if !hasSecretRef && !hasPlainText {
+		result.AddWarning("healthCheckCredentials: no credentials specified, AG Helper will fall back to SA account. " +
+			"For production, create a dedicated SQL login with VIEW SERVER STATE and ALTER ANY AVAILABILITY GROUP permissions")
+	}
+
+	// Validate secretRef if provided
+	if hasSecretRef {
+		// Validate username secret
+		if creds.SecretRef.UsernameSecret.Name == "" {
+			result.AddError("healthCheckCredentials.secretRef.usernameSecret.name is required")
+		} else {
+			nameResult := validation.ValidateResourceName(creds.SecretRef.UsernameSecret.Name, 253)
+			for _, err := range nameResult.Errors {
+				result.AddError("healthCheckCredentials.secretRef.usernameSecret.name: %s", err)
+			}
+
+			// Check secret exists
+			validator := validation.NewValidator(v.Client, v.config)
+			existsResult := validator.ValidateSecretExists(ctx, creds.SecretRef.UsernameSecret.Name, ag.Namespace)
+			for _, err := range existsResult.Errors {
+				result.AddError("healthCheckCredentials.secretRef.usernameSecret: %s", err)
+			}
+			for _, warn := range existsResult.Warnings {
+				result.AddWarning("healthCheckCredentials.secretRef.usernameSecret: %s", warn)
+			}
+		}
+
+		if creds.SecretRef.UsernameSecret.Key == "" {
+			result.AddError("healthCheckCredentials.secretRef.usernameSecret.key is required")
+		}
+
+		// Validate password secret
+		if creds.SecretRef.PasswordSecret.Name == "" {
+			result.AddError("healthCheckCredentials.secretRef.passwordSecret.name is required")
+		} else {
+			nameResult := validation.ValidateResourceName(creds.SecretRef.PasswordSecret.Name, 253)
+			for _, err := range nameResult.Errors {
+				result.AddError("healthCheckCredentials.secretRef.passwordSecret.name: %s", err)
+			}
+
+			// Check secret exists (if different from username secret)
+			if creds.SecretRef.PasswordSecret.Name != creds.SecretRef.UsernameSecret.Name {
+				validator := validation.NewValidator(v.Client, v.config)
+				existsResult := validator.ValidateSecretExists(ctx, creds.SecretRef.PasswordSecret.Name, ag.Namespace)
+				for _, err := range existsResult.Errors {
+					result.AddError("healthCheckCredentials.secretRef.passwordSecret: %s", err)
+				}
+				for _, warn := range existsResult.Warnings {
+					result.AddWarning("healthCheckCredentials.secretRef.passwordSecret: %s", warn)
+				}
+			}
+		}
+
+		if creds.SecretRef.PasswordSecret.Key == "" {
+			result.AddError("healthCheckCredentials.secretRef.passwordSecret.key is required")
+		}
+	}
+
+	// Validate plain text credentials if provided
+	if hasPlainText {
+		// Strong warning about plain text
+		result.AddWarning("healthCheckCredentials: using plain text credentials is NOT RECOMMENDED for production. " +
+			"Consider using secretRef instead to avoid exposing credentials in manifests")
+
+		// Validate username (SQL identifier)
+		if creds.Username != "" {
+			usernameResult := validation.ValidateSQLIdentifier(creds.Username, "healthCheckCredentials.username")
+			result.Merge(usernameResult)
+
+			// Check for SQL injection patterns
+			sqlResult := validation.DetectSQLInjection(creds.Username, "healthCheckCredentials.username")
+			result.Merge(sqlResult)
+		} else {
+			result.AddError("healthCheckCredentials.username is required when using plain text credentials")
+		}
+
+		// Validate password complexity
+		if creds.Password != "" {
+			passResult := validation.ValidatePasswordComplexity(creds.Password)
+			if !passResult.Valid {
+				result.AddWarning("healthCheckCredentials.password: %s", passResult.Message)
+			}
+		} else {
+			result.AddError("healthCheckCredentials.password is required when using plain text credentials")
+		}
+	}
+
+	// Validate replicaCredentials if provided
+	for replicaIndex, replicaCreds := range ag.Spec.AvailabilityGroup.ReplicaCredentials {
+		prefix := "replicaCredentials[" + replicaIndex + "]"
+
+		replicaHasSecretRef := replicaCreds.SecretRef != nil
+		replicaHasPlainText := replicaCreds.Username != "" || replicaCreds.Password != ""
+
+		if replicaHasSecretRef && replicaHasPlainText {
+			result.AddError("%s: specify either secretRef OR plain text, not both", prefix)
+		}
+
+		if replicaHasSecretRef {
+			if replicaCreds.SecretRef.UsernameSecret.Name == "" {
+				result.AddError("%s.secretRef.usernameSecret.name is required", prefix)
+			}
+			if replicaCreds.SecretRef.UsernameSecret.Key == "" {
+				result.AddError("%s.secretRef.usernameSecret.key is required", prefix)
+			}
+			if replicaCreds.SecretRef.PasswordSecret.Name == "" {
+				result.AddError("%s.secretRef.passwordSecret.name is required", prefix)
+			}
+			if replicaCreds.SecretRef.PasswordSecret.Key == "" {
+				result.AddError("%s.secretRef.passwordSecret.key is required", prefix)
+			}
+		}
+
+		if replicaHasPlainText {
+			result.AddWarning("%s: using plain text credentials is NOT RECOMMENDED", prefix)
+
+			if replicaCreds.Username != "" {
+				usernameResult := validation.ValidateSQLIdentifier(replicaCreds.Username, prefix+".username")
+				result.Merge(usernameResult)
+			}
+		}
+	}
+
 	return result
 }
 

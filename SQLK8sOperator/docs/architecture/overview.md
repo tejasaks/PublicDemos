@@ -6,13 +6,20 @@ This document provides a high-level overview of the MSSQL Kubernetes Operator ar
 
 ## Table of Contents
 
-- [System Overview](#system-overview)
-- [Design Principles](#design-principles)
-- [Component Architecture](#component-architecture)
-- [Technology Stack](#technology-stack)
-- [Design References](#design-references)
-- [Key Abstractions](#key-abstractions)
-- [Data Flow](#data-flow)
+- [Architecture Overview](#architecture-overview)
+  - [Table of Contents](#table-of-contents)
+  - [System Overview](#system-overview)
+  - [Design Principles](#design-principles)
+  - [Component Architecture](#component-architecture)
+  - [Technology Stack](#technology-stack)
+  - [Design References](#design-references)
+  - [Key Abstractions](#key-abstractions)
+    - [Custom Resource Definitions](#custom-resource-definitions)
+    - [Resource Ownership](#resource-ownership)
+  - [Data Flow](#data-flow)
+    - [User Request Flow](#user-request-flow)
+    - [Runtime Data Flow](#runtime-data-flow)
+  - [Next Steps](#next-steps)
 
 ## System Overview
 
@@ -204,3 +211,4 @@ All child resources include `ownerReferences` pointing to parent CRs, enabling:
 - [CRD Design](crd-design.md) - Custom Resource Definition details
 - [Sidecar Architecture](sidecar-architecture.md) - AG Helper and SQL Exporter
 - [Networking](networking.md) - Services and traffic flow
+- [AG Controller Workflow Details](../availability-groups/controller-workflow-details.md) - Complete AG Helper and Controller internals with failover scenario walkthrough

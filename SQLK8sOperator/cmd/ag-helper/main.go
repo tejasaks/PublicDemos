@@ -1129,6 +1129,38 @@ func (h *AGHelper) Stop() {
 	}
 }
 
+// getEnvWithFallback returns the first non-empty environment variable value,
+// or the default if none are set. This allows backward compatibility with SA_PASSWORD
+// while preferring the new AG_HELPER_* variables.
+func getEnvWithFallback(primary, fallback, defaultVal string) string {
+	if val := os.Getenv(primary); val != "" {
+		return val
+	}
+	if val := os.Getenv(fallback); val != "" {
+		return val
+	}
+	return defaultVal
+}
+
+// logCredentialSource logs which credential source is being used (for debugging)
+// and emits warnings for insecure configurations
+func logCredentialSource(username string) {
+	// Determine credential source for logging
+	if os.Getenv("AG_HELPER_USERNAME") != "" && os.Getenv("AG_HELPER_PASSWORD") != "" {
+		klog.Info("Using AG Helper credentials (AG_HELPER_USERNAME/AG_HELPER_PASSWORD)")
+		if username != "sa" {
+			klog.Info("Using dedicated health check login (recommended for production)")
+		}
+	} else if os.Getenv("SA_PASSWORD") != "" {
+		klog.Warning("Using SA credentials for AG health monitoring. For production, create a dedicated SQL login with VIEW SERVER STATE and ALTER ANY AVAILABILITY GROUP permissions.")
+	}
+
+	// Warn if using SA account
+	if username == "sa" {
+		klog.Warning("AG Helper is using the 'sa' account. Consider creating a dedicated least-privilege login for health monitoring.")
+	}
+}
+
 func main() {
 	var (
 		agName            string
@@ -1144,8 +1176,10 @@ func main() {
 	flag.StringVar(&agName, "ag-name", os.Getenv("AG_NAME"), "Name of the Availability Group")
 	flag.StringVar(&sqlHost, "sql-host", "localhost", "SQL Server host")
 	flag.IntVar(&sqlPort, "sql-port", 1433, "SQL Server port")
-	flag.StringVar(&sqlUser, "sql-user", "sa", "SQL Server user")
-	flag.StringVar(&sqlPassword, "sql-password", os.Getenv("SA_PASSWORD"), "SQL Server password")
+	// AG Helper credentials - dedicated least-privilege SQL login for health monitoring
+	// Following the Pacemaker pattern from Microsoft's SQL Server Linux AG documentation
+	flag.StringVar(&sqlUser, "sql-user", getEnvWithFallback("AG_HELPER_USERNAME", "SA_USER", "sa"), "SQL Server user for AG health monitoring")
+	flag.StringVar(&sqlPassword, "sql-password", getEnvWithFallback("AG_HELPER_PASSWORD", "SA_PASSWORD", ""), "SQL Server password for AG health monitoring")
 	flag.DurationVar(&monitorInterval, "monitor-interval", 10*time.Second, "Interval between AG state checks")
 	flag.DurationVar(&connectionTimeout, "connection-timeout", 30*time.Second, "SQL connection timeout")
 	flag.IntVar(&httpPort, "http-port", 8080, "HTTP API port")
@@ -1157,8 +1191,11 @@ func main() {
 		klog.Fatal("AG name is required")
 	}
 	if sqlPassword == "" {
-		klog.Fatal("SA password is required")
+		klog.Fatal("AG helper password is required (set AG_HELPER_PASSWORD or SA_PASSWORD environment variable)")
 	}
+
+	// Log credential source for debugging (never log actual credentials)
+	logCredentialSource(sqlUser)
 
 	connStr := fmt.Sprintf("server=%s;port=%d;user id=%s;password=%s;database=master;connection timeout=30",
 		sqlHost, sqlPort, sqlUser, sqlPassword)

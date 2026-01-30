@@ -98,7 +98,7 @@ The AG Helper sidecar runs alongside SQL Server in each pod and provides:
 | `/role` | Current replica role |
 | `/failover` | Trigger failover (POST) |
 
-See [AG Helper Reference](ag-helper-reference.md) for complete API documentation.
+See [AG Helper Reference](ag-helper-reference.md) for complete API documentation, or [Controller Workflow Details](controller-workflow-details.md) for a deep dive into the AG Helper and Controller internals.
 
 ## Health States
 
@@ -223,3 +223,4 @@ ApplicationIntent=ReadOnly;
 - [Failover Management](failover-management.md) - Automatic and manual failover
 - [Multi-AG Scenarios](multi-ag-scenarios.md) - Multiple AGs
 - [AG Helper Reference](ag-helper-reference.md) - Complete API docs
+- [Controller Workflow Details](controller-workflow-details.md) - Deep dive into AG Helper and Controller internals

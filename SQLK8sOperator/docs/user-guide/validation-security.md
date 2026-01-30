@@ -11,6 +11,7 @@ This document describes the input validation rules and security measures enforce
 - [Resource Name Validation](#resource-name-validation)
 - [Storage Class Validation](#storage-class-validation)
 - [Secret Validation](#secret-validation)
+- [AG Helper Credential Validation](#ag-helper-credential-validation)
 - [Memory Validation](#memory-validation)
 - [Port Validation](#port-validation)
 - [Security Validations](#security-validations)
@@ -166,6 +167,103 @@ Create it with: kubectl create secret generic mssql-sa-password --from-literal=p
 ```
 
 > **Note:** Secrets use "warn" mode by default because they might be created by external processes (e.g., external-secrets operator, GitOps pipelines).
+
+## AG Helper Credential Validation
+
+The AG Helper sidecar uses dedicated SQL credentials to monitor Availability Group health. The operator validates these credential configurations.
+
+### Credential Configuration Options
+
+| Configuration | Validation | Behavior |
+|---------------|------------|----------|
+| `secretRef` only | ✅ Recommended | Check secrets exist, validate names |
+| Plain text only | ⚠️ Allowed with warning | Validate SQL identifier, password complexity |
+| Both specified | ❌ Error | Cannot mix secretRef and plain text |
+| Neither specified | ⚠️ Warning | Falls back to SA account (not recommended) |
+
+### SecretRef Validation
+
+When using `secretRef`, the operator validates:
+
+| Field | Validation |
+|-------|------------|
+| `usernameSecret.name` | Required, Kubernetes name format (max 253 chars) |
+| `usernameSecret.key` | Required, non-empty |
+| `passwordSecret.name` | Required, Kubernetes name format, secret exists check |
+| `passwordSecret.key` | Required, non-empty |
+
+### Plain Text Credential Validation
+
+When using plain text credentials (not recommended for production):
+
+| Field | Validation |
+|-------|------------|
+| `username` | SQL identifier format, SQL injection pattern check |
+| `password` | Password complexity check (warning only) |
+
+### Example: Valid SecretRef Configuration
+
+```yaml
+availabilityGroup:
+  name: ProductionAG
+  healthCheckCredentials:
+    secretRef:
+      usernameSecret:
+        name: ag-helper-creds    # ✅ Valid K8s name
+        key: username             # ✅ Non-empty
+      passwordSecret:
+        name: ag-helper-creds    # ✅ Can be same secret
+        key: password             # ✅ Non-empty
+```
+
+### Example: Plain Text (Not Recommended)
+
+```yaml
+availabilityGroup:
+  name: ProductionAG
+  healthCheckCredentials:
+    username: "ag_helper"         # ✅ Valid SQL identifier
+    password: "Str0ng#Pass!"      # ⚠️ Warning: plain text
+```
+
+**Warning issued:**
+```
+healthCheckCredentials: using plain text credentials is NOT RECOMMENDED for production. 
+Consider using secretRef instead to avoid exposing credentials in manifests.
+```
+
+### Per-Replica Credential Validation
+
+The `replicaCredentials` map allows overriding credentials per replica. Each entry is validated with the same rules:
+
+```yaml
+replicaCredentials:
+  "0":    # Primary replica
+    secretRef:
+      usernameSecret:
+        name: ag-helper-primary
+        key: username
+      passwordSecret:
+        name: ag-helper-primary
+        key: password
+  "1":    # Secondary replica
+    secretRef:
+      usernameSecret:
+        name: ag-helper-secondary
+        key: username
+      passwordSecret:
+        name: ag-helper-secondary
+        key: password
+```
+
+### Common Validation Errors
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `specify either secretRef OR plain text, not both` | Mixed credential types | Use one method only |
+| `usernameSecret.name is required` | Missing secret name | Add the secret name |
+| `Secret 'x' not found in namespace 'y'` | Secret doesn't exist | Create the secret first |
+| `username contains invalid characters` | Invalid SQL identifier | Use valid SQL identifier pattern |
 
 ## Memory Validation
 

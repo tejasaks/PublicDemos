@@ -1,0 +1,139 @@
+# Minimal SQL Server Availability Group Configuration
+# This sample shows the absolute minimum required fields to create an AG
+# All other fields use sensible defaults defined in the CRD
+#
+# Defaults applied automatically:
+#   - automaticFailover: true
+#   - replicas: 3
+#   - seedingMode: Automatic
+#   - dbFailover: true
+#   - clusterType: External
+#   - endpointPort: 5022
+#   - primaryConfig/secondaryConfig: SynchronousCommit, External failover, ReadOnly secondary
+#   - failover: automatic with 30s health check
+#   - sidecar: mssql-ag-helper:latest with 10s monitor interval
+#
+# ============================================================================
+# SECRETS HANDLING
+# ============================================================================
+# This manifest includes Secret definitions for convenience (dev/test).
+# For PRODUCTION deployments, you should:
+#   1. Pre-create secrets using a secure method (kubectl, external-secrets, vault)
+#   2. Remove or comment out the Secret sections at the end of this file
+#   3. Ensure healthCheckCredentials.secretRef points to your pre-created secrets
+#
+# To pre-create secrets before deploying:
+#   kubectl create namespace mssql
+#   kubectl create secret generic sql-ag-min-sa -n mssql --from-literal=password='<your-sa-password>'
+#   kubectl create secret generic sql-ag-min-aghelper -n mssql \
+#     --from-literal=username=ag_helper --from-literal=password='<your-aghelper-password>'
+#
+# Then apply this manifest WITHOUT the Secret sections (or they will be overwritten).
+# ============================================================================
+
+---
+# First, create the SQLServer resource with 3 replicas
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServer
+metadata:
+  name: sql-ag-min
+  namespace: mssql
+spec:
+  version: "2025"
+  edition: Developer
+  instance:
+    replicas: 3
+    resources:
+      limits:
+        cpu: "2"
+        memory: 4Gi
+      requests:
+        cpu: "1"
+        memory: 2Gi
+    storage:
+      data:
+        size: 20Gi
+    config:
+      hadrEnabled: true  # Required for AG
+  credentials:
+    saPasswordSecretRef:
+      name: sql-ag-min-sa
+      key: password
+
+---
+# Minimal SQLServerAG - only required fields
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServerAG
+metadata:
+  name: ag-minimal
+  namespace: mssql
+spec:
+  # Required: Reference to the SQLServer resource
+  sqlServerRef:
+    name: sql-ag-min
+  
+  # Required: Availability Group configuration
+  availabilityGroup:
+    # Required: AG name (as it appears in SQL Server)
+    name: MinimalAG
+    
+    # Required: Primary replica config (can be empty object to use all defaults)
+    primaryConfig: {}
+    
+    # Required: Secondary replica config (can be empty object to use all defaults)  
+    secondaryConfig: {}
+    
+    # Required: Health check credentials for AG Helper
+    # Using Kubernetes secrets (recommended for production)
+    # NOTE: Update the secret names below if you pre-created secrets with different names
+    healthCheckCredentials:
+      secretRef:
+        usernameSecret:
+          name: sql-ag-min-aghelper
+          key: username
+        passwordSecret:
+          name: sql-ag-min-aghelper
+          key: password
+
+# ============================================================================
+# SECRETS SECTION (FOR DEV/TEST CONVENIENCE)
+# ============================================================================
+# The secrets below are included for quick dev/test deployments.
+# For PRODUCTION: Remove or comment out this entire section and pre-create
+# secrets using kubectl, external-secrets operator, HashiCorp Vault, or
+# your organization's secret management solution.
+#
+# If you have PRE-CREATED these secrets, comment out or delete everything
+# below this line to avoid overwriting your existing secrets.
+# ============================================================================
+
+---
+# AG Helper credentials secret
+# Required permissions for this SQL login:
+#   - VIEW SERVER STATE
+#   - ALTER ANY AVAILABILITY GROUP
+# See docs/availability-groups/deployment-guide.md for T-SQL to create this login
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sql-ag-min-aghelper
+  namespace: mssql
+  labels:
+    app.kubernetes.io/component: ag-helper
+type: Opaque
+stringData:
+  username: "ag_helper"
+  password: "AGHelper@Passw0rd!"  # CHANGE THIS in production!
+
+---
+# SA password secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sql-ag-min-sa
+  namespace: mssql
+  labels:
+    app.kubernetes.io/component: mssql
+type: Opaque
+stringData:
+  password: "YourStrong@Passw0rd!"  # CHANGE THIS in production!

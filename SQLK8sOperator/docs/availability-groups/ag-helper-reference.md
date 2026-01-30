@@ -1,8 +1,10 @@
 # AG Helper Reference
 
-[← Back to Availability Groups](overview.md) | [Documentation Home](../README.md)
+[← Back to Availability Groups](overview.md) | [Controller Workflow Details](controller-workflow-details.md) | [Documentation Home](../README.md)
 
 Complete reference for the AG Helper sidecar container.
+
+> **Developer Deep Dive:** For a comprehensive walkthrough of how the AG Helper and Controller work together, including SQL queries, health determination logic, and a complete failover scenario, see [Controller Workflow Details](controller-workflow-details.md).
 
 ## Table of Contents
 
@@ -26,22 +28,31 @@ The AG Helper is a sidecar container that runs alongside SQL Server in each pod.
 
 ### Container Specification
 
+The operator automatically injects the AG Helper sidecar container. Here's what it looks like:
+
 ```yaml
 containers:
   - name: ag-helper
     image: mssql-operator/ag-helper:latest
+    args:
+      - "-ag-name=$(AG_NAME)"
+      - "-sql-host=localhost"
+      - "-sql-port=1433"
     ports:
       - containerPort: 8080
         name: http
     env:
-      - name: MSSQL_HOST
-        value: "localhost"
-      - name: MSSQL_PORT
-        value: "1433"
-      - name: MSSQL_SA_PASSWORD
+      - name: AG_NAME
+        value: "ProductionAG"
+      - name: AG_HELPER_USERNAME
         valueFrom:
           secretKeyRef:
-            name: sql-sa-password
+            name: sql-ag-aghelper  # Dedicated AG Helper credentials secret
+            key: username
+      - name: AG_HELPER_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: sql-ag-aghelper
             key: password
     livenessProbe:
       httpGet:
@@ -57,25 +68,121 @@ containers:
       periodSeconds: 10
 ```
 
+> **Important:** The AG Helper uses a dedicated SQL login with minimal permissions for health monitoring. You must create this login on all replicas before deploying the AG. See [Creating the AG Helper Login](#creating-the-ag-helper-login) below.
+
 ## Configuration
 
-The AG Helper is configured via environment variables:
+The AG Helper is configured via environment variables and command-line flags.
+
+### Authentication
+
+The AG Helper connects to SQL Server using a **dedicated least-privilege login** (recommended), following the [Pacemaker pattern](https://learn.microsoft.com/en-us/sql/linux/sql-server-linux-availability-group-cluster-pacemaker) from Microsoft's SQL Server Linux documentation.
+
+#### Recommended: Dedicated AG Helper Login
+
+Create a dedicated SQL login with only the required permissions:
+
+```sql
+-- Run on ALL replicas
+CREATE LOGIN ag_helper WITH PASSWORD = 'YourStrong@AGHelperPassw0rd!';
+GRANT VIEW SERVER STATE TO ag_helper;
+GRANT ALTER ANY AVAILABILITY GROUP TO ag_helper;
+```
+
+The AG Helper reads credentials from environment variables:
+
+| Source | Variable | Description |
+|--------|----------|-------------|
+| Environment | `AG_HELPER_USERNAME` | SQL login username (recommended: `ag_helper`) |
+| Environment | `AG_HELPER_PASSWORD` | SQL login password |
+
+#### Fallback: SA Account (Not Recommended for Production)
+
+For backward compatibility, the AG Helper falls back to SA credentials if `AG_HELPER_*` variables are not set:
+
+| Source | Variable | Description |
+|--------|----------|-------------|
+| Environment | `SA_PASSWORD` | SA password (fallback only) |
+
+> **Warning:** Using SA credentials gives the AG Helper unrestricted access to SQL Server. For production deployments, always use a dedicated least-privilege login.
+
+### Creating the AG Helper Login
+
+Run these T-SQL commands on **ALL** AG replicas before deploying the SQLServerAG resource:
+
+```sql
+-- Step 1: Create the login
+CREATE LOGIN ag_helper WITH PASSWORD = 'YourStrong@AGHelperPassw0rd!';
+GO
+
+-- Step 2: Grant required permissions
+-- VIEW SERVER STATE: Query sys.dm_hadr_* DMVs for AG health
+GRANT VIEW SERVER STATE TO ag_helper;
+GO
+
+-- ALTER ANY AVAILABILITY GROUP: Perform failover operations
+GRANT ALTER ANY AVAILABILITY GROUP TO ag_helper;
+GO
+```
+
+Create the Kubernetes secret:
+
+```bash
+kubectl create secret generic sql-ag-aghelper \
+  --namespace mssql \
+  --from-literal=username=ag_helper \
+  --from-literal=password='YourStrong@AGHelperPassw0rd!'
+```
+
+Or use a YAML manifest (see [samples/ag-helper-credentials-secret.yaml](../../samples/ag-helper-credentials-secret.yaml)):
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sql-ag-aghelper
+  namespace: mssql
+type: Opaque
+stringData:
+  username: "ag_helper"
+  password: "YourStrong@AGHelperPassw0rd!"
+```
+
+> **Tip: Dev/Test vs Production**
+> - **Dev/Test:** The sample AG manifests include Secret definitions inline for convenience. Simply apply the manifest as-is.
+> - **Production:** Pre-create secrets using the methods above, then remove/comment out the SECRETS SECTION from the sample manifests before applying.
+>
+> See [Deployment Guide - Step 2.5](deployment-guide.md#step-25-create-ag-helper-credentials) for the complete workflow.
+
+### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MSSQL_HOST` | `localhost` | SQL Server hostname |
-| `MSSQL_PORT` | `1433` | SQL Server port |
-| `MSSQL_SA_PASSWORD` | (required) | SA password |
-| `MONITOR_INTERVAL` | `10s` | AG check interval |
-| `HTTP_PORT` | `8080` | API listen port |
-| `LOG_LEVEL` | `info` | Logging level |
-| `LOG_FORMAT` | `json` | Log format (json/text) |
+| `AG_NAME` | (required) | Name of the Availability Group to monitor |
+| `AG_HELPER_USERNAME` | (fallback to `sa`) | SQL login username for health monitoring |
+| `AG_HELPER_PASSWORD` | (fallback to `SA_PASSWORD`) | SQL login password |
+| `SA_PASSWORD` | - | Fallback password (not recommended for production) |
+| `MONITOR_INTERVAL` | `10s` | AG health check interval |
+| `HTTP_PORT` | `8080` | HTTP API listen port |
+
+### Command-Line Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-ag-name` | `$AG_NAME` | AG name (can also use env var) |
+| `-sql-host` | `localhost` | SQL Server hostname |
+| `-sql-port` | `1433` | SQL Server port |
+| `-sql-user` | `$AG_HELPER_USERNAME` or `sa` | SQL Server username |
+| `-sql-password` | `$AG_HELPER_PASSWORD` or `$SA_PASSWORD` | SQL Server password |
+| `-monitor-interval` | `10s` | AG check interval |
+| `-connection-timeout` | `30s` | SQL connection timeout |
+| `-http-port` | `8080` | HTTP API port |
 
 ### Advanced Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CONNECTION_TIMEOUT` | `5s` | SQL connection timeout |
+| `CONNECTION_TIMEOUT` | `30s` | SQL connection timeout |
 | `QUERY_TIMEOUT` | `10s` | SQL query timeout |
 | `MAX_RETRIES` | `3` | Connection retry count |
 | `RETRY_DELAY` | `1s` | Delay between retries |

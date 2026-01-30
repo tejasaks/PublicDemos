@@ -51,6 +51,15 @@ type AvailabilityGroupConfig struct {
 	// +kubebuilder:default=3
 	Replicas int32 `json:"replicas,omitempty"`
 
+	// HealthCheckCredentials defines the SQL login credentials for AG health monitoring
+	// This is the default for all replicas; individual replicas can override
+	HealthCheckCredentials HealthCheckCredentialsSpec `json:"healthCheckCredentials"`
+
+	// ReplicaCredentials allows per-replica credential overrides
+	// Key is the replica index (0, 1, 2, etc.)
+	// +optional
+	ReplicaCredentials map[string]HealthCheckCredentialsSpec `json:"replicaCredentials,omitempty"`
+
 	// PrimaryConfig defines the primary replica configuration
 	PrimaryConfig ReplicaConfig `json:"primaryConfig"`
 
@@ -119,6 +128,44 @@ type AGDatabase struct {
 	// BackupPath is the path for initial backup (for manual seeding)
 	// +optional
 	BackupPath string `json:"backupPath,omitempty"`
+}
+
+// HealthCheckCredentialsSpec defines credentials for AG Helper health monitoring
+// The AG Helper uses these credentials to connect to SQL Server instead of the SA account
+// This follows the SQL Server Pacemaker pattern for least-privilege health checking
+type HealthCheckCredentialsSpec struct {
+	// SecretRef references a Kubernetes secret containing the credentials
+	// +optional
+	SecretRef *HealthCheckSecretRef `json:"secretRef,omitempty"`
+
+	// Username is the SQL login username (plain text - NOT RECOMMENDED for production)
+	// Use secretRef instead for production deployments
+	// +optional
+	Username string `json:"username,omitempty"`
+
+	// Password is the SQL login password (plain text - NOT RECOMMENDED for production)
+	// Use secretRef instead for production deployments
+	// WARNING: Plain text passwords in manifests are a security risk
+	// +optional
+	Password string `json:"password,omitempty"`
+}
+
+// HealthCheckSecretRef references secrets containing AG Helper credentials
+type HealthCheckSecretRef struct {
+	// UsernameSecret references the secret containing the SQL username
+	UsernameSecret SecretKeyRef `json:"usernameSecret"`
+
+	// PasswordSecret references the secret containing the SQL password
+	PasswordSecret SecretKeyRef `json:"passwordSecret"`
+}
+
+// SecretKeyRef references a key within a Kubernetes secret
+type SecretKeyRef struct {
+	// Name is the name of the secret
+	Name string `json:"name"`
+
+	// Key is the key within the secret
+	Key string `json:"key"`
 }
 
 // FailoverConfig defines failover behavior
