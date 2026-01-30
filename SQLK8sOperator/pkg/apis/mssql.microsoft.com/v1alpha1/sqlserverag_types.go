@@ -159,14 +159,7 @@ type HealthCheckSecretRef struct {
 	PasswordSecret SecretKeyRef `json:"passwordSecret"`
 }
 
-// SecretKeyRef references a key within a Kubernetes secret
-type SecretKeyRef struct {
-	// Name is the name of the secret
-	Name string `json:"name"`
-
-	// Key is the key within the secret
-	Key string `json:"key"`
-}
+// Note: SecretKeyRef is defined in sqlserver_types.go and reused here
 
 // FailoverConfig defines failover behavior
 type FailoverConfig struct {

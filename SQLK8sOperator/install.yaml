@@ -2,7 +2,7 @@
 # SQL Server Kubernetes Operator - Combined Installation Manifest
 # =============================================================================
 # Version: v1.0.0
-# Generated: 2026-01-30T10:30:31Z
+# Generated: 2026-01-30T19:10:57Z
 #
 # This file contains all resources needed to install the SQL Server Kubernetes
 # Operator. It is auto-generated from the deploy/ directory.
@@ -630,97 +630,57 @@ spec:
                     type: string
                   healthCheckCredentials:
                     description: |-
-                      HealthCheckCredentials defines the SQL login credentials for AG Helper health monitoring.
-                      This is the default for all replicas; individual replicas can override via replicaCredentials.
-                      WARNING: Using plain text username/password is NOT RECOMMENDED for production.
-                    type: object
+                      HealthCheckCredentials defines the SQL login credentials for AG health monitoring
+                      This is the default for all replicas; individual replicas can override
                     properties:
-                      secretRef:
-                        description: SecretRef references Kubernetes secrets containing the credentials (RECOMMENDED)
-                        type: object
-                        required:
-                        - usernameSecret
-                        - passwordSecret
-                        properties:
-                          usernameSecret:
-                            description: UsernameSecret references the secret containing the SQL username
-                            type: object
-                            required:
-                            - name
-                            - key
-                            properties:
-                              name:
-                                description: Name of the secret
-                                type: string
-                              key:
-                                description: Key within the secret
-                                type: string
-                          passwordSecret:
-                            description: PasswordSecret references the secret containing the SQL password
-                            type: object
-                            required:
-                            - name
-                            - key
-                            properties:
-                              name:
-                                description: Name of the secret
-                                type: string
-                              key:
-                                description: Key within the secret
-                                type: string
-                      username:
-                        description: |-
-                          Username is the SQL login username (plain text - NOT RECOMMENDED for production).
-                          Use secretRef instead for production deployments.
-                        type: string
                       password:
                         description: |-
-                          Password is the SQL login password (plain text - NOT RECOMMENDED for production).
-                          Use secretRef instead for production deployments.
-                          WARNING: Plain text passwords in manifests are a security risk.
+                          Password is the SQL login password (plain text - NOT RECOMMENDED for production)
+                          Use secretRef instead for production deployments
+                          WARNING: Plain text passwords in manifests are a security risk
                         type: string
-                  replicaCredentials:
-                    description: |-
-                      ReplicaCredentials allows per-replica credential overrides.
-                      Key is the replica index as string ("0", "1", "2", etc.)
+                      secretRef:
+                        description: SecretRef references a Kubernetes secret containing
+                          the credentials
+                        properties:
+                          passwordSecret:
+                            description: PasswordSecret references the secret containing
+                              the SQL password
+                            properties:
+                              key:
+                                default: password
+                                description: Key is the key within the secret
+                                type: string
+                              name:
+                                description: Name is the name of the secret
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          usernameSecret:
+                            description: UsernameSecret references the secret containing
+                              the SQL username
+                            properties:
+                              key:
+                                default: password
+                                description: Key is the key within the secret
+                                type: string
+                              name:
+                                description: Name is the name of the secret
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        required:
+                        - passwordSecret
+                        - usernameSecret
+                        type: object
+                      username:
+                        description: |-
+                          Username is the SQL login username (plain text - NOT RECOMMENDED for production)
+                          Use secretRef instead for production deployments
+                        type: string
                     type: object
-                    additionalProperties:
-                      description: Per-replica health check credentials
-                      type: object
-                      properties:
-                        secretRef:
-                          description: SecretRef references Kubernetes secrets containing the credentials
-                          type: object
-                          required:
-                          - usernameSecret
-                          - passwordSecret
-                          properties:
-                            usernameSecret:
-                              type: object
-                              required:
-                              - name
-                              - key
-                              properties:
-                                name:
-                                  type: string
-                                key:
-                                  type: string
-                            passwordSecret:
-                              type: object
-                              required:
-                              - name
-                              - key
-                              properties:
-                                name:
-                                  type: string
-                                key:
-                                  type: string
-                        username:
-                          description: Plain text username (NOT RECOMMENDED)
-                          type: string
-                        password:
-                          description: Plain text password (NOT RECOMMENDED)
-                          type: string
                   name:
                     description: Name is the name of the Availability Group
                     maxLength: 128
@@ -758,6 +718,65 @@ spec:
                         description: SessionTimeout in seconds
                         format: int32
                         type: integer
+                    type: object
+                  replicaCredentials:
+                    additionalProperties:
+                      description: |-
+                        HealthCheckCredentialsSpec defines credentials for AG Helper health monitoring
+                        The AG Helper uses these credentials to connect to SQL Server instead of the SA account
+                        This follows the SQL Server Pacemaker pattern for least-privilege health checking
+                      properties:
+                        password:
+                          description: |-
+                            Password is the SQL login password (plain text - NOT RECOMMENDED for production)
+                            Use secretRef instead for production deployments
+                            WARNING: Plain text passwords in manifests are a security risk
+                          type: string
+                        secretRef:
+                          description: SecretRef references a Kubernetes secret containing
+                            the credentials
+                          properties:
+                            passwordSecret:
+                              description: PasswordSecret references the secret containing
+                                the SQL password
+                              properties:
+                                key:
+                                  default: password
+                                  description: Key is the key within the secret
+                                  type: string
+                                name:
+                                  description: Name is the name of the secret
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            usernameSecret:
+                              description: UsernameSecret references the secret containing
+                                the SQL username
+                              properties:
+                                key:
+                                  default: password
+                                  description: Key is the key within the secret
+                                  type: string
+                                name:
+                                  description: Name is the name of the secret
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                          required:
+                          - passwordSecret
+                          - usernameSecret
+                          type: object
+                        username:
+                          description: |-
+                            Username is the SQL login username (plain text - NOT RECOMMENDED for production)
+                            Use secretRef instead for production deployments
+                          type: string
+                      type: object
+                    description: |-
+                      ReplicaCredentials allows per-replica credential overrides
+                      Key is the replica index (0, 1, 2, etc.)
                     type: object
                   replicas:
                     default: 3
@@ -808,6 +827,7 @@ spec:
                     - Manual
                     type: string
                 required:
+                - healthCheckCredentials
                 - name
                 - primaryConfig
                 - secondaryConfig
