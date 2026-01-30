@@ -12,6 +12,7 @@ Guide to building the SQL Server Kubernetes Operator and related components.
 - [Building AG Helper](#building-ag-helper)
 - [Building SQL Exporter](#building-sql-exporter)
 - [Multi-Architecture Builds](#multi-architecture-builds)
+- [Alternative: dev-setup.sh Script](#alternative-dev-setupsh-script)
 - [CI/CD Integration](#cicd-integration)
 
 ## Build Overview
@@ -395,6 +396,114 @@ make docker-build IMG=mssql-operator:v1.0.0
 make docker-build-ag-helper IMG=ag-helper:v1.0.0
 make docker-build-exporter IMG=sql-exporter:v1.0.0
 ```
+
+## Alternative: dev-setup.sh Script
+
+For **Linux/Ubuntu with minikube**, we provide `scripts/dev-setup.sh` as a convenient alternative to individual `make` commands. This script combines prerequisites checking, cluster setup, building, and deployment into a single workflow.
+
+### When to Use dev-setup.sh
+
+| Scenario | Use `make` | Use `dev-setup.sh` |
+|----------|------------|--------------------|
+| Windows development | ✅ | ❌ Not supported |
+| macOS development | ✅ | ⚠️ Partially supported |
+| Linux + minikube | ✅ | ✅ Recommended |
+| CI/CD pipelines | ✅ | ❌ |
+| Individual build steps | ✅ | Use specific command |
+| Full local setup | Multiple commands | ✅ Single command |
+
+### Available Commands
+
+```bash
+# View all available commands
+./scripts/dev-setup.sh
+
+# Commands:
+#   prereq     - Check prerequisites (Docker, minikube, kubectl, Go)
+#   start      - Start minikube cluster with recommended settings
+#   build      - Build operator and sidecar images in minikube
+#   install    - Install CRDs and deploy operator
+#   uninstall  - Remove operator (preserves CRDs)
+#   deploy [yaml] - Deploy SQL Server from YAML file
+#   monitoring - Deploy Prometheus + Grafana monitoring stack
+#   status     - Show cluster and resource status
+#   cleanup    - Remove all resources
+#   connect    - Port-forward to SQL Server
+#   all        - Run full setup (prereq, start, build, install, deploy)
+#   all-with-monitoring - Full setup including Prometheus/Grafana
+```
+
+### Quick Start (Full Setup)
+
+**Set up everything with one command:**
+
+```bash
+# Full setup with SQL Server 2025 standalone
+./scripts/dev-setup.sh all
+
+# Full setup with Prometheus/Grafana monitoring
+./scripts/dev-setup.sh all-with-monitoring
+```
+
+**Expected workflow:**
+1. Checks prerequisites (Docker, minikube, kubectl, Go 1.22+)
+2. Starts minikube with 4 CPUs, 8GB RAM, Kubernetes v1.29
+3. Builds operator and AG Helper images inside minikube
+4. Installs CRDs and deploys the operator
+5. Deploys sample SQL Server instance
+6. Shows status
+
+### Individual Commands
+
+**Check prerequisites only:**
+
+```bash
+./scripts/dev-setup.sh prereq
+
+# Output:
+# [INFO] Checking prerequisites...
+# [INFO] All prerequisites are met!
+```
+
+**Build without starting cluster:**
+
+```bash
+./scripts/dev-setup.sh build
+```
+
+**Deploy a specific sample:**
+
+```bash
+# Default: SQL Server 2025 standalone
+./scripts/dev-setup.sh deploy
+
+# AG deployment
+./scripts/dev-setup.sh deploy samples/sqlserver-availability-group.yaml
+
+# Minimal AG
+./scripts/dev-setup.sh deploy samples/sqlserverag-minimal.yaml
+```
+
+**Connect to SQL Server:**
+
+```bash
+./scripts/dev-setup.sh connect
+
+# Starts port-forward and shows connection info
+# Connect with: sqlcmd -S localhost,1433 -U sa -P '<password>'
+```
+
+### Comparison: make vs dev-setup.sh
+
+| Task | make | dev-setup.sh |
+|------|------|--------------|
+| Build binary | `make build` | `./scripts/dev-setup.sh build` |
+| Build Docker image | `make docker-build` | (included in build) |
+| Install tools | `make install-tools` | (automatic in prereq) |
+| Generate manifests | `make manifests` | Use make directly |
+| Full local setup | Multiple commands | `./scripts/dev-setup.sh all` |
+
+> **Note:** For code generation tasks like `make manifests` and `make generate`, continue to use `make` directly. The dev-setup.sh script focuses on the build-deploy-test workflow rather than code generation.
 
 ## CI/CD Integration
 

@@ -1,0 +1,273 @@
+# ============================================================================
+# STEP 3 (ADVANCED): Multi-AG Configuration
+# ============================================================================
+#
+# This manifest shows how to manage MULTIPLE Availability Groups on the same
+# SQL Server replicas, each with different configurations.
+#
+# SCENARIO:
+#   - ProductionAG: 3 sync replicas for OLTP workload
+#   - ReportingAG: 1 primary + 2 async replicas for reporting offload
+#   - DisasterRecoveryAG: Geo-DR with manual failover
+#
+# PREREQUISITES:
+#   - ag-step1-replicas.yaml applied
+#   - All AGs created via T-SQL (see advanced examples in ag-step2-setup-ag.md)
+#
+# NOTE: Each AG needs its own SQLServerAG resource for:
+#   - Separate primary/secondary services
+#   - Independent failover configuration
+#   - Different monitoring behavior
+#
+# ============================================================================
+
+---
+# Production AG - High availability OLTP
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServerAG
+metadata:
+  name: production-ag
+  namespace: mssql
+spec:
+  description: "Production OLTP AG - 3 synchronous replicas with automatic failover"
+  
+  sqlServerRef:
+    name: sql-ag
+  
+  availabilityGroup:
+    name: ProductionAG  # Must match T-SQL AG name
+    replicas: 3
+    
+    primaryConfig:
+      availabilityMode: SynchronousCommit
+      failoverMode: External
+      readableSecondary: ReadOnly
+      sessionTimeout: 10  # Fast failover detection
+    
+    secondaryConfig:
+      availabilityMode: SynchronousCommit
+      failoverMode: External
+      readableSecondary: ReadOnly
+      sessionTimeout: 10
+    
+    seedingMode: Automatic
+    clusterType: External
+    endpointPort: 5022
+    dbFailover: true
+    automaticFailover: true
+    
+    healthCheckCredentials:
+      secretRef:
+        usernameSecret:
+          name: sql-ag-helper
+          key: username
+        passwordSecret:
+          name: sql-ag-helper
+          key: password
+  
+  failover:
+    automatic: true
+    dataLossThreshold: 0  # Zero data loss required
+    healthCheckTimeout: "30s"
+    leaseTimeout: "60s"
+    requiredSynchronizedSecondaries: 1
+  
+  endpoints:
+    primary:
+      type: LoadBalancer
+      port: 1433
+      annotations:
+        service.beta.kubernetes.io/description: "Production OLTP primary"
+    secondary:
+      type: LoadBalancer
+      port: 1434
+      annotations:
+        service.beta.kubernetes.io/description: "Production OLTP read replicas"
+  
+  sidecar:
+    image: mssql-ag-helper:latest
+    monitorInterval: "10s"
+    connectionTimeout: "30s"
+
+---
+# Reporting AG - Read scale-out with async replicas
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServerAG
+metadata:
+  name: reporting-ag
+  namespace: mssql
+spec:
+  description: "Reporting AG - Async replicas for read scale-out"
+  
+  sqlServerRef:
+    name: sql-ag
+  
+  availabilityGroup:
+    name: ReportingAG  # Must match T-SQL AG name
+    replicas: 3
+    
+    primaryConfig:
+      availabilityMode: SynchronousCommit
+      failoverMode: External
+      readableSecondary: "No"  # Primary handles writes only
+      sessionTimeout: 10
+    
+    secondaryConfig:
+      availabilityMode: AsynchronousCommit  # Async for reporting
+      failoverMode: Manual  # No auto-failover for async
+      readableSecondary: ReadOnly
+      sessionTimeout: 30  # More tolerant for async lag
+    
+    seedingMode: Automatic
+    clusterType: External
+    endpointPort: 5022
+    dbFailover: false  # No automatic DB failover for reporting
+    automaticFailover: false  # Manual failover only
+    
+    healthCheckCredentials:
+      secretRef:
+        usernameSecret:
+          name: sql-ag-helper
+          key: username
+        passwordSecret:
+          name: sql-ag-helper
+          key: password
+  
+  failover:
+    automatic: false  # Manual failover only
+    dataLossThreshold: 100  # Allow some lag for async
+    healthCheckTimeout: "60s"
+  
+  endpoints:
+    primary:
+      type: ClusterIP  # Internal only - writes go through ProductionAG
+      port: 2433
+    secondary:
+      type: LoadBalancer  # External access for reporting queries
+      port: 2434
+      annotations:
+        service.beta.kubernetes.io/description: "Reporting read replicas"
+  
+  sidecar:
+    image: mssql-ag-helper:latest
+    monitorInterval: "30s"  # Less frequent for reporting AG
+    connectionTimeout: "30s"
+
+---
+# Disaster Recovery AG - Geo-DR with manual failover
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServerAG
+metadata:
+  name: dr-ag
+  namespace: mssql
+spec:
+  description: "Disaster Recovery AG - Geo-DR with manual failover"
+  
+  sqlServerRef:
+    name: sql-ag
+  
+  availabilityGroup:
+    name: DisasterRecoveryAG  # Must match T-SQL AG name
+    replicas: 2  # Primary + 1 DR replica
+    
+    primaryConfig:
+      availabilityMode: SynchronousCommit
+      failoverMode: External
+      readableSecondary: "No"
+      sessionTimeout: 10
+    
+    secondaryConfig:
+      availabilityMode: AsynchronousCommit  # Async for geo-replication
+      failoverMode: Manual  # Manual failover for DR
+      readableSecondary: "No"  # DR replica not for reads
+      sessionTimeout: 60  # Very tolerant for WAN latency
+    
+    seedingMode: Manual  # Large DBs use backup/restore
+    clusterType: External
+    endpointPort: 5022
+    dbFailover: false
+    automaticFailover: false  # NEVER auto-failover DR
+    
+    healthCheckCredentials:
+      secretRef:
+        usernameSecret:
+          name: sql-ag-helper
+          key: username
+        passwordSecret:
+          name: sql-ag-helper
+          key: password
+  
+  failover:
+    automatic: false
+    dataLossThreshold: -1  # Unbounded - DR may have significant lag
+    healthCheckTimeout: "120s"  # Long timeout for geo scenarios
+  
+  endpoints:
+    # No LoadBalancer for DR - only activated during disaster
+    primary:
+      type: ClusterIP
+      port: 3433
+    secondary:
+      type: ClusterIP  # Internal only
+      port: 3434
+  
+  sidecar:
+    image: mssql-ag-helper:latest
+    monitorInterval: "60s"  # Infrequent monitoring for DR
+    connectionTimeout: "60s"
+
+# ============================================================================
+# T-SQL TEMPLATES FOR THESE AGs
+# ============================================================================
+#
+# Create each AG with appropriate settings in T-SQL. Examples:
+#
+# -- ProductionAG (all sync)
+# CREATE AVAILABILITY GROUP ProductionAG
+#     WITH (CLUSTER_TYPE = EXTERNAL, DB_FAILOVER = ON)
+#     FOR DATABASE AppDB
+#     REPLICA ON
+#         N'sql-ag-0' WITH (AVAILABILITY_MODE = SYNCHRONOUS_COMMIT, ...),
+#         N'sql-ag-1' WITH (AVAILABILITY_MODE = SYNCHRONOUS_COMMIT, ...),
+#         N'sql-ag-2' WITH (AVAILABILITY_MODE = SYNCHRONOUS_COMMIT, ...);
+#
+# -- ReportingAG (1 sync, 2 async)  
+# CREATE AVAILABILITY GROUP ReportingAG
+#     WITH (CLUSTER_TYPE = EXTERNAL, DB_FAILOVER = OFF)
+#     FOR DATABASE ReportingDB
+#     REPLICA ON
+#         N'sql-ag-0' WITH (AVAILABILITY_MODE = SYNCHRONOUS_COMMIT, ...),
+#         N'sql-ag-1' WITH (AVAILABILITY_MODE = ASYNCHRONOUS_COMMIT, ...),
+#         N'sql-ag-2' WITH (AVAILABILITY_MODE = ASYNCHRONOUS_COMMIT, ...);
+#
+# -- DisasterRecoveryAG (1 sync primary, 1 async DR)
+# CREATE AVAILABILITY GROUP DisasterRecoveryAG
+#     WITH (CLUSTER_TYPE = EXTERNAL, DB_FAILOVER = OFF)
+#     FOR DATABASE CriticalDB
+#     REPLICA ON
+#         N'sql-ag-0' WITH (AVAILABILITY_MODE = SYNCHRONOUS_COMMIT, ...),
+#         N'sql-ag-2' WITH (
+#             AVAILABILITY_MODE = ASYNCHRONOUS_COMMIT,
+#             FAILOVER_MODE = MANUAL,
+#             SESSION_TIMEOUT = 60
+#         );
+#
+# ============================================================================
+# USAGE
+# ============================================================================
+#
+# 1. Create all AGs via T-SQL first (see ag-step2-setup-ag.md)
+#
+# 2. Apply this manifest:
+#    kubectl apply -f ag-step3-multi-ag.yaml
+#
+# 3. Check all AG resources:
+#    kubectl get sqlserverag -n mssql
+#
+# 4. Check services:
+#    kubectl get svc -n mssql
+#    # production-ag-primary, production-ag-secondary
+#    # reporting-ag-primary, reporting-ag-secondary  
+#    # dr-ag-primary, dr-ag-secondary
+#
+# ============================================================================

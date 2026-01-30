@@ -6,14 +6,55 @@ Step-by-step guide to deploying a SQL Server Availability Group on Kubernetes.
 
 ## Table of Contents
 
+- [Overview](#overview)
 - [Prerequisites](#prerequisites)
-- [Step 1: Deploy SQLServer Resource](#step-1-deploy-sqlserver-resource)
-- [Step 2: Deploy SQLServerAG Resource](#step-2-deploy-sqlserverag-resource)
-- [Step 2.5: Create AG Helper Credentials](#step-25-create-ag-helper-credentials)
-- [Step 3: Create AG via T-SQL](#step-3-create-ag-via-t-sql)
-- [Step 4: Join Secondary Replicas](#step-4-join-secondary-replicas)
-- [Step 5: Verify AG Status](#step-5-verify-ag-status)
-- [Complete Example](#complete-example)
+- [Step 1: Deploy SQL Server Replicas](#step-1-deploy-sql-server-replicas)
+- [Step 2: Configure AG via T-SQL](#step-2-configure-ag-via-t-sql)
+- [Step 3: Verify AG Helper Detection](#step-3-verify-ag-helper-detection)
+- [Step 4: Enable Kubernetes AG Management (Optional)](#step-4-enable-kubernetes-ag-management-optional)
+- [Quick Reference](#quick-reference)
+
+## Overview
+
+### Deployment Approaches
+
+| Approach | Description | When to Use |
+|----------|-------------|-------------|
+| **Auto-Discovery** | AG Helper monitors all AGs automatically | Default, simplest setup |
+| **Explicit Management** | SQLServerAG CR for K8s services + controller failover | Need LoadBalancer services or controller failover |
+
+### Correct Deployment Order
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  STEP 1: Deploy SQL Replicas                                       │
+│  ─────────────────────────────                                      │
+│  - Apply ag-step1-replicas.yaml                                     │
+│  - Wait for pods to be Running (2/2 Ready)                          │
+│  - AG Helper starts in "waiting" mode                               │
+│                                                                     │
+│  STEP 2: Configure AG via T-SQL                                     │
+│  ─────────────────────────────────                                  │
+│  - Create AG Helper login on all replicas                           │
+│  - Create certificates and endpoints                                │
+│  - Create databases and backup                                      │
+│  - Create Availability Group on primary                             │
+│  - Join secondaries to AG                                           │
+│                                                                     │
+│  STEP 3: Verify AG Helper Detection                                 │
+│  ─────────────────────────────────────                              │
+│  - Check AG Helper logs for "Discovered N Availability Group(s)"    │
+│  - Verify health monitoring is active                               │
+│                                                                     │
+│  STEP 4: Enable K8s AG Management (OPTIONAL)                        │
+│  ────────────────────────────────────────────                       │
+│  - Apply ag-step3-ag-config.yaml                                    │
+│  - Creates LoadBalancer services for primary/secondary routing      │
+│  - Enables controller-managed automatic failover                    │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+> **Important:** The AG Helper requires the AG to exist before it can monitor it. Always complete T-SQL setup (Step 2) before expecting AG Helper to report healthy status.
 
 ## Prerequisites
 
@@ -26,45 +67,50 @@ Before deploying an AG, ensure:
 | Storage provisioner | `kubectl get storageclass` |
 | Sufficient resources | 4+ CPU, 8+ GB per replica |
 
-### AG Helper Authentication
+## Step 1: Deploy SQL Server Replicas
 
-The AG Helper sidecar that monitors AG health uses a **dedicated least-privilege SQL login** (recommended) to connect to SQL Server. This follows the [Pacemaker pattern](https://learn.microsoft.com/en-us/sql/linux/sql-server-linux-availability-group-cluster-pacemaker) from Microsoft's SQL Server Linux documentation.
+Deploy SQL Server with AG Helper in auto-discovery mode.
 
-**Required steps (see Step 2.5 below for details):**
-1. Create the `ag_helper` SQL login on ALL replicas
-2. Grant `VIEW SERVER STATE` and `ALTER ANY AVAILABILITY GROUP` permissions
-3. Create a Kubernetes secret with the AG Helper credentials
-4. Reference the secret in the SQLServerAG manifest
-
-See [AG Helper Reference](ag-helper-reference.md#authentication) for complete details.
-
-## Step 1: Deploy SQLServer Resource
-
-Create a SQLServer resource with HADR enabled and 3 replicas.
-
-### Create Password Secret
+### Using Sample Manifest
 
 ```bash
+kubectl apply -f samples/ag-step1-replicas.yaml
+```
+
+This creates:
+- `mssql` namespace
+- SQLServer CR with 3 replicas (`sql-ag-0`, `sql-ag-1`, `sql-ag-2`)
+- SA password secret
+- AG Helper credentials secret
+- AG Helper in auto-discovery mode
+
+### Or Create Manually
+
+```bash
+# Create namespace and secrets
 kubectl create namespace mssql
 
-kubectl create secret generic sql-ag-prod-sa \
+kubectl create secret generic sql-ag-sa \
   --from-literal=password='YourStrong@Passw0rd!' \
+  -n mssql
+
+kubectl create secret generic sql-ag-helper \
+  --from-literal=username=ag_helper \
+  --from-literal=password='AGHelper@Passw0rd!' \
   -n mssql
 ```
 
-### Create SQLServer Manifest
+Then create SQLServer manifest:
 
-```bash
-cat > sqlserver-ag.yaml << 'EOF'
+```yaml
 apiVersion: mssql.microsoft.com/v1alpha1
 kind: SQLServer
 metadata:
-  name: sql-ag-prod01
+  name: sql-ag
   namespace: mssql
 spec:
-  description: "Production SQL Server AG cluster"
   version: "2025"
-  edition: Developer  # Use Enterprise for production
+  edition: Developer
   instance:
     replicas: 3
     resources:
@@ -84,31 +130,25 @@ spec:
     config:
       hadrEnabled: true   # Required for AG
       agentEnabled: true
-    # Distribute pods across nodes
-    affinity:
-      podAntiAffinity:
-        requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchLabels:
-                app: mssql
-                mssql.microsoft.com/instance: sql-ag-prod01
-            topologyKey: kubernetes.io/hostname
   credentials:
     saPasswordSecretRef:
-      name: sql-ag-prod-sa
+      name: sql-ag-sa
       key: password
   service:
-    type: ClusterIP
+    type: LoadBalancer
     port: 1433
-  monitoring:
+  # AG Helper in auto-discovery mode
+  agHelper:
     enabled: true
-EOF
-```
-
-### Deploy
-
-```bash
-kubectl apply -f sqlserver-ag.yaml
+    image: mssql-ag-helper:latest
+    credentials:
+      secretRef:
+        usernameSecret:
+          name: sql-ag-helper
+          key: username
+        passwordSecret:
+          name: sql-ag-helper
+          key: password
 ```
 
 ### Wait for Pods
@@ -116,355 +156,144 @@ kubectl apply -f sqlserver-ag.yaml
 ```bash
 kubectl get pods -n mssql -w
 
-# Wait until all 3 pods are Running
-# NAME               READY   STATUS    RESTARTS   AGE
-# sql-ag-prod01-0    2/2     Running   0          5m
-# sql-ag-prod01-1    2/2     Running   0          4m
-# sql-ag-prod01-2    2/2     Running   0          3m
+# Wait until all 3 pods show 2/2 Ready
+# NAME        READY   STATUS    RESTARTS   AGE
+# sql-ag-0    2/2     Running   0          5m
+# sql-ag-1    2/2     Running   0          4m
+# sql-ag-2    2/2     Running   0          3m
 ```
 
-## Step 2: Deploy SQLServerAG Resource
-
-Create a SQLServerAG resource to define the AG configuration and services.
-
-### Minimal vs Full Configuration
-
-The SQLServerAG CRD has sensible defaults for most fields. You can choose between:
-
-| Approach | When to Use |
-|----------|-------------|
-| **Minimal** | Quick setup, accepting all defaults |
-| **Full** | Production deployments needing explicit control |
-
-**Minimal required fields:**
-- `sqlServerRef.name` - Reference to the SQLServer resource
-- `availabilityGroup.name` - AG name as it appears in SQL Server
-- `availabilityGroup.primaryConfig` - Can be empty `{}` for defaults
-- `availabilityGroup.secondaryConfig` - Can be empty `{}` for defaults
-
-**Defaults applied automatically:**
-
-| Field | Default Value |
-|-------|---------------|
-| `replicas` | 3 |
-| `automaticFailover` | true |
-| `seedingMode` | Automatic |
-| `dbFailover` | true |
-| `clusterType` | External |
-| `endpointPort` | 5022 |
-| `primaryConfig.availabilityMode` | SynchronousCommit |
-| `primaryConfig.failoverMode` | External |
-| `primaryConfig.readableSecondary` | ReadOnly |
-| `sidecar.image` | mssql-ag-helper:latest |
-| `sidecar.monitorInterval` | 10s |
-
-See [samples/sqlserverag-minimal.yaml](../../samples/sqlserverag-minimal.yaml) for a minimal example.
-
-> **Tip:** The sample manifests include Secret definitions for dev/test convenience. For production, see [Step 2.5](#step-25-create-ag-helper-credentials) for the recommended approach of pre-creating secrets.
-
-### Option A: Minimal SQLServerAG Manifest
+### Verify AG Helper is Waiting
 
 ```bash
-cat > sqlserverag-minimal.yaml << 'EOF'
-apiVersion: mssql.microsoft.com/v1alpha1
-kind: SQLServerAG
-metadata:
-  name: prod-ag-01
-  namespace: mssql
-spec:
-  sqlServerRef:
-    name: sql-ag-prod01
-  availabilityGroup:
-    name: ProductionAG
-    primaryConfig: {}     # Use all defaults
-    secondaryConfig: {}   # Use all defaults
-EOF
-```
-
-### Option B: Full SQLServerAG Manifest (Recommended for Production)
-
-```bash
-cat > sqlserverag.yaml << 'EOF'
-apiVersion: mssql.microsoft.com/v1alpha1
-kind: SQLServerAG
-metadata:
-  name: prod-ag-01
-  namespace: mssql
-spec:
-  description: "Production AG for order processing"
-  sqlServerRef:
-    name: sql-ag-prod01
-  availabilityGroup:
-    name: ProductionAG
-    replicas: 3
-    primaryConfig:
-      availabilityMode: SynchronousCommit
-      failoverMode: External
-      readableSecondary: ReadOnly
-    secondaryConfig:
-      availabilityMode: SynchronousCommit
-      failoverMode: External
-      readableSecondary: ReadOnly
-    seedingMode: Automatic
-    databases:
-      - name: AppDB
-    dbFailover: true
-    automaticFailover: true
-    endpointPort: 5022
-  endpoints:
-    primary:
-      type: LoadBalancer
-      port: 1433
-    secondary:
-      type: LoadBalancer
-      port: 1434
-  sidecar:
-    monitorInterval: "10s"
-EOF
-```
-
-### Deploy
-
-```bash
-kubectl apply -f sqlserverag.yaml
-```
-
-### Verify Services Created
-
-```bash
-kubectl get svc -n mssql
-
-# NAME                 TYPE           CLUSTER-IP     EXTERNAL-IP    PORT(S)
-# prod-ag-01-primary   LoadBalancer   10.0.100.10    <pending>      1433:31433/TCP
-# prod-ag-01-secondary LoadBalancer   10.0.100.11    <pending>      1434:31434/TCP
-```
-
-## Step 2.5: Create AG Helper Credentials
-
-Before creating the Availability Group, set up the dedicated health check login for the AG Helper sidecar.
-
-### Credential Workflow Options
-
-Choose the appropriate workflow based on your environment:
-
-| Workflow | Best For | Description |
-|----------|----------|-------------|
-| **Option A: Dev/Test** | Quick testing, demos | Use sample manifests as-is (secrets included inline) |
-| **Option B: Production** | Secure deployments | Pre-create secrets, then deploy manifests without secret sections |
-
-#### Option A: Dev/Test (Secrets Included in Manifests)
-
-The sample manifests (`samples/sqlserver-availability-group.yaml`, `samples/sqlserverag-minimal.yaml`) include Secret definitions for convenience. Simply apply the manifest and both the AG resources and secrets are created together:
-
-```bash
-kubectl apply -f samples/sqlserver-availability-group.yaml
-```
-
-> **Note:** This is convenient for testing but not recommended for production since credentials are visible in the manifest.
-
-#### Option B: Production (Pre-Create Secrets)
-
-For production deployments:
-
-1. **Pre-create secrets** using `kubectl`, external-secrets operator, HashiCorp Vault, or your organization's secret management solution
-2. **Modify the sample manifests** to remove or comment out the `SECRETS SECTION`
-3. **Ensure** `healthCheckCredentials.secretRef` points to your pre-created secret names
-
-If you use Option B, skip to [Create Kubernetes Secret](#create-kubernetes-secret) below, then proceed to Step 3.
-
-### Why Not Use SA?
-
-The AG Helper only needs to:
-- Read AG state from DMVs (`VIEW SERVER STATE`)
-- Perform failover operations (`ALTER ANY AVAILABILITY GROUP`)
-
-Using SA grants unrestricted access, violating the principle of least privilege. A compromised AG Helper with SA credentials could drop databases, create logins, etc.
-
-### Create AG Helper Login on ALL Replicas
-
-Run this T-SQL on **each** replica (pod 0, 1, and 2):
-
-```bash
-# Connect to pod 0
-kubectl exec -it sql-ag-prod01-0 -n mssql -- \
-  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'YourStrong@Passw0rd!' -C
-```
-
-```sql
--- Create the AG Helper login
-CREATE LOGIN ag_helper WITH PASSWORD = 'AGHelper@Passw0rd!';
-GO
-
--- Grant required permissions
-GRANT VIEW SERVER STATE TO ag_helper;
-GRANT ALTER ANY AVAILABILITY GROUP TO ag_helper;
-GO
-```
-
-Repeat for pods 1 and 2:
-```bash
-kubectl exec -it sql-ag-prod01-1 -n mssql -- \
-  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'YourStrong@Passw0rd!' -C -Q "
-    CREATE LOGIN ag_helper WITH PASSWORD = 'AGHelper@Passw0rd!';
-    GRANT VIEW SERVER STATE TO ag_helper;
-    GRANT ALTER ANY AVAILABILITY GROUP TO ag_helper;
-  "
-
-kubectl exec -it sql-ag-prod01-2 -n mssql -- \
-  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'YourStrong@Passw0rd!' -C -Q "
-    CREATE LOGIN ag_helper WITH PASSWORD = 'AGHelper@Passw0rd!';
-    GRANT VIEW SERVER STATE TO ag_helper;
-    GRANT ALTER ANY AVAILABILITY GROUP TO ag_helper;
-  "
-```
-
-### Create Kubernetes Secret
-
-```bash
-kubectl create secret generic sql-ag-prod-aghelper \
-  --namespace mssql \
-  --from-literal=username=ag_helper \
-  --from-literal=password='AGHelper@Passw0rd!'
-```
-
-### Update SQLServerAG Manifest
-
-Add `healthCheckCredentials` to your SQLServerAG manifest:
-
-```yaml
-spec:
-  availabilityGroup:
-    name: ProductionAG
-    # ... other fields ...
-    healthCheckCredentials:
-      secretRef:
-        usernameSecret:
-          name: sql-ag-prod-aghelper
-          key: username
-        passwordSecret:
-          name: sql-ag-prod-aghelper
-          key: password
-```
-
-See [samples/ag-helper-credentials-secret.yaml](../../samples/ag-helper-credentials-secret.yaml) for a complete example.
-
-## Step 3: Create AG via T-SQL
-
-The operator creates the infrastructure, but the AG must be configured via T-SQL.
-
-### Connect to Primary
-
-```bash
-kubectl exec -it sql-ag-prod01-0 -n mssql -- \
-  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'YourStrong@Passw0rd!' -C
-```
-
-### Create Master Key and Certificate
-
-Run on ALL replicas (0, 1, 2):
-
-```sql
--- Create master key
-CREATE MASTER KEY ENCRYPTION BY PASSWORD = 'MasterKeyP@ssw0rd!';
-GO
-
--- Create certificate
-CREATE CERTIFICATE AG_Cert
-    WITH SUBJECT = 'AG Authentication Certificate',
-    EXPIRY_DATE = '2030-12-31';
-GO
-
--- Create endpoint
-CREATE ENDPOINT AG_Endpoint
-    STATE = STARTED
-    AS TCP (LISTENER_PORT = 5022)
-    FOR DATABASE_MIRRORING (
-        ROLE = ALL,
-        AUTHENTICATION = CERTIFICATE AG_Cert,
-        ENCRYPTION = REQUIRED ALGORITHM AES
-    );
-GO
-```
-
-### Create Database on Primary
-
-Run on PRIMARY (pod 0):
-
-```sql
--- Create database
-CREATE DATABASE AppDB;
-GO
-
-ALTER DATABASE AppDB SET RECOVERY FULL;
-GO
-
--- Take backup (required for AG)
-BACKUP DATABASE AppDB TO DISK = '/var/opt/mssql/backup/AppDB.bak';
-GO
-```
-
-### Create Availability Group
-
-Run on PRIMARY (pod 0):
-
-```sql
-CREATE AVAILABILITY GROUP ProductionAG
-    WITH (
-        CLUSTER_TYPE = EXTERNAL,
-        DB_FAILOVER = ON,
-        REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = 1
-    )
-    FOR DATABASE AppDB
-    REPLICA ON
-        N'sql-ag-prod01-0' WITH (
-            ENDPOINT_URL = N'TCP://sql-ag-prod01-0.sql-ag-prod01-pods.mssql.svc.cluster.local:5022',
-            AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
-            FAILOVER_MODE = EXTERNAL,
-            SEEDING_MODE = AUTOMATIC,
-            SECONDARY_ROLE (ALLOW_CONNECTIONS = READ_ONLY)
-        ),
-        N'sql-ag-prod01-1' WITH (
-            ENDPOINT_URL = N'TCP://sql-ag-prod01-1.sql-ag-prod01-pods.mssql.svc.cluster.local:5022',
-            AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
-            FAILOVER_MODE = EXTERNAL,
-            SEEDING_MODE = AUTOMATIC,
-            SECONDARY_ROLE (ALLOW_CONNECTIONS = READ_ONLY)
-        ),
-        N'sql-ag-prod01-2' WITH (
-            ENDPOINT_URL = N'TCP://sql-ag-prod01-2.sql-ag-prod01-pods.mssql.svc.cluster.local:5022',
-            AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
-            FAILOVER_MODE = EXTERNAL,
-            SEEDING_MODE = AUTOMATIC,
-            SECONDARY_ROLE (ALLOW_CONNECTIONS = READ_ONLY)
-        );
-GO
-```
-
-## Step 4: Join Secondary Replicas
-
-Run on EACH secondary (pods 1 and 2):
-
-```bash
-# Pod 1
-kubectl exec -it sql-ag-prod01-1 -n mssql -- \
-  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'YourStrong@Passw0rd!' -C \
-  -Q "ALTER AVAILABILITY GROUP ProductionAG JOIN WITH (CLUSTER_TYPE = EXTERNAL); ALTER AVAILABILITY GROUP ProductionAG GRANT CREATE ANY DATABASE;"
-
-# Pod 2
-kubectl exec -it sql-ag-prod01-2 -n mssql -- \
-  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'YourStrong@Passw0rd!' -C \
-  -Q "ALTER AVAILABILITY GROUP ProductionAG JOIN WITH (CLUSTER_TYPE = EXTERNAL); ALTER AVAILABILITY GROUP ProductionAG GRANT CREATE ANY DATABASE;"
-```
-
-## Step 5: Verify AG Status
-
-### Check AG Helper
-
-```bash
-kubectl exec -it sql-ag-prod01-0 -n mssql -c ag-helper -- \
-  curl -s localhost:8080/state | jq
+kubectl logs sql-ag-0 -n mssql -c ag-helper | tail -5
 
 # Expected output:
+# [INFO] No Availability Groups found, waiting for AG configuration...
+```
+
+## Step 2: Configure AG via T-SQL
+
+The complete T-SQL setup is documented in [samples/ag-step2-setup-ag.md](../../samples/ag-step2-setup-ag.md).
+
+### Quick Summary
+
+| Step | Description | Run On |
+|------|-------------|--------|
+| 2.1 | Create AG Helper login | ALL replicas |
+| 2.2 | Create master key and certificates | ALL replicas |
+| 2.3 | Exchange certificates between replicas | kubectl + T-SQL |
+| 2.4 | Create database mirroring endpoints | ALL replicas |
+| 2.5 | Create databases | Primary only |
+| 2.6 | Create Availability Group | Primary only |
+| 2.7 | Join secondary replicas | Secondaries only |
+| 2.8 | Verify AG status | Any replica |
+
+### Step 2.1: Create AG Helper Login
+
+Run on **ALL replicas**:
+
+```bash
+for i in 0 1 2; do
+  kubectl exec -it sql-ag-$i -n mssql -c mssql -- \
+    /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa \
+    -P 'YourStrong@Passw0rd!' -C -Q "
+      CREATE LOGIN ag_helper WITH PASSWORD = 'AGHelper@Passw0rd!';
+      GRANT VIEW SERVER STATE TO ag_helper;
+      GRANT ALTER ANY AVAILABILITY GROUP TO ag_helper;
+    "
+done
+```
+
+### Step 2.2-2.4: Certificates and Endpoints
+
+See [samples/ag-step2-setup-ag.md](../../samples/ag-step2-setup-ag.md) for complete certificate exchange steps including `kubectl cp` commands.
+
+### Step 2.5: Create Database
+
+Run on **PRIMARY** (sql-ag-0):
+
+```bash
+kubectl exec -it sql-ag-0 -n mssql -c mssql -- \
+  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa \
+  -P 'YourStrong@Passw0rd!' -C -Q "
+    CREATE DATABASE ApplicationDB;
+    ALTER DATABASE ApplicationDB SET RECOVERY FULL;
+    BACKUP DATABASE ApplicationDB 
+      TO DISK = '/var/opt/mssql/backup/ApplicationDB_init.bak' WITH INIT;
+  "
+```
+
+### Step 2.6: Create Availability Group
+
+Run on **PRIMARY** (sql-ag-0):
+
+```bash
+kubectl exec -it sql-ag-0 -n mssql -c mssql -- \
+  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa \
+  -P 'YourStrong@Passw0rd!' -C -Q "
+    CREATE AVAILABILITY GROUP ProductionAG
+      WITH (CLUSTER_TYPE = EXTERNAL, DB_FAILOVER = ON,
+            REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = 1)
+      FOR DATABASE ApplicationDB
+      REPLICA ON
+        N'sql-ag-0' WITH (
+          ENDPOINT_URL = N'TCP://sql-ag-0.sql-ag-headless.mssql.svc.cluster.local:5022',
+          AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
+          FAILOVER_MODE = EXTERNAL,
+          SEEDING_MODE = AUTOMATIC,
+          SECONDARY_ROLE (ALLOW_CONNECTIONS = READ_ONLY)),
+        N'sql-ag-1' WITH (
+          ENDPOINT_URL = N'TCP://sql-ag-1.sql-ag-headless.mssql.svc.cluster.local:5022',
+          AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
+          FAILOVER_MODE = EXTERNAL,
+          SEEDING_MODE = AUTOMATIC,
+          SECONDARY_ROLE (ALLOW_CONNECTIONS = READ_ONLY)),
+        N'sql-ag-2' WITH (
+          ENDPOINT_URL = N'TCP://sql-ag-2.sql-ag-headless.mssql.svc.cluster.local:5022',
+          AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
+          FAILOVER_MODE = EXTERNAL,
+          SEEDING_MODE = AUTOMATIC,
+          SECONDARY_ROLE (ALLOW_CONNECTIONS = READ_ONLY));
+  "
+```
+
+### Step 2.7: Join Secondaries
+
+Run on **SECONDARIES** (sql-ag-1, sql-ag-2):
+
+```bash
+for i in 1 2; do
+  kubectl exec -it sql-ag-$i -n mssql -c mssql -- \
+    /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa \
+    -P 'YourStrong@Passw0rd!' -C -Q "
+      ALTER AVAILABILITY GROUP ProductionAG JOIN WITH (CLUSTER_TYPE = EXTERNAL);
+      ALTER AVAILABILITY GROUP ProductionAG GRANT CREATE ANY DATABASE;
+    "
+done
+```
+
+## Step 3: Verify AG Helper Detection
+
+After T-SQL setup, AG Helper automatically detects the new AG.
+
+### Check AG Helper Logs
+
+```bash
+kubectl logs sql-ag-0 -n mssql -c ag-helper | tail -10
+
+# Expected output:
+# [INFO] Discovered 1 Availability Group(s): [ProductionAG]
+# [INFO] AG 'ProductionAG' State: role=PRIMARY, sync=SYNCHRONIZED, health=Healthy
+```
+
+### Check AG State via API
+
+```bash
+kubectl exec -it sql-ag-0 -n mssql -c ag-helper -- \
+  curl -s localhost:8080/state | jq
+
+# Expected:
 # {
 #   "agName": "ProductionAG",
 #   "role": "PRIMARY",
@@ -473,53 +302,135 @@ kubectl exec -it sql-ag-prod01-0 -n mssql -c ag-helper -- \
 # }
 ```
 
-### Check Replica States
+### Verify Replica States
 
 ```bash
-kubectl exec -it sql-ag-prod01-0 -n mssql -- \
-  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'YourStrong@Passw0rd!' -C \
-  -Q "SELECT replica_server_name, role_desc, synchronization_health_desc FROM sys.dm_hadr_availability_replica_states"
+kubectl exec -it sql-ag-0 -n mssql -c mssql -- \
+  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa \
+  -P 'YourStrong@Passw0rd!' -C -Q "
+    SELECT replica_server_name, role_desc, synchronization_health_desc 
+    FROM sys.dm_hadr_availability_replica_states
+  "
 ```
 
-### Check Database Sync
+**Expected:** All replicas show `HEALTHY`, primary shows `PRIMARY`, others show `SECONDARY`.
+
+## Step 4: Enable Kubernetes AG Management (Optional)
+
+If you need **LoadBalancer services** or **controller-managed failover**, apply a SQLServerAG resource.
+
+### When to Apply Step 4
+
+| Need | Auto-Discovery | SQLServerAG CR |
+|------|----------------|----------------|
+| Health monitoring | ✅ Built-in | ✅ |
+| Primary/Secondary Services | ❌ | ✅ |
+| Controller-managed failover | ❌ | ✅ |
+| kubectl get sqlserverag | ❌ | ✅ |
+
+### Apply AG Configuration
 
 ```bash
-kubectl exec -it sql-ag-prod01-0 -n mssql -- \
-  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'YourStrong@Passw0rd!' -C \
-  -Q "SELECT d.name, drs.synchronization_state_desc FROM sys.dm_hadr_database_replica_states drs JOIN sys.databases d ON drs.database_id = d.database_id"
+kubectl apply -f samples/ag-step3-ag-config.yaml
 ```
 
-### Check Pod Readiness
+Or create manually:
+
+```yaml
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServerAG
+metadata:
+  name: production-ag
+  namespace: mssql
+spec:
+  sqlServerRef:
+    name: sql-ag
+  availabilityGroup:
+    name: ProductionAG  # Must match T-SQL AG name
+    replicas: 3
+    primaryConfig:
+      availabilityMode: SynchronousCommit
+      failoverMode: External
+    secondaryConfig:
+      availabilityMode: SynchronousCommit
+      failoverMode: External
+    automaticFailover: true
+    healthCheckCredentials:
+      secretRef:
+        usernameSecret:
+          name: sql-ag-helper
+          key: username
+        passwordSecret:
+          name: sql-ag-helper
+          key: password
+  endpoints:
+    primary:
+      type: LoadBalancer
+      port: 1433
+    secondary:
+      type: LoadBalancer
+      port: 1434
+  failover:
+    automatic: true
+    healthCheckTimeout: "30s"
+```
+
+### Verify Services Created
 
 ```bash
+kubectl get svc -n mssql
+
+# NAME                      TYPE           CLUSTER-IP     EXTERNAL-IP   PORT(S)
+# production-ag-primary     LoadBalancer   10.0.100.10    <pending>     1433/TCP
+# production-ag-secondary   LoadBalancer   10.0.100.11    <pending>     1434/TCP
+```
+
+### Connect via Primary Service
+
+```bash
+# For minikube
+minikube tunnel
+
+# Get external IP
+kubectl get svc production-ag-primary -n mssql
+
+# Connect
+sqlcmd -S <EXTERNAL_IP>,1433 -U sa -P 'YourStrong@Passw0rd!'
+```
+
+## Quick Reference
+
+### Sample Files
+
+| File | Purpose |
+|------|---------|
+| [ag-step1-replicas.yaml](../../samples/ag-step1-replicas.yaml) | Step 1: SQL replicas + AG Helper |
+| [ag-step2-setup-ag.md](../../samples/ag-step2-setup-ag.md) | Step 2: T-SQL setup guide |
+| [ag-step3-ag-config.yaml](../../samples/ag-step3-ag-config.yaml) | Step 4: K8s AG management |
+| [ag-step3-multi-ag.yaml](../../samples/ag-step3-multi-ag.yaml) | Advanced: Multiple AGs |
+
+### Common Commands
+
+```bash
+# Check pod status
 kubectl get pods -n mssql
 
-# All pods should show 2/2 Ready
-# NAME               READY   STATUS    RESTARTS   AGE
-# sql-ag-prod01-0    2/2     Running   0          15m
-# sql-ag-prod01-1    2/2     Running   0          14m
-# sql-ag-prod01-2    2/2     Running   0          13m
+# Check AG Helper logs
+kubectl logs sql-ag-0 -n mssql -c ag-helper
+
+# Check AG state
+kubectl exec -it sql-ag-0 -n mssql -c ag-helper -- curl -s localhost:8080/state | jq
+
+# Check SQLServerAG resources
+kubectl get sqlserverag -n mssql
+
+# Check services
+kubectl get svc -n mssql
 ```
-
-### Test Primary Service
-
-```bash
-# Port forward primary service
-kubectl port-forward svc/prod-ag-01-primary -n mssql 1433:1433
-
-# Connect with sqlcmd or SSMS
-sqlcmd -S localhost,1433 -U sa -P 'YourStrong@Passw0rd!' -Q "SELECT @@SERVERNAME"
-```
-
-## Complete Example
-
-Full sample files are available at:
-- [samples/sqlserver-availability-group.yaml](../../samples/sqlserver-availability-group.yaml)
-- [samples/scripts/setup-availability-group.sql](../../samples/scripts/setup-availability-group.sql)
-- [samples/scripts/join-secondary.sql](../../samples/scripts/join-secondary.sql)
 
 ## Next Steps
 
 - [Failover Management](failover-management.md) - Configure automatic failover
-- [Multi-AG Scenarios](multi-ag-scenarios.md) - Multiple AGs
+- [Multi-AG Scenarios](multi-ag-scenarios.md) - Multiple AGs on same replicas
+- [AG Helper Reference](ag-helper-reference.md) - Detailed sidecar documentation
 - [Troubleshooting](../user-guide/troubleshooting.md) - Common issues

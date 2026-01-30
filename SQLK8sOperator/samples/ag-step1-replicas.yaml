@@ -1,0 +1,165 @@
+# ============================================================================
+# STEP 1: Deploy SQL Server Replicas for Availability Group
+# ============================================================================
+#
+# This manifest deploys SQL Server replicas with AG Helper in AUTO-DISCOVERY mode.
+# AG Helper will automatically detect and monitor any AGs you create via T-SQL.
+#
+# DEPLOYMENT ORDER:
+#   1. Apply this file (creates SQL replicas + AG Helper in discovery mode)
+#   2. Wait for all pods to be Running and Ready
+#   3. Execute T-SQL steps from ag-step2-setup-ag.md
+#   4. (Optional) Apply ag-step3-ag-config.yaml for K8s services and controller failover
+#
+# WHAT THIS CREATES:
+#   - SQLServer CR with 3 replicas (hadrEnabled=true)
+#   - SA password secret
+#   - AG Helper credentials secret
+#   - AG Helper starts in "waiting" mode until you create AGs via T-SQL
+#
+# NEXT STEP: After pods are Running, follow ag-step2-setup-ag.md
+# ============================================================================
+
+---
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mssql
+
+---
+# SA password secret
+# SECURITY: Change this password in production!
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sql-ag-sa
+  namespace: mssql
+  labels:
+    app.kubernetes.io/component: mssql
+type: Opaque
+stringData:
+  password: "YourStrong@Passw0rd!"  # CHANGE THIS!
+
+---
+# AG Helper credentials secret
+# This login will be created in SQL Server during Step 2 (T-SQL setup)
+# Required permissions: VIEW SERVER STATE, ALTER ANY AVAILABILITY GROUP
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sql-ag-helper
+  namespace: mssql
+  labels:
+    app.kubernetes.io/component: ag-helper
+type: Opaque
+stringData:
+  username: "ag_helper"
+  password: "AGHelper@Passw0rd!"  # CHANGE THIS! Must match T-SQL in Step 2
+
+---
+# SQL Server with 3 replicas for AG
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServer
+metadata:
+  name: sql-ag
+  namespace: mssql
+spec:
+  description: "SQL Server AG cluster - Step 1: Replicas only"
+  
+  version: "2025"
+  edition: Developer  # Use Enterprise for production
+  
+  instance:
+    # 3 replicas for the AG
+    replicas: 3
+    
+    resources:
+      limits:
+        cpu: "4"
+        memory: 8Gi
+      requests:
+        cpu: "2"
+        memory: 4Gi
+    
+    storage:
+      data:
+        size: 50Gi
+        # storageClass: managed-premium  # Uncomment for Azure
+      log:
+        size: 20Gi
+      backup:
+        size: 50Gi
+    
+    config:
+      hadrEnabled: true   # Required for AG
+      agentEnabled: true
+      collation: SQL_Latin1_General_CP1_CI_AS
+    
+    # Distribute pods across nodes for HA
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: mssql
+                  mssql.microsoft.com/instance: sql-ag
+              topologyKey: kubernetes.io/hostname
+  
+  credentials:
+    saPasswordSecretRef:
+      name: sql-ag-sa
+      key: password
+  
+  service:
+    type: LoadBalancer
+    port: 1433
+  
+  # AG Helper sidecar configuration
+  # Running in AUTO-DISCOVERY mode (no specific AG name)
+  # Will automatically detect and monitor all AGs created via T-SQL
+  agHelper:
+    enabled: true
+    image: mssql-ag-helper:latest
+    monitorInterval: "10s"
+    connectionTimeout: "30s"
+    # Note: AG_NAME is NOT set, enabling auto-discovery mode
+    # AG Helper will log "No Availability Groups found, waiting..." until T-SQL creates AGs
+    credentials:
+      secretRef:
+        usernameSecret:
+          name: sql-ag-helper
+          key: username
+        passwordSecret:
+          name: sql-ag-helper
+          key: password
+
+# ============================================================================
+# NEXT STEPS
+# ============================================================================
+#
+# 1. Apply this manifest:
+#    kubectl apply -f ag-step1-replicas.yaml
+#
+# 2. Wait for all pods to be Running:
+#    kubectl get pods -n mssql -w
+#    # Wait until all 3 pods show 2/2 Ready
+#
+# 3. Check AG Helper logs (should show "waiting for AG"):
+#    kubectl logs sql-ag-0 -n mssql -c ag-helper
+#    # Expected: "No Availability Groups found, waiting for AG configuration..."
+#
+# 4. Follow T-SQL steps in ag-step2-setup-ag.md to create the AG
+#
+# 5. After T-SQL setup, AG Helper will automatically detect the AG:
+#    kubectl logs sql-ag-0 -n mssql -c ag-helper
+#    # Expected: "Discovered 1 Availability Group(s): [YourAGName]"
+#
+# 6. (Optional) Apply ag-step3-ag-config.yaml for:
+#    - Primary/Secondary Kubernetes Services (LoadBalancer routing)
+#    - Controller-managed automatic failover
+#    - Explicit AG configuration in Kubernetes
+#
+# ============================================================================

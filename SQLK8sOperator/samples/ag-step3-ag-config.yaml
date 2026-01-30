@@ -1,0 +1,171 @@
+# ============================================================================
+# STEP 3: SQLServerAG Configuration (Optional)
+# ============================================================================
+#
+# This manifest creates a SQLServerAG resource for Kubernetes-level AG management.
+# Apply this AFTER completing T-SQL setup in ag-step2-setup-ag.md.
+#
+# PREREQUISITES:
+#   - ag-step1-replicas.yaml applied
+#   - T-SQL steps from ag-step2-setup-ag.md completed
+#   - AG Helper logs show "Discovered X Availability Group(s)"
+#
+# WHAT THIS ADDS:
+#   - Primary/Secondary Kubernetes Services (LoadBalancer for traffic routing)
+#   - Controller-managed automatic failover
+#   - Explicit AG configuration in Kubernetes
+#
+# WHEN TO USE THIS:
+#   ✅ You need LoadBalancer services to route traffic to primary/secondaries
+#   ✅ You want the operator to manage automatic failover
+#   ✅ You want AG configuration visible in Kubernetes (kubectl get sqlserverag)
+#
+# WHEN YOU CAN SKIP THIS:
+#   ⏭️  Auto-discovery monitoring is sufficient (AG Helper watches all AGs)
+#   ⏭️  You manage traffic routing externally (DNS, app-level routing)
+#   ⏭️  You handle failover manually or via other tooling
+#
+# ============================================================================
+
+---
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServerAG
+metadata:
+  name: production-ag
+  namespace: mssql
+spec:
+  description: "Production AG with K8s services and controller-managed failover"
+  
+  # Reference to the SQLServer resource created in Step 1
+  sqlServerRef:
+    name: sql-ag
+  
+  # Availability Group configuration
+  # NOTE: The AG itself was created via T-SQL in Step 2
+  # This references that existing AG for Kubernetes management
+  availabilityGroup:
+    # Must match the AG name created in T-SQL
+    name: ProductionAG
+    
+    # Number of replicas (informational, must match SQLServer.spec.instance.replicas)
+    replicas: 3
+    
+    # Primary replica configuration (reference, actual config is in T-SQL)
+    primaryConfig:
+      availabilityMode: SynchronousCommit
+      failoverMode: External
+      readableSecondary: ReadOnly
+      sessionTimeout: 10
+    
+    # Secondary replicas configuration
+    secondaryConfig:
+      availabilityMode: SynchronousCommit
+      failoverMode: External
+      readableSecondary: ReadOnly
+      sessionTimeout: 10
+    
+    # Seeding mode (reference only - actual mode set in T-SQL)
+    seedingMode: Automatic
+    
+    # Cluster type is always External for Kubernetes
+    clusterType: External
+    
+    # Endpoint port (must match T-SQL CREATE ENDPOINT port)
+    endpointPort: 5022
+    
+    # Enable database-level failover
+    dbFailover: true
+    
+    # Enable controller-driven automatic failover
+    # When true, controller detects primary failure and promotes best secondary
+    automaticFailover: true
+    
+    # Health check credentials (same as Step 1)
+    healthCheckCredentials:
+      secretRef:
+        usernameSecret:
+          name: sql-ag-helper
+          key: username
+        passwordSecret:
+          name: sql-ag-helper
+          key: password
+  
+  # Failover configuration
+  failover:
+    # Enable automatic failover via controller
+    automatic: true
+    
+    # Data loss threshold (0 = no data loss allowed)
+    dataLossThreshold: 0
+    
+    # Health check timeout before declaring primary lost
+    healthCheckTimeout: "30s"
+    
+    # Lease timeout for primary writes
+    leaseTimeout: "60s"
+    
+    # Required synchronized secondaries (-1 = auto-calculate based on replica count)
+    requiredSynchronizedSecondaries: -1
+  
+  # Kubernetes Service endpoints for the AG
+  # These services route traffic to current primary or secondaries
+  endpoints:
+    # Primary endpoint - always routes to current primary replica
+    primary:
+      type: LoadBalancer
+      port: 1433
+      annotations: {}
+      # For minikube: use 'minikube tunnel' to get external IP
+      # For cloud: LoadBalancer creates external IP automatically
+      #
+      # Alternatives:
+      # type: NodePort
+      # nodePort: 31433
+      #
+      # type: ClusterIP  # Internal only
+    
+    # Secondary endpoint - routes to readable secondaries only
+    secondary:
+      type: LoadBalancer
+      port: 1434
+      annotations: {}
+      # Route read-only traffic here for read scale-out
+      #
+      # Alternatives:
+      # type: NodePort
+      # nodePort: 31434
+  
+  # AG Helper sidecar configuration
+  sidecar:
+    image: mssql-ag-helper:latest
+    monitorInterval: "10s"
+    connectionTimeout: "30s"
+
+# ============================================================================
+# USAGE
+# ============================================================================
+#
+# 1. Apply this manifest:
+#    kubectl apply -f ag-step3-ag-config.yaml
+#
+# 2. Verify SQLServerAG resource:
+#    kubectl get sqlserverag -n mssql
+#
+# 3. Check services created:
+#    kubectl get svc -n mssql
+#    # Should see: production-ag-primary, production-ag-secondary
+#
+# 4. Connect to primary:
+#    # Get LoadBalancer IP
+#    kubectl get svc production-ag-primary -n mssql
+#    
+#    # Connect (primary always routes to current primary)
+#    sqlcmd -S <PRIMARY_IP>,1433 -U sa -P 'YourStrong@Passw0rd!'
+#
+# 5. Connect to secondary (read-only):
+#    kubectl get svc production-ag-secondary -n mssql
+#    
+#    # Read-only connection to secondaries
+#    sqlcmd -S <SECONDARY_IP>,1434 -U sa -P 'YourStrong@Passw0rd!'
+#
+# ============================================================================

@@ -104,6 +104,17 @@ nodes:
   - role: worker
 ```
 
+> **💡 Quick Setup with dev-setup.sh (Linux + minikube)**
+>
+> If you're on Linux and prefer minikube, the `scripts/dev-setup.sh` script can automate the entire setup process including prerequisites checking, cluster creation, building, and deployment:
+>
+> ```bash
+> # Full setup with one command
+> ./scripts/dev-setup.sh all
+> ```
+>
+> See [Building > Alternative: dev-setup.sh Script](building.md#alternative-dev-setupsh-script) for details.
+
 ### Load Development Images
 
 ```bash
