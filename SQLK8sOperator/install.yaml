@@ -2,7 +2,7 @@
 # SQL Server Kubernetes Operator - Combined Installation Manifest
 # =============================================================================
 # Version: v1.0.0
-# Generated: 2026-01-29T12:56:03Z
+# Generated: 2026-01-30T09:33:09Z
 #
 # This file contains all resources needed to install the SQL Server Kubernetes
 # Operator. It is auto-generated from the deploy/ directory.
@@ -36,6 +36,15 @@ metadata:
   name: mssql-system
   labels:
     app.kubernetes.io/name: mssql-operator
+    app.kubernetes.io/part-of: mssql-operator
+---
+# Namespace for SQL Server workloads (user instances)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mssql
+  labels:
+    app.kubernetes.io/name: mssql
     app.kubernetes.io/part-of: mssql-operator
 
 # -----------------------------------------------------------------------------

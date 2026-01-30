@@ -7,6 +7,9 @@ Guide for end users to install the SQL Server Kubernetes Operator.
 ## Table of Contents
 
 - [Where to Get the Operator](#where-to-get-the-operator)
+  - [Option A: Use a Published Release](#option-a-use-a-published-release-recommended-for-production)
+  - [Option B: Build and Publish Your Own](#option-b-build-and-publish-your-own-recommended-for-production)
+  - [Option C: Direct Download (Dev/Test)](#option-c-direct-download-from-github-devtest-only)
 - [Prerequisites](#prerequisites)
 - [Installation Methods](#installation-methods)
 - [Post-Installation](#post-installation)
@@ -23,8 +26,9 @@ Before installing, you need to know where the operator artifacts are published. 
 | Container Images | `ghcr.io/yourorg/mssql-operator` | Operator container image |
 | Installation YAML | GitHub Releases | Single-file Kubernetes manifest |
 | Helm Chart | Helm Repository | Packaged Helm chart |
+| Direct Download | GitHub Raw URL | Direct YAML download (dev/test only) |
 
-### Option A: Use a Published Release (Recommended)
+### Option A: Use a Published Release (Recommended for Production)
 
 If your organization has already built and published the operator, obtain these URLs from your platform team:
 
@@ -34,13 +38,33 @@ If your organization has already built and published the operator, obtain these 
 
 Replace `yourorg` with your actual GitHub organization name throughout this guide.
 
-### Option B: Build and Publish Your Own
+### Option B: Build and Publish Your Own (Recommended for Production)
 
 If you need to build and publish the operator yourself, follow these steps:
 
 #### Step 1: Clone the Repository
 
+**Option B1: Clone this reference implementation:**
+
 ```bash
+# Clone the reference implementation from this repository
+git clone https://github.com/tejasaks/PublicDemos.git
+cd PublicDemos/SQLK8sOperator
+```
+
+**Expected output:**
+```
+Cloning into 'PublicDemos'...
+remote: Enumerating objects: 500, done.
+remote: Counting objects: 100% (500/500), done.
+remote: Compressing objects: 100% (350/350), done.
+Receiving objects: 100% (500/500), 2.5 MiB | 10.00 MiB/s, done.
+```
+
+**Option B2: Clone your organization's fork:**
+
+```bash
+# Clone your organization's repository (replace yourorg with your org name)
 git clone https://github.com/yourorg/mssql-operator.git
 cd mssql-operator
 ```
@@ -110,6 +134,111 @@ For Helm-based installations, see [Helm Chart Packaging](helm-chart.md).
 > **For complete build and release instructions**, see:
 > - [Building Guide](../development/building.md) - Building from source
 > - [Packaging Guide](packaging.md) - Creating release artifacts
+
+### Option C: Direct Download from GitHub (Dev/Test Only)
+
+> ⚠️ **Warning:** This option is **NOT recommended for production environments**. It is suitable for:
+> - Quick evaluation and proof-of-concept
+> - Development and testing environments
+> - Learning and experimentation
+>
+> For production, use Option A (published releases) or Option B (build your own) to ensure you have control over the container images and manifests.
+
+For quick dev/test scenarios, you can download and apply the operator directly from this repository:
+
+#### Using kubectl (Recommended for Dev/Test)
+
+```bash
+# Apply directly from the raw GitHub URL
+kubectl apply -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/install.yaml
+```
+
+**Expected output:**
+```
+namespace/mssql-system created
+namespace/mssql created
+serviceaccount/mssql-operator created
+clusterrole.rbac.authorization.k8s.io/mssql-operator-role created
+clusterrolebinding.rbac.authorization.k8s.io/mssql-operator-rolebinding created
+customresourcedefinition.apiextensions.k8s.io/sqlservers.mssql.microsoft.com created
+customresourcedefinition.apiextensions.k8s.io/sqlserverags.mssql.microsoft.com created
+deployment.apps/mssql-operator created
+```
+
+#### Using wget (Linux/macOS)
+
+```bash
+# Download the install.yaml first
+wget https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/install.yaml
+
+# Review the contents (recommended)
+less install.yaml
+
+# Apply to your cluster
+kubectl apply -f install.yaml
+```
+
+**Expected output (wget):**
+```
+--2026-01-29 10:00:00--  https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/install.yaml
+Resolving raw.githubusercontent.com... 185.199.108.133
+Connecting to raw.githubusercontent.com... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 195680 (191K) [text/plain]
+Saving to: 'install.yaml'
+
+install.yaml              100%[=====================================>] 191.09K  --.-KB/s    in 0.02s
+
+2026-01-29 10:00:00 (9.5 MB/s) - 'install.yaml' saved [195680/195680]
+```
+
+#### Using curl (Linux/macOS)
+
+```bash
+# Download with curl
+curl -LO https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/install.yaml
+
+# Apply to your cluster
+kubectl apply -f install.yaml
+```
+
+#### Using PowerShell (Windows)
+
+```powershell
+# Download the install.yaml
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/install.yaml" -OutFile "install.yaml"
+
+# Review the contents (recommended)
+Get-Content install.yaml | Select-Object -First 50
+
+# Apply to your cluster
+kubectl apply -f install.yaml
+```
+
+**Expected output (PowerShell download):**
+```
+StatusCode        : 200
+StatusDescription : OK
+Content           : # =============================================================================
+                    # SQL Server Kubernetes Operator - Combined Installation Manifest
+                    ...
+```
+
+#### Why Not for Production?
+
+| Concern | Explanation |
+|---------|-------------|
+| **No version control** | The `main` branch may change without notice |
+| **Unknown container images** | References pre-built images you don't control |
+| **No security review** | You should review and approve manifests before production |
+| **Network dependency** | Requires GitHub access during installation |
+| **No rollback path** | No versioned releases to roll back to |
+
+**For production**, always:
+1. Fork the repository to your organization
+2. Build and push container images to your own registry
+3. Create versioned releases with signed artifacts
+4. Use a private Helm repository or artifact store
 
 ## Prerequisites
 

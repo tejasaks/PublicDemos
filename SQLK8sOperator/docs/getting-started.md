@@ -38,7 +38,32 @@ SQL Server requires significant resources:
 
 ## Step 1: Install the Operator
 
-Install the Custom Resource Definitions (CRDs) and the operator components:
+Install the Custom Resource Definitions (CRDs) and the operator components.
+
+### Quick Test Option (Dev/Test Only)
+
+For quick evaluation or development testing, you can install directly from this repository:
+
+```bash
+# Install the operator with a single command
+kubectl apply -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/install.yaml
+```
+
+**Expected output:**
+```
+namespace/mssql-system created
+namespace/mssql created
+serviceaccount/mssql-operator created
+clusterrole.rbac.authorization.k8s.io/mssql-operator-role created
+clusterrolebinding.rbac.authorization.k8s.io/mssql-operator-rolebinding created
+customresourcedefinition.apiextensions.k8s.io/sqlservers.mssql.microsoft.com created
+customresourcedefinition.apiextensions.k8s.io/sqlserverags.mssql.microsoft.com created
+deployment.apps/mssql-operator created
+```
+
+> ⚠️ **Note:** This direct installation method is suitable for development and testing only. For production environments, see the [End-User Installation Guide](distribution/end-user-installation.md) which covers building your own images, versioned releases, and Helm-based installations.
+
+### Standard Installation (From Repository)
 
 ```bash
 # Clone the repository (if you haven't already)
@@ -59,7 +84,7 @@ kubectl apply -f deploy/rbac.yaml
 kubectl apply -f deploy/deployment.yaml
 ```
 
-Verify the operator is running:
+### Verify the Operator is Running
 
 ```bash
 kubectl get pods -n mssql-operator-system
@@ -99,6 +124,29 @@ kubectl create secret generic mssql-sa-password \
 ## Step 3: Create a SQL Server Manifest
 
 Create a YAML manifest file that describes your desired SQL Server configuration.
+
+### Sample Manifests
+
+This project includes ready-to-use sample manifests in the [samples/](../samples/) directory that you can review and use as starting points:
+
+| Sample File | Description |
+|-------------|-------------|
+| [sqlserver-2025-standalone.yaml](../samples/sqlserver-2025-standalone.yaml) | Basic SQL Server 2025 standalone instance (recommended starting point) |
+| [sqlserver-2022-standalone.yaml](../samples/sqlserver-2022-standalone.yaml) | SQL Server 2022 standalone instance |
+| [sqlserver-availability-group.yaml](../samples/sqlserver-availability-group.yaml) | 3-replica Availability Group with services |
+| [sqlserver-with-ad.yaml](../samples/sqlserver-with-ad.yaml) | Active Directory authentication configuration |
+
+You can apply a sample directly:
+
+```bash
+# Create the password secret first (see Step 2)
+kubectl create secret generic mssql-sa-password --from-literal=password='YourStrong@Passw0rd!' -n mssql
+
+# Apply a sample manifest
+kubectl apply -f samples/sqlserver-2025-standalone.yaml
+```
+
+Or create your own custom manifest using the options below.
 
 ### Option A: Using `cat` (Linux/macOS/WSL)
 
@@ -296,9 +344,10 @@ Now that you have SQL Server running, explore:
 | **Production Config** | [Deployment Scenarios](user-guide/deployment-scenarios.md) |
 | **All Options** | [Configuration Reference](user-guide/configuration-reference.md) |
 | **Security** | [Validation & Security](user-guide/validation-security.md) |
+| **Installation Options** | [End-User Installation](distribution/end-user-installation.md) |
 
-### Quick Links
+### Additional Resources
 
-- [Sample Manifests](../samples/) - Ready-to-use configurations
-- [Architecture Overview](architecture/overview.md) - How it works
-- [Troubleshooting](user-guide/troubleshooting.md) - Common issues
+- [Sample Manifests](../samples/) - More ready-to-use configurations
+- [Architecture Overview](architecture/overview.md) - How the operator works
+- [Troubleshooting](user-guide/troubleshooting.md) - Common issues and solutions

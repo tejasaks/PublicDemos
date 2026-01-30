@@ -6,3 +6,12 @@ metadata:
   labels:
     app.kubernetes.io/name: mssql-operator
     app.kubernetes.io/part-of: mssql-operator
+---
+# Namespace for SQL Server workloads (user instances)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mssql
+  labels:
+    app.kubernetes.io/name: mssql
+    app.kubernetes.io/part-of: mssql-operator
