@@ -264,6 +264,7 @@ kubectl patch sqlserverag prod-ag-01 -n mssql --type merge \
 
 ## Next Steps
 
+- [AG Operations Guide](../operations/ag-operations.md) - Quick reference kubectl commands
 - [Multi-AG Scenarios](multi-ag-scenarios.md) - Multiple AGs
 - [AG Helper Reference](ag-helper-reference.md) - Complete API
 - [Troubleshooting](../user-guide/troubleshooting.md) - Failover issues

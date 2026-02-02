@@ -110,19 +110,7 @@ func (v *SQLServerAGValidator) validate(ctx context.Context, ag *mssqlv1alpha1.S
 		result.Merge(portResult)
 	}
 
-	// 6. Validate service endpoints
-	if ag.Spec.Endpoints != nil {
-		if ag.Spec.Endpoints.Primary != nil && ag.Spec.Endpoints.Primary.Port > 0 {
-			portResult := validation.ValidatePort(ag.Spec.Endpoints.Primary.Port, "Primary endpoint")
-			result.Merge(portResult)
-		}
-		if ag.Spec.Endpoints.Secondary != nil && ag.Spec.Endpoints.Secondary.Port > 0 {
-			portResult := validation.ValidatePort(ag.Spec.Endpoints.Secondary.Port, "Secondary endpoint")
-			result.Merge(portResult)
-		}
-	}
-
-	// 7. Validate SQLServer reference
+	// 6. Validate SQLServer reference
 	if ag.Spec.SQLServerRef.Name == "" {
 		result.AddError("sqlServerRef.name is required")
 	} else {
@@ -130,29 +118,21 @@ func (v *SQLServerAGValidator) validate(ctx context.Context, ag *mssqlv1alpha1.S
 		result.Merge(refResult)
 	}
 
-	// 8. Validate sidecar image if specified
+	// 7. Validate sidecar image if specified
 	if ag.Spec.Sidecar != nil && ag.Spec.Sidecar.Image != "" {
 		imageResult := validation.ValidateImageReference(ag.Spec.Sidecar.Image)
 		result.Merge(imageResult)
 	}
 
-	// 9. Validate labels and annotations in endpoints
-	if ag.Spec.Endpoints != nil {
-		if ag.Spec.Endpoints.Primary != nil {
-			for k, val := range ag.Spec.Endpoints.Primary.Annotations {
-				annotResult := validation.ValidateAnnotationValue(val, 0)
-				if !annotResult.Valid {
-					for _, err := range annotResult.Errors {
-						result.AddError("Primary endpoint annotation '%s': %s", k, err)
-					}
-				}
-			}
-		}
-	}
-
-	// 10. Validate HealthCheckCredentials
+	// 8. Validate HealthCheckCredentials
 	credResult := v.validateHealthCheckCredentials(ctx, ag)
 	result.Merge(credResult)
+
+	// 9. Validate Listener configuration if specified
+	if ag.Spec.Listener != nil {
+		listenerResult := v.validateListener(ctx, ag)
+		result.Merge(listenerResult)
+	}
 
 	return result
 }
@@ -293,6 +273,81 @@ func (v *SQLServerAGValidator) validateHealthCheckCredentials(ctx context.Contex
 				usernameResult := validation.ValidateSQLIdentifier(replicaCreds.Username, prefix+".username")
 				result.Merge(usernameResult)
 			}
+		}
+	}
+
+	return result
+}
+
+// validateListener validates the AG Listener configuration
+func (v *SQLServerAGValidator) validateListener(ctx context.Context, ag *mssqlv1alpha1.SQLServerAG) *validation.ValidationResult {
+	result := validation.NewValidationResult()
+
+	listener := ag.Spec.Listener
+
+	// Validate listener name (must be DNS-compatible for K8s Service)
+	if listener.Name == "" {
+		result.AddError("listener.name is required")
+	} else {
+		// K8s Service name validation: lowercase, alphanumeric and hyphens, max 63 chars
+		if len(listener.Name) > 63 {
+			result.AddError("listener.name exceeds maximum length of 63 characters (has %d)", len(listener.Name))
+		}
+
+		// Check for valid DNS subdomain format (lowercase, alphanumeric, hyphens)
+		nameResult := validation.ValidateKubernetesName(listener.Name, "listener.name")
+		result.Merge(nameResult)
+	}
+
+	// Validate listener port
+	if listener.Port != 0 {
+		portResult := validation.ValidatePort(listener.Port, "listener.port")
+		result.Merge(portResult)
+
+		// Warn if using well-known ports other than 1433
+		if listener.Port < 1024 && listener.Port != 1433 {
+			result.AddWarning("listener.port %d is a well-known port; consider using port >= 1024 for non-root containers", listener.Port)
+		}
+	}
+
+	// Validate service type
+	if listener.ServiceType != "" {
+		switch listener.ServiceType {
+		case "ClusterIP", "LoadBalancer", "NodePort":
+			// Valid types
+		default:
+			result.AddError("listener.serviceType must be one of: ClusterIP, LoadBalancer, NodePort (got %s)", listener.ServiceType)
+		}
+
+		// NodePort warning
+		if listener.ServiceType == "NodePort" {
+			result.AddWarning("listener.serviceType NodePort exposes the service on each node's IP; " +
+				"consider LoadBalancer or ClusterIP with Ingress for production")
+		}
+	}
+
+	// Validate clusterIP if specified (must be valid IP format)
+	if listener.ClusterIP != "" {
+		if listener.ClusterIP != "None" {
+			ipResult := validation.ValidateIPAddress(listener.ClusterIP, "listener.clusterIP")
+			result.Merge(ipResult)
+		}
+	}
+
+	// Validate loadBalancerIP if specified
+	if listener.LoadBalancerIP != "" {
+		if listener.ServiceType != "" && listener.ServiceType != "LoadBalancer" {
+			result.AddError("listener.loadBalancerIP can only be set when serviceType is LoadBalancer")
+		}
+		ipResult := validation.ValidateIPAddress(listener.LoadBalancerIP, "listener.loadBalancerIP")
+		result.Merge(ipResult)
+	}
+
+	// Validate annotations if specified
+	for key := range listener.Annotations {
+		// Check for reserved annotations
+		if strings.HasPrefix(key, "mssql.microsoft.com/") {
+			result.AddWarning("listener.annotations: %s uses reserved prefix 'mssql.microsoft.com/'", key)
 		}
 	}
 

@@ -11,6 +11,7 @@ SQL Server Availability Groups (AGs) provide high availability and disaster reco
 - [AG Helper Sidecar](#ag-helper-sidecar)
 - [Health States](#health-states)
 - [Traffic Routing](#traffic-routing)
+- [AG Listener](listener-configuration.md) (detailed configuration)
 - [When to Use AGs](#when-to-use-ags)
 
 ## What is an Availability Group?
@@ -152,51 +153,51 @@ The AG Helper reports one of four health states:
 
 ## Traffic Routing
 
-### Primary Service
+### AG Listener (Recommended)
 
-Routes all traffic to the current PRIMARY replica:
-
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: prod-ag-primary
-spec:
-  selector:
-    mssql.microsoft.com/ag-role: primary
-  ports:
-    - port: 1433
-```
-
-Use for: INSERT, UPDATE, DELETE, transactions
-
-### Secondary Service
-
-Routes traffic to SECONDARY replicas (round-robin):
+The AG Listener provides a single connection point that automatically routes to the current PRIMARY replica. This is the recommended approach for production workloads.
 
 ```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: prod-ag-secondary
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServerAG
 spec:
-  selector:
-    mssql.microsoft.com/ag-role: secondary
-  ports:
-    - port: 1434
+  listener:
+    name: productionag-listener
+    port: 1433
+    serviceType: ClusterIP
 ```
 
-Use for: Reporting queries, analytics, backups
+The operator creates a Kubernetes Service and manages Endpoints to always point to the current primary. See [Listener Configuration](listener-configuration.md) for detailed setup instructions.
+
+**Connection String:**
+```
+Server=productionag-listener.mssql.svc.cluster.local,1433;
+ApplicationIntent=ReadWrite;
+```
+
+### Individual Replica Services
+
+For direct access to specific replicas (e.g., read workloads on secondaries), use the per-replica services created by the SQLServer resource:
+
+```bash
+# Get individual replica services
+kubectl get svc sql-ag-0 sql-ag-1 sql-ag-2 -n mssql
+
+# Connect to a specific replica
+sqlcmd -S <sql-ag-1-service-ip>,1433 -U sa -P 'password'
+```
+
+Use for: Reporting queries, analytics, backups, maintenance
 
 ### Connection Strings
 
 ```
-# Read-write (primary)
-Server=prod-ag-primary.mssql.svc.cluster.local,1433;
+# Via Listener (always routes to primary - RECOMMENDED)
+Server=productionag-listener.mssql.svc.cluster.local,1433;
 ApplicationIntent=ReadWrite;
 
-# Read-only (secondary)
-Server=prod-ag-secondary.mssql.svc.cluster.local,1434;
+# Direct to specific replica (for read-only workloads)
+Server=sql-ag-1.mssql.svc.cluster.local,1433;
 ApplicationIntent=ReadOnly;
 ```
 

@@ -3,8 +3,7 @@
 # ============================================================================
 #
 # This manifest creates a SQLServerAG resource for Kubernetes management of your
-# Availability Group. The operator monitors AG health and manages Kubernetes
-# services that route traffic to the appropriate replicas.
+# Availability Group. The operator monitors AG health and can perform failover.
 #
 # ┌─────────────────────────────────────────────────────────────────────────┐
 # │  FAILOVER MODES                                                         │
@@ -12,7 +11,6 @@
 # │  automaticFailover: false (DEFAULT - Recommended for most deployments) │
 # │  ─────────────────────────────────────────────────────────────────────  │
 # │  • Operator monitors AG health via AG Helper pod                        │
-# │  • LoadBalancer services route traffic to primary/secondaries           │
 # │  • Failover is MANUAL (via kubectl annotate or T-SQL)                   │
 # │  • Gives DBA full control over failover decisions                       │
 # │                                                                         │
@@ -30,13 +28,20 @@
 #   For multiple AGs, create multiple SQLServerAG resources.
 #
 # WHAT THIS PROVIDES:
-#   ✅ Primary LoadBalancer service - routes traffic to current primary
-#      (named <AG-name>-primary, e.g., ProductionAG-primary)
-#   ✅ Secondary LoadBalancer service - routes read traffic to secondaries
-#      (named <AG-name>-secondary, e.g., ProductionAG-secondary)
 #   ✅ AG health monitoring via AG Helper pod (one per SQLServerAG)
 #   ✅ Manual failover via kubectl annotate
 #   ✅ Optional automatic failover (when automaticFailover: true)
+#   ✅ Status tracking (primary replica, sync state, health)
+#   ✅ Optional AG Listener (K8s Service that routes to primary)
+#
+# CONNECTING TO THE AG:
+#   Option 1: Via Listener (if configured)
+#     - Single VIP that always routes to current primary
+#     - kubectl get sqlserverag production-ag -n mssql -o jsonpath='{.status.listener.vip}'
+#
+#   Option 2: Direct replica access (always available)
+#     - Use the individual replica services: sql-ag-0, sql-ag-1, sql-ag-2
+#     - Find primary: kubectl get sqlserverag production-ag -n mssql -o jsonpath='{.status.primaryReplica}'
 #
 # PREREQUISITES:
 #   - ag-step1-replicas.yaml applied
@@ -52,7 +57,7 @@ metadata:
   name: production-ag
   namespace: mssql
 spec:
-  description: "Production AG with K8s services and controller-managed failover"
+  description: "Production AG with K8s monitoring and controller-managed failover"
   
   # Reference to the SQLServer resource created in Step 1
   sqlServerRef:
@@ -108,6 +113,60 @@ spec:
           name: sql-ag-helper
           key: password
   
+  # ============================================================================
+  # AG LISTENER CONFIGURATION (OPTIONAL)
+  # ============================================================================
+  # The listener section is OPTIONAL. Omit it entirely for:
+  #   - DR scenarios where you connect directly to replicas
+  #   - Manual failover scenarios with direct replica access
+  #   - Testing/development environments
+  #
+  # When configured, the operator creates a Kubernetes Service (VIP) that always
+  # routes to the current primary replica. This is different from traditional
+  # WSFC listeners because Kubernetes manages the VIP and Endpoints, not SQL Server.
+  #
+  # WORKFLOW (when listener is configured):
+  #   1. Apply this manifest - operator creates Service with VIP
+  #   2. Get the VIP: kubectl get sqlserverag production-ag -n mssql -o jsonpath='{.status.listener.vip}'
+  #   3. Create AG Listener in SQL Server using the VIP (T-SQL)
+  #   4. Operator detects listener and transitions to Ready phase
+  #
+  # PHASES:
+  #   - Pending: Service being created
+  #   - WaitingForListener: VIP available, waiting for T-SQL listener creation
+  #   - Ready: Listener configured and routing to primary
+  #   - Degraded: Listener exists but no primary available
+  #   - Maintenance: Listener suspended (via annotation)
+  #
+  # To DISABLE listener, simply remove or comment out the entire 'listener:' block.
+  #
+  listener:
+    # Name of the listener Service (also used for DNS)
+    # Must be DNS-compatible: lowercase, alphanumeric, hyphens only
+    name: productionag-listener
+    
+    # Port for the listener (default 1433)
+    # Use a non-default port for security or multi-instance scenarios
+    port: 1433
+    
+    # Service type: ClusterIP (default), LoadBalancer, or NodePort
+    # ClusterIP: Internal cluster access only
+    # LoadBalancer: External access via cloud load balancer
+    serviceType: ClusterIP
+    
+    # Optional: Specify a static ClusterIP (must be in cluster's service CIDR)
+    # If not specified, Kubernetes assigns one automatically
+    # clusterIP: "10.96.100.50"
+    
+    # Optional: For LoadBalancer type, request a specific external IP
+    # loadBalancerIP: "20.50.100.25"
+    
+    # Optional: Custom annotations for the listener Service
+    # Useful for cloud-specific configurations
+    # annotations:
+    #   service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+    #   external-dns.alpha.kubernetes.io/hostname: "productionag.example.com"
+
   # Failover configuration
   failover:
     # Enable automatic failover via controller
@@ -125,34 +184,6 @@ spec:
     # Required synchronized secondaries (-1 = auto-calculate based on replica count)
     requiredSynchronizedSecondaries: -1
   
-  # Kubernetes Service endpoints for the AG
-  # These services route traffic to current primary or secondaries
-  endpoints:
-    # Primary endpoint - always routes to current primary replica
-    primary:
-      type: LoadBalancer
-      port: 1433
-      annotations: {}
-      # For minikube: use 'minikube tunnel' to get external IP
-      # For cloud: LoadBalancer creates external IP automatically
-      #
-      # Alternatives:
-      # type: NodePort
-      # nodePort: 31433
-      #
-      # type: ClusterIP  # Internal only
-    
-    # Secondary endpoint - routes to readable secondaries only
-    secondary:
-      type: LoadBalancer
-      port: 1434
-      annotations: {}
-      # Route read-only traffic here for read scale-out
-      #
-      # Alternatives:
-      # type: NodePort
-      # nodePort: 31434
-  
   # AG Helper sidecar configuration
   sidecar:
     image: mssql-ag-helper:latest
@@ -166,26 +197,72 @@ spec:
 # 1. Apply this manifest:
 #    kubectl apply -f ag-step3-ag-config.yaml
 #
-# 2. Verify SQLServerAG resource:
-#    kubectl get sqlserverag -n mssql
+# 2. Get the listener VIP and subnet mask:
+#    # Get the VIP
+#    kubectl get sqlserverag production-ag -n mssql -o jsonpath='{.status.listener.vip}'
 #
-# 3. Check services created (uses AG name from T-SQL, not resource name):
-#    kubectl get svc -n mssql
-#    # Should see: ProductionAG-primary, ProductionAG-secondary
-#    # (Service names use the availabilityGroup.name field, e.g., "ProductionAG")
+#    # Get the cluster service CIDR (for subnet mask)
+#    # Method 1: From kubeadm config (if available)
+#    kubectl get cm kubeadm-config -n kube-system -o jsonpath='{.data.ClusterConfiguration}' | grep serviceSubnet
 #
-# 4. Connect to primary:
-#    # Get LoadBalancer IP
-#    kubectl get svc ProductionAG-primary -n mssql
-#    
-#    # Connect (primary always routes to current primary)
-#    sqlcmd -S <PRIMARY_IP>,1433 -U sa -P 'YourStrong@Passw0rd!'
+#    # Method 2: From kube-apiserver (check --service-cluster-ip-range flag)
+#    kubectl get pod -n kube-system -l component=kube-apiserver -o yaml | grep service-cluster-ip-range
 #
-# 5. Connect to secondary (read-only):
-#    kubectl get svc ProductionAG-secondary -n mssql
-#    
-#    # Read-only connection to secondaries
-#    sqlcmd -S <SECONDARY_IP>,1434 -U sa -P 'YourStrong@Passw0rd!'
+#    # Method 3: Infer from existing services (most reliable)
+#    kubectl get svc -A -o jsonpath='{.items[*].spec.clusterIP}' | tr ' ' '\n' | sort -u | head -5
+#
+#    Common subnet masks by CIDR:
+#      /12 = 255.240.0.0    (e.g., 10.96.0.0/12)
+#      /16 = 255.255.0.0    (e.g., 10.0.0.0/16)
+#      /20 = 255.255.240.0
+#      /24 = 255.255.255.0  (e.g., 10.96.0.0/24)
+#
+# 3. Create AG Listener in SQL Server using the VIP:
+#    -- Run on PRIMARY replica (connect to sql-ag-0 or current primary)
+#    -- Replace <VIP> and <SUBNET_MASK> with values from step 2
+#    ALTER AVAILABILITY GROUP [ProductionAG]
+#    ADD LISTENER 'productionag-listener' (
+#        WITH IP (('<VIP>', '<SUBNET_MASK>')),
+#        PORT = 1433
+#    );
+#
+# 4. Verify listener is Ready:
+#    kubectl get sqlserverag production-ag -n mssql -o wide
+#    # Check the "Listener" column shows "Ready"
+#
+# 5. Connect using the listener (always routes to primary):
+#    sqlcmd -S <VIP>,1433 -U sa -P 'YourStrong@Passw0rd!'
+#
+# ============================================================================
+# LISTENER STATUS
+# ============================================================================
+#
+# Check listener status:
+#   kubectl get sqlserverag production-ag -n mssql -o jsonpath='{.status.listener}'
+#
+# Check listener phase:
+#   kubectl get sqlserverag production-ag -n mssql -o jsonpath='{.status.listener.phase}'
+#
+# Get listener VIP:
+#   kubectl get sqlserverag production-ag -n mssql -o jsonpath='{.status.listener.vip}'
+#
+# Get listener Service details:
+#   kubectl get svc productionag-listener -n mssql
+#
+# View listener Endpoints (should show primary pod IP):
+#   kubectl get endpoints productionag-listener -n mssql -o yaml
+#
+# ============================================================================
+# LISTENER MAINTENANCE MODE
+# ============================================================================
+#
+# To put the listener in maintenance mode (stops routing warnings):
+#   kubectl annotate sqlserverag production-ag -n mssql \
+#     mssql.microsoft.com/listener-maintenance=true
+#
+# To exit maintenance mode:
+#   kubectl annotate sqlserverag production-ag -n mssql \
+#     mssql.microsoft.com/listener-maintenance-
 #
 # ============================================================================
 # MANUAL FAILOVER (via kubectl)
@@ -200,7 +277,7 @@ spec:
 #   # Check failover status
 #   kubectl get sqlserverag production-ag -n mssql -o jsonpath='{.metadata.annotations}'
 #
-#   # Watch for primary change
+#   # Watch for primary change (listener Endpoints will update automatically)
 #   kubectl get sqlserverag production-ag -n mssql -w
 #
 # To cancel/clear a failed failover request:
@@ -228,18 +305,34 @@ spec:
 # Check synchronization count:
 #   kubectl get sqlserverag production-ag -n mssql -o jsonpath='{.status.synchronizedReplicas}'
 #
-# View events (including failovers):
+# View events (including failovers and listener updates):
 #   kubectl get events -n mssql --field-selector involvedObject.name=production-ag
 #
 # ============================================================================
 # TROUBLESHOOTING
 # ============================================================================
 #
-# If services (ProductionAG-primary, ProductionAG-secondary) are NOT created:
+# If listener is stuck in "WaitingForListener":
+#   1. Get the VIP and create the AG Listener in SQL Server via T-SQL
+#   2. Verify the listener exists in SQL Server:
+#      SELECT * FROM sys.availability_group_listeners
+#
+# If listener shows "Degraded":
+#   1. Check if there's a primary replica:
+#      kubectl get sqlserverag production-ag -n mssql -o jsonpath='{.status.primaryReplica}'
+#   2. If no primary, check AG health and consider failover
+#
+# If connections fail through listener:
+#   1. Check Endpoints have the correct primary IP:
+#      kubectl get endpoints productionag-listener -n mssql
+#   2. Verify the primary pod is Ready:
+#      kubectl get pod <primary-pod-name> -n mssql
+#
+# If reconciliation is failing:
 #
 # 1. Check if the SQLServer resource is Ready:
 #    kubectl get sqlserver sql-ag -n mssql -o jsonpath='{.status.ready}'
-#    # Must return "true" - AG services are only created after SQLServer is Ready
+#    # Must return "true" - AG reconciliation waits for SQLServer to be Ready
 #
 # 2. Check operator logs for errors:
 #    kubectl logs deployment/mssql-operator -n mssql-system --tail=100

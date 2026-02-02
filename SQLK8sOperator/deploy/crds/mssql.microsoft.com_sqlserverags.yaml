@@ -32,6 +32,14 @@ spec:
     - jsonPath: .status.synchronizedReplicas
       name: Synced
       type: integer
+    - jsonPath: .status.listener.phase
+      name: Listener
+      priority: 1
+      type: string
+    - jsonPath: .status.listener.vip
+      name: VIP
+      priority: 1
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -322,54 +330,6 @@ spec:
                   for auditing and searchability
                 maxLength: 1024
                 type: string
-              endpoints:
-                description: Endpoints defines service endpoints for the AG
-                properties:
-                  primary:
-                    description: Primary endpoint configuration
-                    properties:
-                      annotations:
-                        additionalProperties:
-                          type: string
-                        description: Annotations for the service
-                        type: object
-                      port:
-                        default: 1433
-                        description: Port is the SQL Server port
-                        format: int32
-                        type: integer
-                      type:
-                        default: ClusterIP
-                        description: Type is the Kubernetes service type
-                        enum:
-                        - ClusterIP
-                        - NodePort
-                        - LoadBalancer
-                        type: string
-                    type: object
-                  secondary:
-                    description: Secondary endpoint configuration (for read-only routing)
-                    properties:
-                      annotations:
-                        additionalProperties:
-                          type: string
-                        description: Annotations for the service
-                        type: object
-                      port:
-                        default: 1433
-                        description: Port is the SQL Server port
-                        format: int32
-                        type: integer
-                      type:
-                        default: ClusterIP
-                        description: Type is the Kubernetes service type
-                        enum:
-                        - ClusterIP
-                        - NodePort
-                        - LoadBalancer
-                        type: string
-                    type: object
-                type: object
               failover:
                 description: Failover contains failover behavior configuration
                 properties:
@@ -398,6 +358,62 @@ spec:
                       required before committing on the primary (-1 for auto-calculate)
                     format: int32
                     type: integer
+                type: object
+              listener:
+                description: |-
+                  Listener configures the Kubernetes Service for AG listener access
+                  This creates a VIP (ClusterIP) that the operator manages to point to the primary replica
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Annotations to add to the listener Service
+                      Useful for cloud-provider specific configurations (e.g., internal load balancers)
+                    type: object
+                  clusterIP:
+                    description: |-
+                      ClusterIP allows specifying a static ClusterIP for the listener Service
+                      If not specified, Kubernetes assigns one automatically
+                      Useful when you need a predictable VIP for DNS or connection strings
+                    type: string
+                  loadBalancerIP:
+                    description: |-
+                      LoadBalancerIP allows specifying a static IP for LoadBalancer type services
+                      This is cloud-provider specific and may not be supported by all providers
+                    type: string
+                  name:
+                    description: |-
+                      Name is the name of the AG Listener (as configured in SQL Server via T-SQL)
+                      This should match the listener name used in CREATE AVAILABILITY GROUP LISTENER
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                  port:
+                    default: 1433
+                    description: |-
+                      Port is the TCP port the listener accepts connections on
+                      This is the port clients use to connect and must match the port in T-SQL listener config
+                      Default is 1433, but can be any valid port for security/multi-instance scenarios
+                    format: int32
+                    maximum: 65535
+                    minimum: 1
+                    type: integer
+                  serviceType:
+                    default: ClusterIP
+                    description: |-
+                      ServiceType specifies the type of Kubernetes Service to create
+                      ClusterIP: Internal cluster access only (default)
+                      LoadBalancer: External access via cloud load balancer
+                      NodePort: External access via node ports (not recommended for production)
+                    enum:
+                    - ClusterIP
+                    - LoadBalancer
+                    - NodePort
+                    type: string
+                required:
+                - name
                 type: object
               sidecar:
                 description: Sidecar contains configuration for the AG helper sidecar
@@ -553,6 +569,58 @@ spec:
                 description: LastFailoverTime is when the last failover occurred
                 format: date-time
                 type: string
+              listener:
+                description: Listener contains the status of the AG Listener Service
+                properties:
+                  currentPrimary:
+                    description: CurrentPrimary is the pod currently receiving traffic
+                      via the listener
+                    type: string
+                  endpointCount:
+                    description: |-
+                      EndpointCount is the number of endpoints in the Endpoints object
+                      Should be 1 when listener is Ready (pointing to primary)
+                    format: int32
+                    type: integer
+                  externalIP:
+                    description: ExternalIP is the external IP when using LoadBalancer
+                      service type
+                    type: string
+                  lastCheckedTime:
+                    description: LastCheckedTime is when the listener was last verified
+                    format: date-time
+                    type: string
+                  lastTransitionTime:
+                    description: LastTransitionTime is when the phase last changed
+                    format: date-time
+                    type: string
+                  message:
+                    description: Message provides human-readable details about the
+                      current phase
+                    type: string
+                  phase:
+                    description: Phase represents the current listener lifecycle phase
+                    enum:
+                    - Pending
+                    - WaitingForListener
+                    - Ready
+                    - Degraded
+                    - Maintenance
+                    type: string
+                  port:
+                    description: Port is the listener port
+                    format: int32
+                    type: integer
+                  serviceName:
+                    description: ServiceName is the name of the Kubernetes Service
+                      created for the listener
+                    type: string
+                  vip:
+                    description: |-
+                      VIP is the ClusterIP assigned to the listener Service
+                      This is the IP that should be used in T-SQL: CREATE AVAILABILITY GROUP LISTENER
+                    type: string
+                type: object
               observedGeneration:
                 description: ObservedGeneration is the most recent generation observed
                 format: int64

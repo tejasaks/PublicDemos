@@ -25,17 +25,86 @@ type SQLServerAGSpec struct {
 	// AvailabilityGroup contains the AG configuration
 	AvailabilityGroup AvailabilityGroupConfig `json:"availabilityGroup"`
 
+	// Listener configures the Kubernetes Service for AG listener access
+	// This creates a VIP (ClusterIP) that the operator manages to point to the primary replica
+	// +optional
+	Listener *AGListenerSpec `json:"listener,omitempty"`
+
 	// Failover contains failover behavior configuration
 	// +optional
 	Failover *FailoverConfig `json:"failover,omitempty"`
 
-	// Endpoints defines service endpoints for the AG
-	// +optional
-	Endpoints *AGEndpointsSpec `json:"endpoints,omitempty"`
-
 	// Sidecar contains configuration for the AG helper sidecar
 	// +optional
 	Sidecar *AGSidecarSpec `json:"sidecar,omitempty"`
+}
+
+// ListenerPhase represents the current phase of the AG Listener
+// +kubebuilder:validation:Enum=Pending;WaitingForListener;Ready;Degraded;Maintenance
+type ListenerPhase string
+
+const (
+	// ListenerPhasePending indicates the listener Service is being created
+	ListenerPhasePending ListenerPhase = "Pending"
+
+	// ListenerPhaseWaitingForListener indicates the VIP Service exists but the operator
+	// is waiting for the user to create the AG Listener via T-SQL using the VIP
+	ListenerPhaseWaitingForListener ListenerPhase = "WaitingForListener"
+
+	// ListenerPhaseReady indicates the listener is configured and routing to the primary
+	ListenerPhaseReady ListenerPhase = "Ready"
+
+	// ListenerPhaseDegraded indicates the listener exists but cannot route (no primary)
+	ListenerPhaseDegraded ListenerPhase = "Degraded"
+
+	// ListenerPhaseMaintenance indicates the listener is in maintenance mode
+	// (set via annotation mssql.microsoft.com/listener-maintenance=true)
+	ListenerPhaseMaintenance ListenerPhase = "Maintenance"
+)
+
+// AGListenerSpec defines the configuration for the AG Listener Service
+// The operator creates a Kubernetes Service without a selector and manages Endpoints
+// to route traffic to the current primary replica
+type AGListenerSpec struct {
+	// Name is the name of the AG Listener (as configured in SQL Server via T-SQL)
+	// This should match the listener name used in CREATE AVAILABILITY GROUP LISTENER
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+	Name string `json:"name"`
+
+	// Port is the TCP port the listener accepts connections on
+	// This is the port clients use to connect and must match the port in T-SQL listener config
+	// Default is 1433, but can be any valid port for security/multi-instance scenarios
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +kubebuilder:default=1433
+	Port int32 `json:"port,omitempty"`
+
+	// ServiceType specifies the type of Kubernetes Service to create
+	// ClusterIP: Internal cluster access only (default)
+	// LoadBalancer: External access via cloud load balancer
+	// NodePort: External access via node ports (not recommended for production)
+	// +kubebuilder:validation:Enum=ClusterIP;LoadBalancer;NodePort
+	// +kubebuilder:default=ClusterIP
+	ServiceType corev1.ServiceType `json:"serviceType,omitempty"`
+
+	// ClusterIP allows specifying a static ClusterIP for the listener Service
+	// If not specified, Kubernetes assigns one automatically
+	// Useful when you need a predictable VIP for DNS or connection strings
+	// +optional
+	ClusterIP string `json:"clusterIP,omitempty"`
+
+	// LoadBalancerIP allows specifying a static IP for LoadBalancer type services
+	// This is cloud-provider specific and may not be supported by all providers
+	// +optional
+	LoadBalancerIP string `json:"loadBalancerIP,omitempty"`
+
+	// Annotations to add to the listener Service
+	// Useful for cloud-provider specific configurations (e.g., internal load balancers)
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
 // AvailabilityGroupConfig defines the AG configuration
@@ -188,31 +257,6 @@ type FailoverConfig struct {
 	RequiredSynchronizedSecondaries int32 `json:"requiredSynchronizedSecondaries,omitempty"`
 }
 
-// AGEndpointsSpec defines service endpoints for the AG
-type AGEndpointsSpec struct {
-	// Primary endpoint configuration
-	Primary *AGServiceSpec `json:"primary,omitempty"`
-
-	// Secondary endpoint configuration (for read-only routing)
-	Secondary *AGServiceSpec `json:"secondary,omitempty"`
-}
-
-// AGServiceSpec defines a service for AG endpoints
-type AGServiceSpec struct {
-	// Type is the Kubernetes service type
-	// +kubebuilder:validation:Enum=ClusterIP;NodePort;LoadBalancer
-	// +kubebuilder:default=ClusterIP
-	Type corev1.ServiceType `json:"type,omitempty"`
-
-	// Port is the SQL Server port
-	// +kubebuilder:default=1433
-	Port int32 `json:"port,omitempty"`
-
-	// Annotations for the service
-	// +optional
-	Annotations map[string]string `json:"annotations,omitempty"`
-}
-
 // AGSidecarSpec defines the AG helper sidecar configuration
 type AGSidecarSpec struct {
 	// Image is the AG helper sidecar image
@@ -252,6 +296,10 @@ type SQLServerAGStatus struct {
 	// +optional
 	Replicas []AGReplicaStatus `json:"replicas,omitempty"`
 
+	// Listener contains the status of the AG Listener Service
+	// +optional
+	Listener *AGListenerStatus `json:"listener,omitempty"`
+
 	// Conditions represent the latest available observations
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
@@ -262,6 +310,46 @@ type SQLServerAGStatus struct {
 
 	// ObservedGeneration is the most recent generation observed
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+}
+
+// AGListenerStatus represents the current state of the AG Listener
+type AGListenerStatus struct {
+	// Phase represents the current listener lifecycle phase
+	Phase ListenerPhase `json:"phase,omitempty"`
+
+	// ServiceName is the name of the Kubernetes Service created for the listener
+	ServiceName string `json:"serviceName,omitempty"`
+
+	// VIP is the ClusterIP assigned to the listener Service
+	// This is the IP that should be used in T-SQL: CREATE AVAILABILITY GROUP LISTENER
+	VIP string `json:"vip,omitempty"`
+
+	// ExternalIP is the external IP when using LoadBalancer service type
+	// +optional
+	ExternalIP string `json:"externalIP,omitempty"`
+
+	// Port is the listener port
+	Port int32 `json:"port,omitempty"`
+
+	// EndpointCount is the number of endpoints in the Endpoints object
+	// Should be 1 when listener is Ready (pointing to primary)
+	EndpointCount int32 `json:"endpointCount,omitempty"`
+
+	// CurrentPrimary is the pod currently receiving traffic via the listener
+	// +optional
+	CurrentPrimary string `json:"currentPrimary,omitempty"`
+
+	// LastTransitionTime is when the phase last changed
+	// +optional
+	LastTransitionTime *metav1.Time `json:"lastTransitionTime,omitempty"`
+
+	// LastCheckedTime is when the listener was last verified
+	// +optional
+	LastCheckedTime *metav1.Time `json:"lastCheckedTime,omitempty"`
+
+	// Message provides human-readable details about the current phase
+	// +optional
+	Message string `json:"message,omitempty"`
 }
 
 // AGReplicaStatus represents the status of an AG replica
@@ -301,6 +389,8 @@ type AGReplicaStatus struct {
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Primary",type="string",JSONPath=".status.primaryReplica"
 // +kubebuilder:printcolumn:name="Synced",type="integer",JSONPath=".status.synchronizedReplicas"
+// +kubebuilder:printcolumn:name="Listener",type="string",JSONPath=".status.listener.phase",priority=1
+// +kubebuilder:printcolumn:name="VIP",type="string",JSONPath=".status.listener.vip",priority=1
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // SQLServerAG is the Schema for the sqlserverags API

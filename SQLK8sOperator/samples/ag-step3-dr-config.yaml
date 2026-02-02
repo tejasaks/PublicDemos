@@ -1,0 +1,139 @@
+# ============================================================================
+# STEP 3 (ALTERNATIVE): SQLServerAG for DR / Manual Failover Scenarios
+# ============================================================================
+#
+# This is a MINIMAL configuration for Disaster Recovery and Manual Failover
+# scenarios where you don't need an AG Listener VIP.
+#
+# USE THIS WHEN:
+#   - DR scenarios: Secondary site for disaster recovery
+#   - Manual failover: DBA controls all failover decisions
+#   - Direct replica access: Applications connect to specific replicas
+#   - Testing/development: Simplified setup without listener complexity
+#
+# CONNECTING TO REPLICAS:
+#   Use the individual replica services created in Step 1:
+#     kubectl get svc sql-ag-0 sql-ag-1 sql-ag-2 -n mssql
+#
+#   Find which replica is primary:
+#     kubectl get sqlserverag dr-ag -n mssql -o jsonpath='{.status.primaryReplica}'
+#
+# For production HA with a listener VIP, use ag-step3-ag-config.yaml instead.
+#
+# ============================================================================
+
+---
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServerAG
+metadata:
+  name: dr-ag
+  namespace: mssql
+spec:
+  description: "DR Availability Group - manual failover, no listener"
+  
+  # Reference to the SQLServer resource
+  sqlServerRef:
+    name: sql-ag
+  
+  # Availability Group configuration
+  availabilityGroup:
+    # Must match the AG name created in T-SQL
+    name: DisasterRecoveryAG
+    
+    # Number of replicas
+    replicas: 3
+    
+    # Primary replica configuration
+    primaryConfig:
+      availabilityMode: SynchronousCommit
+      failoverMode: External
+      readableSecondary: ReadOnly
+      sessionTimeout: 10
+    
+    # Secondary replicas configuration
+    secondaryConfig:
+      availabilityMode: SynchronousCommit
+      failoverMode: External
+      readableSecondary: ReadOnly
+      sessionTimeout: 10
+    
+    # Seeding mode
+    seedingMode: Automatic
+    
+    # Cluster type is always External for Kubernetes
+    clusterType: External
+    
+    # Endpoint port (must match T-SQL CREATE ENDPOINT port)
+    endpointPort: 5022
+    
+    # Enable database-level failover
+    dbFailover: true
+    
+    # IMPORTANT: Keep automaticFailover as false for DR scenarios
+    # This ensures DBA has full control over failover decisions
+    automaticFailover: false
+    
+    # Health check credentials
+    healthCheckCredentials:
+      secretRef:
+        usernameSecret:
+          name: sql-ag-helper
+          key: username
+        passwordSecret:
+          name: sql-ag-helper
+          key: password
+  
+  # NO LISTENER CONFIGURED - Direct replica access only
+  # The 'listener' section is intentionally omitted.
+  # Connect to replicas using their individual services: sql-ag-0, sql-ag-1, sql-ag-2
+
+  # Failover configuration (manual - DBA controlled)
+  failover:
+    # Keep automatic false for manual control
+    automatic: false
+    
+    # Data loss threshold (0 = no data loss allowed)
+    dataLossThreshold: 0
+    
+    # Health check timeout
+    healthCheckTimeout: "30s"
+    
+    # Lease timeout for primary writes
+    leaseTimeout: "60s"
+  
+  # AG Helper sidecar configuration
+  sidecar:
+    image: mssql-ag-helper:latest
+    monitorInterval: "10s"
+    connectionTimeout: "30s"
+
+# ============================================================================
+# USAGE
+# ============================================================================
+#
+# 1. Apply this manifest:
+#    kubectl apply -f ag-step3-dr-config.yaml
+#
+# 2. Verify SQLServerAG resource:
+#    kubectl get sqlserverag -n mssql
+#
+# 3. Check which replica is primary:
+#    kubectl get sqlserverag dr-ag -n mssql -o jsonpath='{.status.primaryReplica}'
+#
+# 4. Connect to a specific replica:
+#    kubectl get svc sql-ag-0 -n mssql
+#    sqlcmd -S <REPLICA_IP>,1433 -U sa -P 'YourStrong@Passw0rd!'
+#
+# ============================================================================
+# MANUAL FAILOVER
+# ============================================================================
+#
+# To manually failover to a specific replica:
+#
+#   kubectl annotate sqlserverag dr-ag -n mssql \
+#     mssql.microsoft.com/failover-to=sql-ag-1
+#
+#   # Watch for primary change
+#   kubectl get sqlserverag dr-ag -n mssql -w
+#
+# ============================================================================

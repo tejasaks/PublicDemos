@@ -856,6 +856,102 @@ func (h *AGHelper) handleSequence(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ListenerInfo represents the AG Listener configuration from SQL Server
+type ListenerInfo struct {
+	ListenerName string `json:"listenerName"`
+	IPAddress    string `json:"ipAddress"`
+	Port         int32  `json:"port"`
+	State        string `json:"state"` // ONLINE, PENDING, PENDING_OFFLINE
+	AGName       string `json:"agName"`
+}
+
+// handleListener returns the AG Listener information if configured
+func (h *AGHelper) handleListener(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	listener, err := h.getListenerInfo(ctx, h.agName)
+	if err != nil {
+		klog.V(4).Infof("Error getting listener info: %v", err)
+		// Return empty listener with error - not an HTTP error since AG might not have a listener
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"hasListener": false,
+			"error":       err.Error(),
+			"agName":      h.agName,
+		})
+		return
+	}
+
+	if listener == nil {
+		// No listener configured - this is normal, not an error
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"hasListener": false,
+			"agName":      h.agName,
+			"message":     "No AG Listener configured for this Availability Group",
+		})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"hasListener": true,
+		"listener":    listener,
+		"agName":      h.agName,
+	})
+}
+
+// getListenerInfo queries SQL Server for the AG Listener configuration
+func (h *AGHelper) getListenerInfo(ctx context.Context, agName string) (*ListenerInfo, error) {
+	if h.db == nil {
+		return nil, fmt.Errorf("database connection not available")
+	}
+
+	// Validate AG name before using in query
+	if err := validateSQLIdentifier(agName, "agName"); err != nil {
+		return nil, err
+	}
+
+	// Query to get AG listener information
+	// Uses parameterized query to prevent SQL injection
+	query := `
+		SELECT 
+			agl.dns_name AS listener_name,
+			ip.ip_address,
+			agl.port,
+			agl.state_desc AS state
+		FROM sys.availability_group_listeners agl
+		JOIN sys.availability_groups ag ON agl.group_id = ag.group_id
+		JOIN sys.availability_group_listener_ip_addresses ip ON agl.listener_id = ip.listener_id
+		WHERE ag.name = @agName
+	`
+
+	rows, err := h.db.QueryContext(ctx, query, sql.Named("agName", agName))
+	if err != nil {
+		return nil, fmt.Errorf("failed to query listener info: %w", err)
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		// No listener found
+		return nil, nil
+	}
+
+	var listener ListenerInfo
+	var ipAddress sql.NullString
+
+	if err := rows.Scan(&listener.ListenerName, &ipAddress, &listener.Port, &listener.State); err != nil {
+		return nil, fmt.Errorf("failed to scan listener info: %w", err)
+	}
+
+	listener.AGName = agName
+	if ipAddress.Valid {
+		listener.IPAddress = ipAddress.String
+	}
+
+	return &listener, nil
+}
+
 // StartHTTPServer starts the HTTP server for the sidecar API
 func (h *AGHelper) StartHTTPServer(ctx context.Context) error {
 	mux := http.NewServeMux()
@@ -867,6 +963,7 @@ func (h *AGHelper) StartHTTPServer(ctx context.Context) error {
 	mux.HandleFunc("/role", h.handleRole)
 	mux.HandleFunc("/failover", h.handleFailover)
 	mux.HandleFunc("/sequence", h.handleSequence)
+	mux.HandleFunc("/listener", h.handleListener) // AG Listener information
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", h.httpPort),

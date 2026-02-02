@@ -36,17 +36,22 @@ const (
 	SQLServerAGFinalizer = "mssql.microsoft.com/ag-finalizer"
 
 	// Labels
-	LabelAG = "mssql.microsoft.com/ag"
+	LabelAG       = "mssql.microsoft.com/ag"
+	LabelListener = "mssql.microsoft.com/listener"
 
 	// Annotations for manual operations
-	AnnotationFailoverTarget    = "mssql.microsoft.com/failover-to"        // Target replica for failover (e.g., "sql-ag-1")
-	AnnotationFailoverRequested = "mssql.microsoft.com/failover-requested" // Timestamp when failover was requested
-	AnnotationFailoverStatus    = "mssql.microsoft.com/failover-status"    // Status: pending, in-progress, completed, failed
+	AnnotationFailoverTarget      = "mssql.microsoft.com/failover-to"          // Target replica for failover (e.g., "sql-ag-1")
+	AnnotationFailoverRequested   = "mssql.microsoft.com/failover-requested"   // Timestamp when failover was requested
+	AnnotationFailoverStatus      = "mssql.microsoft.com/failover-status"      // Status: pending, in-progress, completed, failed
+	AnnotationListenerMaintenance = "mssql.microsoft.com/listener-maintenance" // Set to "true" to enter maintenance mode
 
 	// Failover configuration
 	FailoverCooldownPeriod = 60 * time.Second // Minimum time between failovers
 	NoPrimaryGracePeriod   = 30 * time.Second // Wait before triggering failover
 	SidecarPort            = 8080             // AG Helper sidecar HTTP port
+
+	// Listener status logging
+	ListenerLogInterval = 1 * time.Hour // How often to log "waiting for listener" reminders
 )
 
 // SidecarState represents the state returned by AG Helper sidecar
@@ -78,6 +83,9 @@ type SQLServerAGReconciler struct {
 	// Failover state tracking
 	lastFailoverTime  map[string]time.Time
 	noPrimaryDetected map[string]time.Time
+
+	// Listener state tracking (for logging throttling)
+	lastListenerLogTime map[string]time.Time
 }
 
 // +kubebuilder:rbac:groups=mssql.microsoft.com,resources=operatorconfigurations,verbs=get;list;watch
@@ -141,16 +149,19 @@ func (r *SQLServerAGReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 	}
 
-	// Reconcile AG endpoints
-	if err := r.reconcileEndpoints(ctx, ag, sqlServer); err != nil {
-		r.Recorder.Event(ag, corev1.EventTypeWarning, "EndpointsFailed", err.Error())
-		return ctrl.Result{}, err
-	}
-
 	// Update AG status from sidecars
 	if err := r.updateAGStatus(ctx, ag, sqlServer); err != nil {
 		logger.Error(err, "Failed to update AG status")
 		// Don't return error, continue with requeue
+	}
+
+	// Reconcile listener Service and Endpoints if listener is configured
+	if ag.Spec.Listener != nil {
+		if err := r.reconcileListener(ctx, ag, sqlServer); err != nil {
+			logger.Error(err, "Failed to reconcile listener")
+			r.Recorder.Event(ag, corev1.EventTypeWarning, "ListenerReconcileFailed", err.Error())
+			// Continue with other reconciliation
+		}
 	}
 
 	// Check for manual failover request (via annotation)
@@ -180,101 +191,6 @@ func (r *SQLServerAGReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	return ctrl.Result{RequeueAfter: monitorInterval}, nil
-}
-
-// reconcileEndpoints creates or updates services for AG primary/secondary routing
-func (r *SQLServerAGReconciler) reconcileEndpoints(ctx context.Context, ag *mssqlv1alpha1.SQLServerAG, sqlServer *mssqlv1alpha1.SQLServer) error {
-	logger := log.FromContext(ctx)
-
-	if ag.Spec.Endpoints == nil {
-		return nil
-	}
-
-	// Primary endpoint service
-	if ag.Spec.Endpoints.Primary != nil {
-		primarySvc := &corev1.Service{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:        fmt.Sprintf("%s-primary", ag.Spec.AvailabilityGroup.Name),
-				Namespace:   ag.Namespace,
-				Labels:      r.labelsForAG(ag, sqlServer),
-				Annotations: ag.Spec.Endpoints.Primary.Annotations,
-			},
-			Spec: corev1.ServiceSpec{
-				Type: ag.Spec.Endpoints.Primary.Type,
-				Selector: map[string]string{
-					"app":                          "mssql",
-					"mssql.microsoft.com/instance": sqlServer.Name,
-					"mssql.microsoft.com/role":     "primary",
-				},
-				Ports: []corev1.ServicePort{
-					{
-						Name:       "sql",
-						Port:       ag.Spec.Endpoints.Primary.Port,
-						TargetPort: intstr.FromInt(1433),
-					},
-				},
-			},
-		}
-
-		if err := ctrl.SetControllerReference(ag, primarySvc, r.Scheme); err != nil {
-			return err
-		}
-
-		found := &corev1.Service{}
-		err := r.Get(ctx, types.NamespacedName{Name: primarySvc.Name, Namespace: primarySvc.Namespace}, found)
-		if err != nil && errors.IsNotFound(err) {
-			logger.Info("Creating primary endpoint service", "name", primarySvc.Name)
-			if err := r.Create(ctx, primarySvc); err != nil {
-				return err
-			}
-		} else if err != nil {
-			return err
-		}
-	}
-
-	// Secondary endpoint service (for read-only routing)
-	if ag.Spec.Endpoints.Secondary != nil {
-		secondarySvc := &corev1.Service{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:        fmt.Sprintf("%s-secondary", ag.Spec.AvailabilityGroup.Name),
-				Namespace:   ag.Namespace,
-				Labels:      r.labelsForAG(ag, sqlServer),
-				Annotations: ag.Spec.Endpoints.Secondary.Annotations,
-			},
-			Spec: corev1.ServiceSpec{
-				Type: ag.Spec.Endpoints.Secondary.Type,
-				Selector: map[string]string{
-					"app":                          "mssql",
-					"mssql.microsoft.com/instance": sqlServer.Name,
-					"mssql.microsoft.com/role":     "secondary",
-				},
-				Ports: []corev1.ServicePort{
-					{
-						Name:       "sql",
-						Port:       ag.Spec.Endpoints.Secondary.Port,
-						TargetPort: intstr.FromInt(1433),
-					},
-				},
-			},
-		}
-
-		if err := ctrl.SetControllerReference(ag, secondarySvc, r.Scheme); err != nil {
-			return err
-		}
-
-		found := &corev1.Service{}
-		err := r.Get(ctx, types.NamespacedName{Name: secondarySvc.Name, Namespace: secondarySvc.Namespace}, found)
-		if err != nil && errors.IsNotFound(err) {
-			logger.Info("Creating secondary endpoint service", "name", secondarySvc.Name)
-			if err := r.Create(ctx, secondarySvc); err != nil {
-				return err
-			}
-		} else if err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 // updateAGStatus queries sidecars for AG health and updates status
@@ -871,11 +787,369 @@ func (r *SQLServerAGReconciler) executeFailover(ctx context.Context, ag *mssqlv1
 	return r.triggerFailover(ctx, ag, candidate)
 }
 
+// ============================================================================
+// LISTENER RECONCILIATION LOGIC
+// ============================================================================
+
+// reconcileListener manages the AG Listener Service and Endpoints
+// This creates a Service without a selector and manually manages Endpoints
+// to route traffic to the current primary replica
+func (r *SQLServerAGReconciler) reconcileListener(ctx context.Context, ag *mssqlv1alpha1.SQLServerAG, sqlServer *mssqlv1alpha1.SQLServer) error {
+	logger := log.FromContext(ctx)
+	agKey := fmt.Sprintf("%s/%s", ag.Namespace, ag.Name)
+
+	// Initialize tracking maps if needed
+	if r.lastListenerLogTime == nil {
+		r.lastListenerLogTime = make(map[string]time.Time)
+	}
+
+	listenerSpec := ag.Spec.Listener
+	listenerName := listenerSpec.Name
+	listenerPort := listenerSpec.Port
+	if listenerPort == 0 {
+		listenerPort = 1433
+	}
+
+	// Check for maintenance mode annotation
+	inMaintenance := ag.Annotations[AnnotationListenerMaintenance] == "true"
+
+	// Ensure listener Service exists
+	service := &corev1.Service{}
+	serviceName := listenerName
+	err := r.Get(ctx, types.NamespacedName{Name: serviceName, Namespace: ag.Namespace}, service)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// Create the listener Service (without selector)
+			service = r.constructListenerService(ag, sqlServer, listenerSpec)
+			if err := r.Create(ctx, service); err != nil {
+				return fmt.Errorf("failed to create listener Service: %w", err)
+			}
+			logger.Info("Created listener Service", "name", serviceName)
+			r.Recorder.Event(ag, corev1.EventTypeNormal, "ListenerServiceCreated",
+				fmt.Sprintf("Created listener Service %s", serviceName))
+
+			// Update status to Pending (waiting for ClusterIP assignment)
+			return r.updateListenerStatus(ctx, ag, mssqlv1alpha1.ListenerPhasePending, service, 0, "",
+				"Listener Service created, waiting for VIP assignment")
+		}
+		return fmt.Errorf("failed to get listener Service: %w", err)
+	}
+
+	// Service exists - get the VIP
+	vip := service.Spec.ClusterIP
+	if vip == "" || vip == "None" {
+		return r.updateListenerStatus(ctx, ag, mssqlv1alpha1.ListenerPhasePending, service, 0, "",
+			"Listener Service exists but has no ClusterIP assigned")
+	}
+
+	// Check maintenance mode
+	if inMaintenance {
+		logger.V(4).Info("Listener in maintenance mode", "vip", vip)
+		return r.updateListenerStatus(ctx, ag, mssqlv1alpha1.ListenerPhaseMaintenance, service, 0, "",
+			"Listener in maintenance mode (annotation set)")
+	}
+
+	// Get current primary pod IP
+	primaryPodName := ag.Status.PrimaryReplica
+	primaryPodIP := ""
+
+	if primaryPodName != "" {
+		pod := &corev1.Pod{}
+		if err := r.Get(ctx, types.NamespacedName{Name: primaryPodName, Namespace: ag.Namespace}, pod); err == nil {
+			if pod.Status.PodIP != "" && isPodReady(pod) {
+				primaryPodIP = pod.Status.PodIP
+			}
+		}
+	}
+
+	// Ensure Endpoints object exists and is correct
+	endpoints := &corev1.Endpoints{}
+	err = r.Get(ctx, types.NamespacedName{Name: serviceName, Namespace: ag.Namespace}, endpoints)
+
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// Create Endpoints
+			endpoints = r.constructListenerEndpoints(ag, serviceName, listenerPort, primaryPodName, primaryPodIP)
+			if err := r.Create(ctx, endpoints); err != nil {
+				return fmt.Errorf("failed to create listener Endpoints: %w", err)
+			}
+			logger.Info("Created listener Endpoints", "name", serviceName, "primary", primaryPodName)
+		} else {
+			return fmt.Errorf("failed to get listener Endpoints: %w", err)
+		}
+	} else {
+		// Update Endpoints if needed
+		currentIP := r.getCurrentEndpointIP(endpoints)
+		if currentIP != primaryPodIP {
+			endpoints = r.constructListenerEndpoints(ag, serviceName, listenerPort, primaryPodName, primaryPodIP)
+			if err := r.Update(ctx, endpoints); err != nil {
+				return fmt.Errorf("failed to update listener Endpoints: %w", err)
+			}
+			if primaryPodIP != "" {
+				logger.Info("Updated listener Endpoints", "primary", primaryPodName, "ip", primaryPodIP)
+				r.Recorder.Event(ag, corev1.EventTypeNormal, "ListenerEndpointsUpdated",
+					fmt.Sprintf("Listener now routing to %s (%s)", primaryPodName, primaryPodIP))
+			}
+		}
+	}
+
+	// Determine listener phase based on state
+	endpointCount := int32(0)
+	if primaryPodIP != "" {
+		endpointCount = 1
+	}
+
+	if primaryPodIP != "" && primaryPodName != "" {
+		// Listener is Ready - routing to primary
+		return r.updateListenerStatus(ctx, ag, mssqlv1alpha1.ListenerPhaseReady, service, endpointCount, primaryPodName,
+			fmt.Sprintf("Routing to primary %s (%s)", primaryPodName, primaryPodIP))
+	} else if primaryPodName == "" {
+		// No primary detected - could be WaitingForListener or Degraded
+		currentPhase := mssqlv1alpha1.ListenerPhaseWaitingForListener
+		if ag.Status.Listener != nil && ag.Status.Listener.Phase == mssqlv1alpha1.ListenerPhaseReady {
+			// Was previously ready, now degraded
+			currentPhase = mssqlv1alpha1.ListenerPhaseDegraded
+		}
+
+		message := fmt.Sprintf("No primary replica detected. VIP: %s. ", vip)
+		if currentPhase == mssqlv1alpha1.ListenerPhaseWaitingForListener {
+			message += "Create AG Listener in SQL Server using this VIP."
+			// Throttled logging for waiting state
+			r.logListenerWaiting(agKey, vip, listenerPort)
+		} else {
+			message += "AG may be in failover or have no healthy primary."
+			r.Recorder.Event(ag, corev1.EventTypeWarning, "ListenerDegraded",
+				"No primary replica available for listener")
+		}
+
+		return r.updateListenerStatus(ctx, ag, currentPhase, service, 0, "", message)
+	} else {
+		// Primary exists but pod IP not available
+		return r.updateListenerStatus(ctx, ag, mssqlv1alpha1.ListenerPhaseDegraded, service, 0, primaryPodName,
+			fmt.Sprintf("Primary %s exists but pod IP not available", primaryPodName))
+	}
+}
+
+// constructListenerService creates the Service spec for the AG Listener
+func (r *SQLServerAGReconciler) constructListenerService(ag *mssqlv1alpha1.SQLServerAG, sqlServer *mssqlv1alpha1.SQLServer, spec *mssqlv1alpha1.AGListenerSpec) *corev1.Service {
+	listenerPort := spec.Port
+	if listenerPort == 0 {
+		listenerPort = 1433
+	}
+
+	serviceType := spec.ServiceType
+	if serviceType == "" {
+		serviceType = corev1.ServiceTypeClusterIP
+	}
+
+	// Merge annotations
+	annotations := make(map[string]string)
+	for k, v := range spec.Annotations {
+		annotations[k] = v
+	}
+	annotations["mssql.microsoft.com/managed-by"] = "sqlserverag-controller"
+
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        spec.Name,
+			Namespace:   ag.Namespace,
+			Labels:      r.labelsForListener(ag, sqlServer),
+			Annotations: annotations,
+		},
+		Spec: corev1.ServiceSpec{
+			// NO SELECTOR - we manage Endpoints manually
+			Type: serviceType,
+			Ports: []corev1.ServicePort{
+				{
+					Name:       "sql",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       listenerPort,
+					TargetPort: intstr.FromInt(int(listenerPort)),
+				},
+			},
+		},
+	}
+
+	// Set static ClusterIP if specified
+	if spec.ClusterIP != "" {
+		service.Spec.ClusterIP = spec.ClusterIP
+	}
+
+	// Set LoadBalancer IP if specified
+	if spec.LoadBalancerIP != "" && serviceType == corev1.ServiceTypeLoadBalancer {
+		service.Spec.LoadBalancerIP = spec.LoadBalancerIP
+	}
+
+	// Set owner reference
+	ctrl.SetControllerReference(ag, service, r.Scheme)
+
+	return service
+}
+
+// constructListenerEndpoints creates the Endpoints for the AG Listener
+func (r *SQLServerAGReconciler) constructListenerEndpoints(ag *mssqlv1alpha1.SQLServerAG, serviceName string, port int32, primaryPodName, primaryPodIP string) *corev1.Endpoints {
+	endpoints := &corev1.Endpoints{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      serviceName,
+			Namespace: ag.Namespace,
+			Labels: map[string]string{
+				LabelAG:       ag.Spec.AvailabilityGroup.Name,
+				LabelListener: serviceName,
+			},
+		},
+	}
+
+	// Only add endpoint if we have a valid primary IP
+	if primaryPodIP != "" {
+		endpoints.Subsets = []corev1.EndpointSubset{
+			{
+				Addresses: []corev1.EndpointAddress{
+					{
+						IP: primaryPodIP,
+						TargetRef: &corev1.ObjectReference{
+							Kind:      "Pod",
+							Name:      primaryPodName,
+							Namespace: ag.Namespace,
+						},
+					},
+				},
+				Ports: []corev1.EndpointPort{
+					{
+						Name:     "sql",
+						Port:     port,
+						Protocol: corev1.ProtocolTCP,
+					},
+				},
+			},
+		}
+	}
+
+	// Set owner reference
+	ctrl.SetControllerReference(ag, endpoints, r.Scheme)
+
+	return endpoints
+}
+
+// getCurrentEndpointIP returns the current IP from the Endpoints object
+func (r *SQLServerAGReconciler) getCurrentEndpointIP(endpoints *corev1.Endpoints) string {
+	if len(endpoints.Subsets) > 0 && len(endpoints.Subsets[0].Addresses) > 0 {
+		return endpoints.Subsets[0].Addresses[0].IP
+	}
+	return ""
+}
+
+// labelsForListener returns labels for listener resources
+func (r *SQLServerAGReconciler) labelsForListener(ag *mssqlv1alpha1.SQLServerAG, sqlServer *mssqlv1alpha1.SQLServer) map[string]string {
+	return map[string]string{
+		"app":                          "mssql",
+		"mssql.microsoft.com/instance": sqlServer.Name,
+		LabelAG:                        ag.Spec.AvailabilityGroup.Name,
+		LabelListener:                  ag.Spec.Listener.Name,
+	}
+}
+
+// updateListenerStatus updates the listener status in the SQLServerAG
+func (r *SQLServerAGReconciler) updateListenerStatus(ctx context.Context, ag *mssqlv1alpha1.SQLServerAG, phase mssqlv1alpha1.ListenerPhase, service *corev1.Service, endpointCount int32, currentPrimary, message string) error {
+	now := metav1.Now()
+
+	// Initialize listener status if needed
+	if ag.Status.Listener == nil {
+		ag.Status.Listener = &mssqlv1alpha1.AGListenerStatus{}
+	}
+
+	// Check if phase changed
+	phaseChanged := ag.Status.Listener.Phase != phase
+
+	// Update status fields
+	ag.Status.Listener.Phase = phase
+	ag.Status.Listener.ServiceName = service.Name
+	ag.Status.Listener.VIP = service.Spec.ClusterIP
+	ag.Status.Listener.Port = ag.Spec.Listener.Port
+	if ag.Status.Listener.Port == 0 {
+		ag.Status.Listener.Port = 1433
+	}
+	ag.Status.Listener.EndpointCount = endpointCount
+	ag.Status.Listener.CurrentPrimary = currentPrimary
+	ag.Status.Listener.Message = message
+	ag.Status.Listener.LastCheckedTime = &now
+
+	// Get external IP for LoadBalancer
+	if service.Spec.Type == corev1.ServiceTypeLoadBalancer && len(service.Status.LoadBalancer.Ingress) > 0 {
+		if service.Status.LoadBalancer.Ingress[0].IP != "" {
+			ag.Status.Listener.ExternalIP = service.Status.LoadBalancer.Ingress[0].IP
+		} else if service.Status.LoadBalancer.Ingress[0].Hostname != "" {
+			ag.Status.Listener.ExternalIP = service.Status.LoadBalancer.Ingress[0].Hostname
+		}
+	}
+
+	if phaseChanged {
+		ag.Status.Listener.LastTransitionTime = &now
+	}
+
+	// Update the Listener condition
+	condition := metav1.Condition{
+		Type:               "ListenerReady",
+		LastTransitionTime: now,
+	}
+
+	switch phase {
+	case mssqlv1alpha1.ListenerPhaseReady:
+		condition.Status = metav1.ConditionTrue
+		condition.Reason = "ListenerReady"
+		condition.Message = message
+	case mssqlv1alpha1.ListenerPhaseWaitingForListener:
+		condition.Status = metav1.ConditionFalse
+		condition.Reason = "WaitingForListener"
+		condition.Message = message
+	case mssqlv1alpha1.ListenerPhaseDegraded:
+		condition.Status = metav1.ConditionFalse
+		condition.Reason = "Degraded"
+		condition.Message = message
+	case mssqlv1alpha1.ListenerPhaseMaintenance:
+		condition.Status = metav1.ConditionFalse
+		condition.Reason = "Maintenance"
+		condition.Message = message
+	default:
+		condition.Status = metav1.ConditionUnknown
+		condition.Reason = "Pending"
+		condition.Message = message
+	}
+
+	meta.SetStatusCondition(&ag.Status.Conditions, condition)
+
+	return r.Status().Update(ctx, ag)
+}
+
+// logListenerWaiting logs a reminder about listener creation with throttling
+func (r *SQLServerAGReconciler) logListenerWaiting(agKey, vip string, port int32) {
+	logger := log.Log.WithName("listener")
+
+	lastLog, exists := r.lastListenerLogTime[agKey]
+	if !exists || time.Since(lastLog) >= ListenerLogInterval {
+		logger.Info("Waiting for AG Listener to be created in SQL Server",
+			"vip", vip,
+			"port", port,
+			"hint", fmt.Sprintf("Run T-SQL: ALTER AVAILABILITY GROUP ... ADD LISTENER 'listener-name' WITH (IP = (('%s')), PORT = %d)", vip, port))
+		r.lastListenerLogTime[agKey] = time.Now()
+	}
+}
+
+// isPodReady checks if a pod is ready
+func isPodReady(pod *corev1.Pod) bool {
+	for _, cond := range pod.Status.Conditions {
+		if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
 // SetupWithManager sets up the controller with the Manager
 func (r *SQLServerAGReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&mssqlv1alpha1.SQLServerAG{}).
 		Owns(&corev1.Service{}).
+		Owns(&corev1.Endpoints{}).
 		Complete(r)
 }
 

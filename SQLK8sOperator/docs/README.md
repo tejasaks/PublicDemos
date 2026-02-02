@@ -75,6 +75,7 @@ Day-2 operations and maintenance.
 
 | Document | Description |
 |----------|-------------|
+| [AG Operations](operations/ag-operations.md) | kubectl commands for AG management |
 | [Upgrades](operations/upgrades.md) | Version and CU upgrades, operator patching |
 | [Scaling](operations/scaling.md) | Horizontal and vertical scaling |
 | [Backup & Restore](operations/backup-restore.md) | Data protection |

@@ -432,3 +432,68 @@ func ValidateImageReference(image string) *ValidationResult {
 
 	return result
 }
+
+// ValidateKubernetesName validates a name for use as a Kubernetes resource name
+// Kubernetes names must be DNS-1123 subdomain: lowercase, alphanumeric, and hyphens
+// Must start and end with alphanumeric character, max 63 characters
+func ValidateKubernetesName(name string, fieldName string) *ValidationResult {
+	result := NewValidationResult()
+
+	if name == "" {
+		result.AddError("%s is required", fieldName)
+		return result
+	}
+
+	if len(name) > 63 {
+		result.AddError("%s '%s' exceeds maximum length of 63 characters (has %d)", fieldName, truncate(name, 20), len(name))
+	}
+
+	// DNS-1123 label: lowercase alphanumeric and hyphens
+	// Must start with alphanumeric, must end with alphanumeric
+	validPattern := regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+	if !validPattern.MatchString(name) {
+		result.AddError("%s '%s' is invalid: must be lowercase, alphanumeric, may contain hyphens, "+
+			"and must start and end with an alphanumeric character", fieldName, truncate(name, 20))
+	}
+
+	// Check for uppercase (common mistake)
+	if strings.ToLower(name) != name {
+		result.AddError("%s '%s' contains uppercase characters; Kubernetes names must be lowercase", fieldName, truncate(name, 20))
+	}
+
+	return result
+}
+
+// ValidateIPAddress validates an IPv4 or IPv6 address
+func ValidateIPAddress(ip string, fieldName string) *ValidationResult {
+	result := NewValidationResult()
+
+	if ip == "" {
+		result.AddError("%s is required", fieldName)
+		return result
+	}
+
+	// IPv4 pattern
+	ipv4Pattern := regexp.MustCompile(`^(\d{1,3}\.){3}\d{1,3}$`)
+	// IPv6 pattern (simplified - handles common formats)
+	ipv6Pattern := regexp.MustCompile(`^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$|^::$|^::1$`)
+
+	if ipv4Pattern.MatchString(ip) {
+		// Validate IPv4 octets are 0-255
+		parts := strings.Split(ip, ".")
+		for _, part := range parts {
+			var num int
+			fmt.Sscanf(part, "%d", &num)
+			if num < 0 || num > 255 {
+				result.AddError("%s '%s' has invalid IPv4 octet value (must be 0-255)", fieldName, ip)
+				break
+			}
+		}
+	} else if ipv6Pattern.MatchString(ip) {
+		// Basic IPv6 format is valid
+	} else {
+		result.AddError("%s '%s' is not a valid IPv4 or IPv6 address", fieldName, ip)
+	}
+
+	return result
+}
