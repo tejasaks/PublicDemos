@@ -620,7 +620,6 @@ After completing T-SQL setup, AG Helper should automatically detect the new AG.
 kubectl logs sql-ag-0 -n mssql -c ag-helper | tail -10
 
 # Expected output:
-# [INFO] Discovered 1 Availability Group(s): [ProductionAG]
 # [INFO] AG 'ProductionAG' State: role=PRIMARY, sync=SYNCHRONIZED, health=Healthy
 ```
 
@@ -628,20 +627,13 @@ kubectl logs sql-ag-0 -n mssql -c ag-helper | tail -10
 
 ## Next Steps
 
-| Option | When to Use | Action |
-|--------|-------------|--------|
-| **Done!** | Auto-discovery is sufficient | AG Helper is monitoring, no further action |
-| **Step 3** | Need K8s Services or controller failover | Apply [ag-step3-ag-config.yaml](ag-step3-ag-config.yaml) |
+After completing T-SQL setup, proceed to Step 3:
 
-### When to Apply Step 3 (ag-step3-ag-config.yaml)
+**Apply [ag-step3-ag-config.yaml](ag-step3-ag-config.yaml)** to:
 
-Apply Step 3 if you need:
-
-- ✅ **Primary/Secondary LoadBalancer Services** - Route traffic to current primary or secondaries
-- ✅ **Controller-managed automatic failover** - Operator detects primary failure and promotes secondary
-- ✅ **Explicit AG configuration in Kubernetes** - Manage AG as a Kubernetes resource
-
-If you only need monitoring (AG Helper watching AG health), auto-discovery mode is sufficient.
+- ✅ **Deploy AG Helper sidecar** - Monitor AG health on each replica
+- ✅ **Create Primary/Secondary LoadBalancer Services** - Route traffic to current primary or secondaries
+- ✅ **Enable optional automatic failover** - Set `automaticFailover: true` for controller-managed failover
 
 ---
 

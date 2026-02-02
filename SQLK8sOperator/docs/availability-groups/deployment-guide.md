@@ -10,18 +10,24 @@ Step-by-step guide to deploying a SQL Server Availability Group on Kubernetes.
 - [Prerequisites](#prerequisites)
 - [Step 1: Deploy SQL Server Replicas](#step-1-deploy-sql-server-replicas)
 - [Step 2: Configure AG via T-SQL](#step-2-configure-ag-via-t-sql)
-- [Step 3: Verify AG Helper Detection](#step-3-verify-ag-helper-detection)
-- [Step 4: Enable Kubernetes AG Management (Optional)](#step-4-enable-kubernetes-ag-management-optional)
+- [Step 3: Deploy AG Helper and K8s Services](#step-3-deploy-ag-helper-and-k8s-services)
+- [Step 4: Verify AG Helper Detection](#step-4-verify-ag-helper-detection)
 - [Quick Reference](#quick-reference)
 
 ## Overview
 
-### Deployment Approaches
+### Architecture
 
-| Approach | Description | When to Use |
-|----------|-------------|-------------|
-| **Auto-Discovery** | AG Helper monitors all AGs automatically | Default, simplest setup |
-| **Explicit Management** | SQLServerAG CR for K8s services + controller failover | Need LoadBalancer services or controller failover |
+Each SQLServerAG resource manages exactly **one** Availability Group:
+- The AG name must be specified explicitly
+- For multiple AGs, create multiple SQLServerAG resources
+
+### Failover Modes
+
+| Mode | automaticFailover | Description | When to Use |
+|------|-------------------|-------------|-------------|
+| **Monitoring Only** | `false` (default) | Operator monitors AG health; failover is manual | Dev/test, DBA-controlled failover |
+| **Automatic Failover** | `true` | Controller automatically promotes secondary when primary fails | Production HA, automated recovery |
 
 ### Correct Deployment Order
 
@@ -30,8 +36,8 @@ Step-by-step guide to deploying a SQL Server Availability Group on Kubernetes.
 │  STEP 1: Deploy SQL Replicas                                       │
 │  ─────────────────────────────                                      │
 │  - Apply ag-step1-replicas.yaml                                     │
-│  - Wait for pods to be Running (2/2 Ready)                          │
-│  - AG Helper starts in "waiting" mode                               │
+│  - Wait for pods to be Running (1/1 Ready)                          │
+│  - SQL Server running, but no AG Helper yet                         │
 │                                                                     │
 │  STEP 2: Configure AG via T-SQL                                     │
 │  ─────────────────────────────────                                  │
@@ -41,20 +47,20 @@ Step-by-step guide to deploying a SQL Server Availability Group on Kubernetes.
 │  - Create Availability Group on primary                             │
 │  - Join secondaries to AG                                           │
 │                                                                     │
-│  STEP 3: Verify AG Helper Detection                                 │
-│  ─────────────────────────────────────                              │
+│  STEP 3: Deploy AG Helper + K8s Services                            │
+│  ─────────────────────────────────────────                          │
+│  - Apply ag-step3-ag-config.yaml                                     │
+│  - AG Helper starts and monitors the specified AG                    │
+│  - LoadBalancer services created for primary/secondary              │
+│                                                                     │
+│  STEP 4: Verify AG Helper Detection                                 │
+│  ────────────────────────────────────────────                       │
 │  - Check AG Helper logs for "Discovered N Availability Group(s)"    │
 │  - Verify health monitoring is active                               │
-│                                                                     │
-│  STEP 4: Enable K8s AG Management (OPTIONAL)                        │
-│  ────────────────────────────────────────────                       │
-│  - Apply ag-step3-ag-config.yaml                                    │
-│  - Creates LoadBalancer services for primary/secondary routing      │
-│  - Enables controller-managed automatic failover                    │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-> **Important:** The AG Helper requires the AG to exist before it can monitor it. Always complete T-SQL setup (Step 2) before expecting AG Helper to report healthy status.
+> **Important:** The AG Helper is deployed via SQLServerAG resource (Step 3). The AG must exist in SQL Server before AG Helper can monitor it. Always complete T-SQL setup (Step 2) before applying Step 3.
 
 ## Prerequisites
 
@@ -69,7 +75,7 @@ Before deploying an AG, ensure:
 
 ## Step 1: Deploy SQL Server Replicas
 
-Deploy SQL Server with AG Helper in auto-discovery mode.
+Deploy SQL Server replicas configured for Availability Groups.
 
 ### Using Sample Manifest
 
@@ -81,8 +87,9 @@ This creates:
 - `mssql` namespace
 - SQLServer CR with 3 replicas (`sql-ag-0`, `sql-ag-1`, `sql-ag-2`)
 - SA password secret
-- AG Helper credentials secret
-- AG Helper in auto-discovery mode
+- AG Helper credentials secret (for use in Step 3)
+
+> **Note:** AG Helper sidecar is NOT deployed yet. It will be added in Step 3 after you create the AG via T-SQL.
 
 ### Or Create Manually
 
@@ -137,18 +144,6 @@ spec:
   service:
     type: LoadBalancer
     port: 1433
-  # AG Helper in auto-discovery mode
-  agHelper:
-    enabled: true
-    image: mssql-ag-helper:latest
-    credentials:
-      secretRef:
-        usernameSecret:
-          name: sql-ag-helper
-          key: username
-        passwordSecret:
-          name: sql-ag-helper
-          key: password
 ```
 
 ### Wait for Pods
@@ -156,20 +151,11 @@ spec:
 ```bash
 kubectl get pods -n mssql -w
 
-# Wait until all 3 pods show 2/2 Ready
+# Wait until all 3 pods show 1/1 Ready (no AG Helper yet)
 # NAME        READY   STATUS    RESTARTS   AGE
-# sql-ag-0    2/2     Running   0          5m
-# sql-ag-1    2/2     Running   0          4m
-# sql-ag-2    2/2     Running   0          3m
-```
-
-### Verify AG Helper is Waiting
-
-```bash
-kubectl logs sql-ag-0 -n mssql -c ag-helper | tail -5
-
-# Expected output:
-# [INFO] No Availability Groups found, waiting for AG configuration...
+# sql-ag-0    1/1     Running   0          5m
+# sql-ag-1    1/1     Running   0          4m
+# sql-ag-2    1/1     Running   0          3m
 ```
 
 ## Step 2: Configure AG via T-SQL
@@ -273,9 +259,75 @@ for i in 1 2; do
 done
 ```
 
-## Step 3: Verify AG Helper Detection
+## Step 3: Deploy AG Helper and K8s Services
 
-After T-SQL setup, AG Helper automatically detects the new AG.
+After T-SQL setup, deploy the AG Helper sidecar via SQLServerAG resource.
+
+### Apply the SQLServerAG Manifest
+
+```bash
+kubectl apply -f samples/ag-step3-ag-config.yaml
+```
+
+This creates:
+- AG Helper sidecar on each pod (monitors the specified AG)
+- Primary LoadBalancer service (routes to current primary)
+- Secondary LoadBalancer service (routes to readable secondaries)
+
+### Failover Behavior
+
+By default, `automaticFailover: false` (monitoring only):
+- Operator monitors AG health via AG Helper sidecar
+- LoadBalancer services route traffic to primary/secondaries
+- **Failover must be triggered manually:**
+
+```bash
+# Via T-SQL (on target secondary)
+kubectl exec -it sql-ag-1 -n mssql -c mssql -- \
+  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa \
+  -P 'YourStrong@Passw0rd!' -C -Q \
+  "ALTER AVAILABILITY GROUP ProductionAG FAILOVER;"
+
+# Or via AG Helper API
+kubectl exec -it sql-ag-0 -n mssql -c ag-helper -- \
+  curl -X POST localhost:8080/failover \
+  -H "Content-Type: application/json" \
+  -d '{"targetReplica": "sql-ag-1", "force": false}'
+```
+
+### Enable Automatic Failover (Production HA)
+
+For controller-managed automatic failover, set `automaticFailover: true` in the manifest:
+
+```yaml
+availabilityGroup:
+  name: ProductionAG
+  automaticFailover: true  # Enable controller-managed failover
+```
+
+With automatic failover enabled:
+- Monitors AG health continuously
+- Detects primary failure (configurable timeout via `failover.healthCheckTimeout`)
+- Automatically promotes best synchronized secondary
+- Updates LoadBalancer service endpoints
+
+### Wait for Pods to Update
+
+After applying either option, pods will restart to add the AG Helper sidecar:
+
+```bash
+kubectl get pods -n mssql -w
+
+# Wait until all 3 pods show 2/2 Ready
+# NAME        READY   STATUS    RESTARTS   AGE
+# sql-ag-0    2/2     Running   1          10m
+# sql-ag-1    2/2     Running   1          9m
+# sql-ag-2    2/2     Running   1          8m
+```
+
+## Step 4: Verify AG Helper Detection
+
+Check that AG Helper has discovered and is monitoring the AG.
 
 ### Check AG Helper Logs
 
@@ -315,67 +367,7 @@ kubectl exec -it sql-ag-0 -n mssql -c mssql -- \
 
 **Expected:** All replicas show `HEALTHY`, primary shows `PRIMARY`, others show `SECONDARY`.
 
-## Step 4: Enable Kubernetes AG Management (Optional)
-
-If you need **LoadBalancer services** or **controller-managed failover**, apply a SQLServerAG resource.
-
-### When to Apply Step 4
-
-| Need | Auto-Discovery | SQLServerAG CR |
-|------|----------------|----------------|
-| Health monitoring | ✅ Built-in | ✅ |
-| Primary/Secondary Services | ❌ | ✅ |
-| Controller-managed failover | ❌ | ✅ |
-| kubectl get sqlserverag | ❌ | ✅ |
-
-### Apply AG Configuration
-
-```bash
-kubectl apply -f samples/ag-step3-ag-config.yaml
-```
-
-Or create manually:
-
-```yaml
-apiVersion: mssql.microsoft.com/v1alpha1
-kind: SQLServerAG
-metadata:
-  name: production-ag
-  namespace: mssql
-spec:
-  sqlServerRef:
-    name: sql-ag
-  availabilityGroup:
-    name: ProductionAG  # Must match T-SQL AG name
-    replicas: 3
-    primaryConfig:
-      availabilityMode: SynchronousCommit
-      failoverMode: External
-    secondaryConfig:
-      availabilityMode: SynchronousCommit
-      failoverMode: External
-    automaticFailover: true
-    healthCheckCredentials:
-      secretRef:
-        usernameSecret:
-          name: sql-ag-helper
-          key: username
-        passwordSecret:
-          name: sql-ag-helper
-          key: password
-  endpoints:
-    primary:
-      type: LoadBalancer
-      port: 1433
-    secondary:
-      type: LoadBalancer
-      port: 1434
-  failover:
-    automatic: true
-    healthCheckTimeout: "30s"
-```
-
-### Verify Services Created
+### Verify Services
 
 ```bash
 kubectl get svc -n mssql
@@ -404,10 +396,10 @@ sqlcmd -S <EXTERNAL_IP>,1433 -U sa -P 'YourStrong@Passw0rd!'
 
 | File | Purpose |
 |------|---------|
-| [ag-step1-replicas.yaml](../../samples/ag-step1-replicas.yaml) | Step 1: SQL replicas + AG Helper |
+| [ag-step1-replicas.yaml](../../samples/ag-step1-replicas.yaml) | Step 1: SQL replicas |
 | [ag-step2-setup-ag.md](../../samples/ag-step2-setup-ag.md) | Step 2: T-SQL setup guide |
-| [ag-step3-ag-config.yaml](../../samples/ag-step3-ag-config.yaml) | Step 4: K8s AG management |
-| [ag-step3-multi-ag.yaml](../../samples/ag-step3-multi-ag.yaml) | Advanced: Multiple AGs |
+| [ag-step3-ag-config.yaml](../../samples/ag-step3-ag-config.yaml) | Step 3: AG management with LoadBalancer services |
+| [ag-step3-multi-ag.yaml](../../samples/ag-step3-multi-ag.yaml) | Advanced: Multiple AGs (one SQLServerAG per AG) |
 
 ### Common Commands
 
@@ -420,6 +412,12 @@ kubectl logs sql-ag-0 -n mssql -c ag-helper
 
 # Check AG state
 kubectl exec -it sql-ag-0 -n mssql -c ag-helper -- curl -s localhost:8080/state | jq
+
+# Manual failover (when automaticFailover: false)
+kubectl exec -it sql-ag-1 -n mssql -c mssql -- \
+  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa \
+  -P 'YourStrong@Passw0rd!' -C -Q \
+  "ALTER AVAILABILITY GROUP ProductionAG FAILOVER;"
 
 # Check SQLServerAG resources
 kubectl get sqlserverag -n mssql

@@ -88,7 +88,7 @@ fi
 log_step "Test 3b: Name Length Validation"
 
 # Try to create SQLServer with name > 13 chars (should be rejected)
-if cat <<EOF | kubectl apply -n "${TEST_NAMESPACE}" -f - 2>&1 | grep -qi "invalid\|denied\|error\|too long\|maxLength"; then
+if kubectl apply -n "${TEST_NAMESPACE}" -f - 2>&1 <<EOF | grep -qi "invalid\|denied\|error\|too long\|maxLength"; then
 apiVersion: mssql.microsoft.com/v1alpha1
 kind: SQLServer
 metadata:
@@ -172,7 +172,7 @@ log_step "Test 5: SQLServer Edition Validation"
 
 for edition in "Developer" "Express" "Standard" "Enterprise"; do
     # Create short name: tst-dev, tst-exp, tst-std, tst-ent
-    SHORT_ED=$(echo ${edition} | cut -c1-3 | tr '[:upper:]' '[:lower:]')
+    SHORT_ED=$(echo "${edition}" | cut -c1-3 | tr '[:upper:]' '[:lower:]')
     cat <<EOF | kubectl apply -n "${TEST_NAMESPACE}" -f - 2>/dev/null
 apiVersion: mssql.microsoft.com/v1alpha1
 kind: SQLServer

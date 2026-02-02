@@ -102,7 +102,7 @@ containers:
       - "-sql-port=1433"
       - "-http-port=8080"
       - "-monitor-interval=10s"
-      # Omit -ag-name for auto-discovery mode
+      - "-ag-name=ProductionAG"  # Required: explicit AG name
     env:
       - name: SQL_PASSWORD
         valueFrom:

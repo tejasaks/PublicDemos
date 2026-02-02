@@ -40,7 +40,9 @@ type SQLServerAGSpec struct {
 
 // AvailabilityGroupConfig defines the AG configuration
 type AvailabilityGroupConfig struct {
-	// Name is the name of the Availability Group
+	// Name is the name of the Availability Group (required)
+	// Each SQLServerAG resource monitors exactly one AG
+	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	Name string `json:"name"`
@@ -80,8 +82,9 @@ type AvailabilityGroupConfig struct {
 	DBFailover bool `json:"dbFailover,omitempty"`
 
 	// AutomaticFailover enables controller-driven automatic failover when primary is lost
-	// When enabled, the controller will detect primary failure and promote a secondary
-	// +kubebuilder:default=true
+	// When false (default), the operator only monitors AG health; failover requires manual intervention
+	// When true, the controller will detect primary failure and promote a secondary automatically
+	// +kubebuilder:default=false
 	AutomaticFailover bool `json:"automaticFailover,omitempty"`
 
 	// ClusterType is always External for Kubernetes

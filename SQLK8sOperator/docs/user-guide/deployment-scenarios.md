@@ -360,7 +360,7 @@ spec:
   availabilityGroup:
     name: ProductionAG
     replicas: 3
-    automaticFailover: true
+    automaticFailover: true  # Opt-in: enable controller failover (default: false)
     primaryConfig:
       availabilityMode: SynchronousCommit
     secondaryConfig:

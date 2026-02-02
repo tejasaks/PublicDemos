@@ -197,7 +197,7 @@ spec:
         backupPath: string           # For manual seeding
     
     dbFailover: bool                 # Default: true
-    automaticFailover: bool          # Default: true
+    automaticFailover: bool          # Default: false (monitoring only)
     clusterType: External            # Always External
     endpointPort: int                # Default: 5022
     externalWriteLeaseValidity: string  # Default: "20s"

@@ -15,7 +15,8 @@ Guide to configuring and managing failover for SQL Server Availability Groups.
 
 ## Automatic Failover
 
-When enabled, the operator automatically detects primary failure and promotes the best secondary replica.
+By default, `automaticFailover` is set to `false` (monitoring only with manual failover).
+When explicitly enabled, the operator automatically detects primary failure and promotes the best secondary replica.
 
 ### How It Works
 
@@ -56,7 +57,8 @@ apiVersion: mssql.microsoft.com/v1alpha1
 kind: SQLServerAG
 spec:
   availabilityGroup:
-    automaticFailover: true  # Enable automatic failover
+    # Enable automatic failover (defaults to false for monitoring-only)
+    automaticFailover: true
   
   failover:
     automatic: true

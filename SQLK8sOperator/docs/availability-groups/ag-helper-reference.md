@@ -206,8 +206,6 @@ http://localhost:8080
 | GET | `/state` | Full AG state |
 | GET | `/role` | Current replica role |
 | GET | `/sequence` | Current LSN (for failover) |
-| GET | `/ags` | List all AGs |
-| GET | `/ags/{name}` | Specific AG details |
 | POST | `/failover` | Trigger failover |
 
 ---
@@ -340,53 +338,6 @@ Returns hardened LSN for failover candidate selection.
 
 ---
 
-### GET /ags
-
-List all availability groups.
-
-**Response:**
-```json
-{
-  "availabilityGroups": [
-    {
-      "name": "ProductionAG",
-      "role": "PRIMARY",
-      "health": "HEALTHY"
-    },
-    {
-      "name": "AnalyticsAG",
-      "role": "SECONDARY",
-      "health": "HEALTHY"
-    }
-  ]
-}
-```
-
----
-
-### GET /ags/{name}
-
-Get specific AG details.
-
-**Request:**
-```
-GET /ags/ProductionAG
-```
-
-**Response:**
-```json
-{
-  "name": "ProductionAG",
-  "role": "PRIMARY",
-  "operationalState": "ONLINE",
-  "primaryReplica": "sql-ag-prod01-0",
-  "databases": ["AppDB"],
-  "replicas": 3
-}
-```
-
----
-
 ### POST /failover
 
 Trigger manual failover to this replica.
@@ -394,7 +345,6 @@ Trigger manual failover to this replica.
 **Request Body:**
 ```json
 {
-  "agName": "ProductionAG",   // Optional: specific AG (default: first AG)
   "allowDataLoss": false,      // Required: must explicitly allow
   "force": false               // Optional: force even if not sync
 }

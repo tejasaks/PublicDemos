@@ -238,7 +238,7 @@ The AG Helper exposes these endpoints on port 8080:
 | `/role` | GET | Current replica role | Debug/monitoring |
 | `/sequence` | GET | Current LSN/sequence number | Controller |
 | `/failover` | POST | Trigger failover | Controller |
-| `/ags` | GET | List all AGs (multi-AG mode) | Debug/monitoring |
+
 
 ### Example `/state` Response
 

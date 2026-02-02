@@ -65,10 +65,11 @@ spec:
                 description: AvailabilityGroup contains the AG configuration
                 properties:
                   automaticFailover:
-                    default: true
+                    default: false
                     description: |-
                       AutomaticFailover enables controller-driven automatic failover when primary is lost
-                      When enabled, the controller will detect primary failure and promote a secondary
+                      When false (default), the operator only monitors AG health; failover requires manual intervention
+                      When true, the controller will detect primary failure and promote a secondary automatically
                     type: boolean
                   clusterType:
                     default: External
@@ -164,7 +165,9 @@ spec:
                         type: string
                     type: object
                   name:
-                    description: Name is the name of the Availability Group
+                    description: |-
+                      Name is the name of the Availability Group (required)
+                      Each SQLServerAG resource monitors exactly one AG
                     maxLength: 128
                     minLength: 1
                     type: string

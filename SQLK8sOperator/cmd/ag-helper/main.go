@@ -59,7 +59,7 @@ var sqlIdentifierPattern = regexp.MustCompile(`^[a-zA-Z_@#][a-zA-Z0-9_@#$]{0,127
 // validateSQLIdentifier validates a SQL Server identifier
 func validateSQLIdentifier(name string, fieldName string) error {
 	if name == "" {
-		return nil // Empty is allowed for auto-discovery mode
+		return fmt.Errorf("%s is required", fieldName)
 	}
 	if len(name) > 128 {
 		return fmt.Errorf("%s '%s' exceeds maximum length of 128 characters", fieldName, truncateString(name, 20))
@@ -150,16 +150,14 @@ type FailoverRequest struct {
 
 // AGHelper is the main struct for the AG helper sidecar
 type AGHelper struct {
-	agName            string // Specific AG to monitor, or empty for auto-discovery
+	agName            string // Name of the AG to monitor (required)
 	connectionString  string
 	db                *sql.DB
 	state             *AGState
-	allAGStates       map[string]*AGState // For multi-AG monitoring
 	monitorInterval   time.Duration
 	connectionTimeout time.Duration
 	httpPort          int
 	stopCh            chan struct{}
-	mu                sync.RWMutex // Protects allAGStates
 }
 
 // NewAGHelper creates a new AGHelper instance
@@ -174,8 +172,7 @@ func NewAGHelper(agName, connStr string, monitorInterval, connTimeout time.Durat
 			AGName:      agName,
 			LastUpdated: time.Now(),
 		},
-		allAGStates: make(map[string]*AGState),
-		stopCh:      make(chan struct{}),
+		stopCh: make(chan struct{}),
 	}
 }
 
@@ -201,29 +198,6 @@ func (h *AGHelper) Connect(ctx context.Context) error {
 	h.db = db
 	klog.Info("Connected to SQL Server")
 	return nil
-}
-
-// DiscoverAGs discovers all Availability Groups on this SQL Server instance
-func (h *AGHelper) DiscoverAGs(ctx context.Context) ([]string, error) {
-	query := `SELECT name FROM sys.availability_groups ORDER BY name`
-
-	rows, err := h.db.QueryContext(ctx, query)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query availability groups: %w", err)
-	}
-	defer rows.Close()
-
-	var agNames []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			klog.Warningf("Failed to scan AG name: %v", err)
-			continue
-		}
-		agNames = append(agNames, name)
-	}
-
-	return agNames, nil
 }
 
 // GetAGStateByName retrieves the state for a specific AG
@@ -719,13 +693,11 @@ func (h *AGHelper) Failover(ctx context.Context, allowDataLoss bool) error {
 }
 
 // MonitorLoop continuously monitors the AG state
-// Supports both single-AG mode (agName specified) and auto-discovery mode (agName empty)
 func (h *AGHelper) MonitorLoop(ctx context.Context) {
 	ticker := time.NewTicker(h.monitorInterval)
 	defer ticker.Stop()
 
 	lastHealth := ""
-	lastAGCount := 0
 	waitingLogCount := 0
 
 	for {
@@ -735,19 +707,13 @@ func (h *AGHelper) MonitorLoop(ctx context.Context) {
 		case <-h.stopCh:
 			return
 		case <-ticker.C:
-			if h.agName != "" {
-				// Single AG mode - monitor specific AG
-				h.monitorSingleAG(ctx, &lastHealth, &waitingLogCount)
-			} else {
-				// Auto-discovery mode - discover and monitor all AGs
-				h.monitorAllAGs(ctx, &lastHealth, &lastAGCount)
-			}
+			h.monitorAG(ctx, &lastHealth, &waitingLogCount)
 		}
 	}
 }
 
-// monitorSingleAG monitors a specific AG (original behavior)
-func (h *AGHelper) monitorSingleAG(ctx context.Context, lastHealth *string, waitingLogCount *int) {
+// monitorAG monitors the configured AG
+func (h *AGHelper) monitorAG(ctx context.Context, lastHealth *string, waitingLogCount *int) {
 	state, err := h.GetAGState(ctx)
 	if err != nil {
 		klog.Errorf("Failed to get AG state: %v", err)
@@ -777,119 +743,6 @@ func (h *AGHelper) monitorSingleAG(ctx context.Context, lastHealth *string, wait
 		}
 	}
 	*lastHealth = state.Health
-}
-
-// monitorAllAGs discovers and monitors all AGs on this SQL Server
-func (h *AGHelper) monitorAllAGs(ctx context.Context, lastHealth *string, lastAGCount *int) {
-	// Discover all AGs
-	agNames, err := h.DiscoverAGs(ctx)
-	if err != nil {
-		klog.Errorf("Failed to discover AGs: %v", err)
-		return
-	}
-
-	// Log when AG count changes (new AG added or removed)
-	if len(agNames) != *lastAGCount {
-		if len(agNames) == 0 {
-			klog.Info("No Availability Groups found, waiting for AG configuration...")
-		} else {
-			klog.Infof("Discovered %d Availability Group(s): %v", len(agNames), agNames)
-		}
-		*lastAGCount = len(agNames)
-	}
-
-	// Update states for all AGs
-	h.mu.Lock()
-	// Track which AGs we've seen this iteration
-	seenAGs := make(map[string]bool)
-
-	for _, agName := range agNames {
-		seenAGs[agName] = true
-
-		state, err := h.GetAGStateByName(ctx, agName)
-		if err != nil {
-			klog.Warningf("Failed to get state for AG '%s': %v", agName, err)
-			continue
-		}
-
-		// Check if this is a new AG or state changed
-		oldState, exists := h.allAGStates[agName]
-		if !exists {
-			klog.Infof("New AG detected: '%s' (health=%s, role=%s)", agName, state.Health, state.Role)
-		} else if oldState.Health != state.Health {
-			klog.Infof("AG '%s' State changed: health=%s->%s, role=%s",
-				agName, oldState.Health, state.Health, state.Role)
-		}
-
-		h.allAGStates[agName] = state
-	}
-
-	// Remove AGs that no longer exist
-	for agName := range h.allAGStates {
-		if !seenAGs[agName] {
-			klog.Infof("AG '%s' removed", agName)
-			delete(h.allAGStates, agName)
-		}
-	}
-	h.mu.Unlock()
-
-	// Update primary state for health endpoint (use first healthy AG, or first AG)
-	h.updatePrimaryState(agNames)
-}
-
-// updatePrimaryState sets the primary state for health endpoints in multi-AG mode
-func (h *AGHelper) updatePrimaryState(agNames []string) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	if len(agNames) == 0 {
-		// No AGs - set to waiting state
-		h.state.mu.Lock()
-		h.state = &AGState{
-			AGName:      "",
-			Health:      "Waiting",
-			Role:        RoleNotAvailable,
-			LastUpdated: time.Now(),
-		}
-		h.state.mu.Unlock()
-		return
-	}
-
-	// Find the "worst" health state across all AGs
-	// Priority: Critical > Warning > Waiting > Healthy
-	worstHealth := "Healthy"
-	var primaryState *AGState
-
-	for _, agName := range agNames {
-		state, exists := h.allAGStates[agName]
-		if !exists {
-			continue
-		}
-
-		if primaryState == nil {
-			primaryState = state
-		}
-
-		switch state.Health {
-		case "Critical":
-			worstHealth = "Critical"
-		case "Warning":
-			if worstHealth != "Critical" {
-				worstHealth = "Warning"
-			}
-		case "Waiting":
-			if worstHealth == "Healthy" {
-				worstHealth = "Waiting"
-			}
-		}
-	}
-
-	if primaryState != nil {
-		h.state.mu.Lock()
-		h.state = primaryState
-		h.state.Health = worstHealth // Use aggregate health
-		h.state.mu.Unlock()
-	}
 }
 
 // HTTP Handlers
@@ -1003,89 +856,6 @@ func (h *AGHelper) handleSequence(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleAllAGs returns the state of all discovered AGs
-func (h *AGHelper) handleAllAGs(w http.ResponseWriter, r *http.Request) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	w.Header().Set("Content-Type", "application/json")
-
-	// Build response with all AG states
-	response := make(map[string]interface{})
-	for agName, state := range h.allAGStates {
-		state.mu.RLock()
-		response[agName] = map[string]interface{}{
-			"agName":      state.AGName,
-			"health":      state.Health,
-			"role":        state.Role,
-			"syncState":   state.SyncState,
-			"lastUpdated": state.LastUpdated.Format(time.RFC3339),
-		}
-		state.mu.RUnlock()
-	}
-
-	// Add summary
-	output := map[string]interface{}{
-		"count": len(h.allAGStates),
-		"ags":   response,
-	}
-
-	json.NewEncoder(w).Encode(output)
-}
-
-// handleAGByName returns the state of a specific AG by name
-func (h *AGHelper) handleAGByName(w http.ResponseWriter, r *http.Request) {
-	// Extract AG name from URL path (e.g., /state/myag)
-	path := strings.TrimPrefix(r.URL.Path, "/state/")
-	if path == "" || path == r.URL.Path {
-		http.Error(w, "AG name required in path", http.StatusBadRequest)
-		return
-	}
-
-	h.mu.RLock()
-	state, exists := h.allAGStates[path]
-	h.mu.RUnlock()
-
-	if !exists {
-		http.Error(w, fmt.Sprintf("AG '%s' not found", path), http.StatusNotFound)
-		return
-	}
-
-	state.mu.RLock()
-	defer state.mu.RUnlock()
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"agName":           state.AGName,
-		"health":           state.Health,
-		"role":             state.Role,
-		"syncState":        state.SyncState,
-		"sequenceNumber":   state.SequenceNumber,
-		"localReplicaName": state.LocalReplicaName,
-		"replicaCount":     len(state.Replicas),
-		"databaseCount":    len(state.Databases),
-		"lastUpdated":      state.LastUpdated.Format(time.RFC3339),
-	})
-}
-
-// handleDiscover forces an AG discovery and returns the list
-func (h *AGHelper) handleDiscover(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	agNames, err := h.DiscoverAGs(ctx)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to discover AGs: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"count": len(agNames),
-		"ags":   agNames,
-	})
-}
-
 // StartHTTPServer starts the HTTP server for the sidecar API
 func (h *AGHelper) StartHTTPServer(ctx context.Context) error {
 	mux := http.NewServeMux()
@@ -1097,11 +867,6 @@ func (h *AGHelper) StartHTTPServer(ctx context.Context) error {
 	mux.HandleFunc("/role", h.handleRole)
 	mux.HandleFunc("/failover", h.handleFailover)
 	mux.HandleFunc("/sequence", h.handleSequence)
-
-	// Multi-AG endpoints
-	mux.HandleFunc("/ags", h.handleAllAGs)        // List all discovered AGs
-	mux.HandleFunc("/state/", h.handleAGByName)   // Get specific AG state (e.g., /state/MyAG)
-	mux.HandleFunc("/discover", h.handleDiscover) // Force AG discovery
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", h.httpPort),

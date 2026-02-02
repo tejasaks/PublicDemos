@@ -1,29 +1,44 @@
 # ============================================================================
-# STEP 3: SQLServerAG Configuration (Optional)
+# STEP 3: SQLServerAG Configuration (Kubernetes AG Management)
 # ============================================================================
 #
-# This manifest creates a SQLServerAG resource for Kubernetes-level AG management.
-# Apply this AFTER completing T-SQL setup in ag-step2-setup-ag.md.
+# This manifest creates a SQLServerAG resource for Kubernetes management of your
+# Availability Group. The operator monitors AG health and manages Kubernetes
+# services that route traffic to the appropriate replicas.
+#
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  FAILOVER MODES                                                         │
+# ├─────────────────────────────────────────────────────────────────────────┤
+# │  automaticFailover: false (DEFAULT - Recommended for most deployments) │
+# │  ─────────────────────────────────────────────────────────────────────  │
+# │  • Operator monitors AG health via AG Helper sidecar                    │
+# │  • LoadBalancer services route traffic to primary/secondaries           │
+# │  • Failover is MANUAL (via T-SQL or AG Helper API)                      │
+# │  • Gives DBA full control over failover decisions                       │
+# │                                                                         │
+# │  automaticFailover: true (Production deployments with HA requirements)  │
+# │  ─────────────────────────────────────────────────────────────────────  │
+# │  • All monitoring features above, PLUS:                                 │
+# │  • Controller-managed AUTOMATIC failover                                │
+# │  • Operator detects primary failure and promotes best secondary         │
+# │  • Configure thresholds via failover.healthCheckTimeout                 │
+# └─────────────────────────────────────────────────────────────────────────┘
+#
+# ARCHITECTURE:
+#   Each SQLServerAG resource manages exactly ONE Availability Group.
+#   The AG name must be specified explicitly in 'availabilityGroup.name'.
+#   For multiple AGs, create multiple SQLServerAG resources.
+#
+# WHAT THIS PROVIDES:
+#   ✅ Primary LoadBalancer service - routes traffic to current primary
+#   ✅ Secondary LoadBalancer service - routes read traffic to secondaries
+#   ✅ AG health monitoring via AG Helper sidecar
+#   ✅ Optional automatic failover (when enabled)
 #
 # PREREQUISITES:
 #   - ag-step1-replicas.yaml applied
 #   - T-SQL steps from ag-step2-setup-ag.md completed
-#   - AG Helper logs show "Discovered X Availability Group(s)"
-#
-# WHAT THIS ADDS:
-#   - Primary/Secondary Kubernetes Services (LoadBalancer for traffic routing)
-#   - Controller-managed automatic failover
-#   - Explicit AG configuration in Kubernetes
-#
-# WHEN TO USE THIS:
-#   ✅ You need LoadBalancer services to route traffic to primary/secondaries
-#   ✅ You want the operator to manage automatic failover
-#   ✅ You want AG configuration visible in Kubernetes (kubectl get sqlserverag)
-#
-# WHEN YOU CAN SKIP THIS:
-#   ⏭️  Auto-discovery monitoring is sufficient (AG Helper watches all AGs)
-#   ⏭️  You manage traffic routing externally (DNS, app-level routing)
-#   ⏭️  You handle failover manually or via other tooling
+#   - AG exists in SQL Server (name must match 'availabilityGroup.name' below)
 #
 # ============================================================================
 
@@ -76,9 +91,9 @@ spec:
     # Enable database-level failover
     dbFailover: true
     
-    # Enable controller-driven automatic failover
-    # When true, controller detects primary failure and promotes best secondary
-    automaticFailover: true
+    # Automatic failover mode (defaults to false for manual failover)
+    # Set to true for controller-driven automatic failover when primary fails
+    automaticFailover: false
     
     # Health check credentials (same as Step 1)
     healthCheckCredentials:

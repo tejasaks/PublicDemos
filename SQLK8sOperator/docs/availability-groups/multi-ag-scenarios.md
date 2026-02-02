@@ -61,6 +61,12 @@ Multiple Availability Groups allow you to:
 
 ## Deploying Multiple AGs
 
+### Architecture: One SQLServerAG per AG
+
+> **Important:** Each SQLServerAG resource manages exactly **one** Availability Group.
+> For multiple AGs, create multiple SQLServerAG resources (one per AG).
+> Each AG Helper sidecar monitors the specific AG named in its SQLServerAG resource.
+
 ### Step 1: Single SQLServer Resource
 
 Both AGs share the same SQL Server instances:
@@ -106,7 +112,7 @@ spec:
     databases:
       - name: Orders
       - name: Inventory
-    automaticFailover: true
+    automaticFailover: true  # Opt-in: enable controller failover
     endpointPort: 5022
   endpoints:
     primary:

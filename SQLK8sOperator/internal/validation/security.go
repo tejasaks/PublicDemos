@@ -15,13 +15,13 @@ import (
 
 // PasswordComplexityResult contains detailed password validation results
 type PasswordComplexityResult struct {
-	Valid           bool
-	HasMinLength    bool
-	HasUppercase    bool
-	HasLowercase    bool
-	HasDigit        bool
-	HasSpecialChar  bool
-	Message         string
+	Valid          bool
+	HasMinLength   bool
+	HasUppercase   bool
+	HasLowercase   bool
+	HasDigit       bool
+	HasSpecialChar bool
+	Message        string
 }
 
 // ValidatePasswordComplexity checks if a password meets SQL Server complexity requirements

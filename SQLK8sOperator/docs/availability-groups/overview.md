@@ -80,7 +80,7 @@ The AG Helper sidecar runs alongside SQL Server in each pod and provides:
 1. **Health Monitoring**: Queries AG status every 10 seconds
 2. **Kubernetes Probes**: Liveness and readiness for K8s integration
 3. **Failover API**: HTTP endpoint to trigger failover
-4. **Multi-AG Support**: Discover and monitor all AGs automatically
+4. **Explicit AG Monitoring**: Each AG Helper monitors one specified AG
 
 ### Container Ports
 

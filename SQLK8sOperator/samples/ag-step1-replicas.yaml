@@ -2,20 +2,20 @@
 # STEP 1: Deploy SQL Server Replicas for Availability Group
 # ============================================================================
 #
-# This manifest deploys SQL Server replicas with AG Helper in AUTO-DISCOVERY mode.
-# AG Helper will automatically detect and monitor any AGs you create via T-SQL.
+# This manifest deploys SQL Server replicas configured for Availability Groups.
+# The AG Helper sidecar will be deployed in Step 3 (ag-step3-ag-config.yaml).
 #
 # DEPLOYMENT ORDER:
-#   1. Apply this file (creates SQL replicas + AG Helper in discovery mode)
+#   1. Apply this file (creates SQL replicas with hadrEnabled=true)
 #   2. Wait for all pods to be Running and Ready
 #   3. Execute T-SQL steps from ag-step2-setup-ag.md
-#   4. (Optional) Apply ag-step3-ag-config.yaml for K8s services and controller failover
+#   4. Apply ag-step3-ag-config.yaml (deploys AG Helper + K8s services)
 #
 # WHAT THIS CREATES:
+#   - mssql namespace
 #   - SQLServer CR with 3 replicas (hadrEnabled=true)
 #   - SA password secret
-#   - AG Helper credentials secret
-#   - AG Helper starts in "waiting" mode until you create AGs via T-SQL
+#   - AG Helper credentials secret (for use in Step 3)
 #
 # NEXT STEP: After pods are Running, follow ag-step2-setup-ag.md
 # ============================================================================
@@ -116,25 +116,20 @@ spec:
   service:
     type: LoadBalancer
     port: 1433
-  
-  # AG Helper sidecar configuration
-  # Running in AUTO-DISCOVERY mode (no specific AG name)
-  # Will automatically detect and monitor all AGs created via T-SQL
-  agHelper:
-    enabled: true
-    image: mssql-ag-helper:latest
-    monitorInterval: "10s"
-    connectionTimeout: "30s"
-    # Note: AG_NAME is NOT set, enabling auto-discovery mode
-    # AG Helper will log "No Availability Groups found, waiting..." until T-SQL creates AGs
-    credentials:
-      secretRef:
-        usernameSecret:
-          name: sql-ag-helper
-          key: username
-        passwordSecret:
-          name: sql-ag-helper
-          key: password
+
+# ============================================================================
+# NOTE ON AG HELPER DEPLOYMENT
+# ============================================================================
+# The AG Helper sidecar is deployed when you create a SQLServerAG resource
+# (Step 3). The AG Helper monitors the specific AG named in the SQLServerAG
+# resource.
+#
+# For Step 1, we only deploy the SQL Server replicas. The AG Helper will be
+# added when you apply ag-step3-ag-config.yaml.
+#
+# IMPORTANT: The AG must exist in SQL Server (via T-SQL in Step 2) before
+# the AG Helper can monitor it. Complete Step 2 before applying Step 3.
+# ============================================================================
 
 # ============================================================================
 # NEXT STEPS
@@ -145,21 +140,21 @@ spec:
 #
 # 2. Wait for all pods to be Running:
 #    kubectl get pods -n mssql -w
-#    # Wait until all 3 pods show 2/2 Ready
+#    # Wait until all 3 pods show 1/1 Ready (no AG Helper sidecar yet)
 #
-# 3. Check AG Helper logs (should show "waiting for AG"):
+# 3. Follow T-SQL steps in ag-step2-setup-ag.md to:
+#    - Create AG Helper login on all replicas
+#    - Create certificates and endpoints
+#    - Create the Availability Group
+#    - Join secondary replicas
+#
+# 4. Apply ag-step3-ag-config.yaml to:
+#    - Deploy AG Helper sidecar (monitors the specified AG)
+#    - Create Primary/Secondary LoadBalancer services
+#    - Enable health monitoring (automatic failover optional)
+#
+# 5. Verify AG Helper is monitoring the AG:
 #    kubectl logs sql-ag-0 -n mssql -c ag-helper
-#    # Expected: "No Availability Groups found, waiting for AG configuration..."
-#
-# 4. Follow T-SQL steps in ag-step2-setup-ag.md to create the AG
-#
-# 5. After T-SQL setup, AG Helper will automatically detect the AG:
-#    kubectl logs sql-ag-0 -n mssql -c ag-helper
-#    # Expected: "Discovered 1 Availability Group(s): [YourAGName]"
-#
-# 6. (Optional) Apply ag-step3-ag-config.yaml for:
-#    - Primary/Secondary Kubernetes Services (LoadBalancer routing)
-#    - Controller-managed automatic failover
-#    - Explicit AG configuration in Kubernetes
+#    # Expected: "AG 'ProductionAG' State: role=PRIMARY, sync=SYNCHRONIZED, health=Healthy"
 #
 # ============================================================================
