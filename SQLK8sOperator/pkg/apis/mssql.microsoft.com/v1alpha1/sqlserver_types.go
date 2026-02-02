@@ -400,11 +400,31 @@ func init() {
 }
 
 // GetImage returns the container image to use
+// Priority: 1) spec.instance.image (explicit per-SQLServer)
+//  2. Hardcoded defaults based on version
+//
+// Note: Use GetImageWithConfig() to include OperatorConfiguration lookup
 func (s *SQLServerSpec) GetImage() string {
+	return s.GetImageWithConfig(nil)
+}
+
+// GetImageWithConfig returns the container image to use with optional OperatorConfiguration
+// Priority order:
+//  1. spec.instance.image (explicit per-SQLServer override)
+//  2. OperatorConfiguration.spec.images.sql{version} (cluster-wide config)
+//  3. Hardcoded defaults based on version
+func (s *SQLServerSpec) GetImageWithConfig(imageConfig *ImageConfiguration) string {
+	// Priority 1: Explicit image in SQLServer spec
 	if s.Instance.Image != "" {
 		return s.Instance.Image
 	}
-	// Default images based on version
+
+	// Priority 2: OperatorConfiguration images
+	if imageConfig != nil {
+		return imageConfig.GetSQLImage(s.Version)
+	}
+
+	// Priority 3: Hardcoded defaults based on version
 	switch s.Version {
 	case "2025":
 		return "mcr.microsoft.com/mssql/server:2025-latest"

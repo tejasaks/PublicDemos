@@ -38,6 +38,11 @@ const (
 	// Labels
 	LabelAG = "mssql.microsoft.com/ag"
 
+	// Annotations for manual operations
+	AnnotationFailoverTarget    = "mssql.microsoft.com/failover-to"        // Target replica for failover (e.g., "sql-ag-1")
+	AnnotationFailoverRequested = "mssql.microsoft.com/failover-requested" // Timestamp when failover was requested
+	AnnotationFailoverStatus    = "mssql.microsoft.com/failover-status"    // Status: pending, in-progress, completed, failed
+
 	// Failover configuration
 	FailoverCooldownPeriod = 60 * time.Second // Minimum time between failovers
 	NoPrimaryGracePeriod   = 30 * time.Second // Wait before triggering failover
@@ -75,6 +80,7 @@ type SQLServerAGReconciler struct {
 	noPrimaryDetected map[string]time.Time
 }
 
+// +kubebuilder:rbac:groups=mssql.microsoft.com,resources=operatorconfigurations,verbs=get;list;watch
 // +kubebuilder:rbac:groups=mssql.microsoft.com,resources=sqlserverags,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=mssql.microsoft.com,resources=sqlserverags/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=mssql.microsoft.com,resources=sqlserverags/finalizers,verbs=update
@@ -145,6 +151,14 @@ func (r *SQLServerAGReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if err := r.updateAGStatus(ctx, ag, sqlServer); err != nil {
 		logger.Error(err, "Failed to update AG status")
 		// Don't return error, continue with requeue
+	}
+
+	// Check for manual failover request (via annotation)
+	if result, err := r.checkAndHandleManualFailover(ctx, ag, sqlServer); err != nil {
+		logger.Error(err, "Manual failover handling failed")
+		r.Recorder.Event(ag, corev1.EventTypeWarning, "ManualFailoverFailed", err.Error())
+	} else if result != nil {
+		return *result, nil
 	}
 
 	// Check for automatic failover if enabled
@@ -393,6 +407,126 @@ func (r *SQLServerAGReconciler) labelsForAG(ag *mssqlv1alpha1.SQLServerAG, sqlSe
 		"mssql.microsoft.com/instance": sqlServer.Name,
 		LabelAG:                        ag.Spec.AvailabilityGroup.Name,
 	}
+}
+
+// ============================================================================
+// MANUAL FAILOVER LOGIC (via kubectl annotate)
+// ============================================================================
+
+// checkAndHandleManualFailover checks for manual failover requests via annotations
+// Usage: kubectl annotate sqlserverag production-ag -n mssql mssql.microsoft.com/failover-to=sql-ag-1
+func (r *SQLServerAGReconciler) checkAndHandleManualFailover(ctx context.Context, ag *mssqlv1alpha1.SQLServerAG, sqlServer *mssqlv1alpha1.SQLServer) (*ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	// Check if failover annotation is present
+	targetReplica, hasTarget := ag.Annotations[AnnotationFailoverTarget]
+	if !hasTarget || targetReplica == "" {
+		return nil, nil // No manual failover requested
+	}
+
+	// Check if failover is already in progress or completed
+	status := ag.Annotations[AnnotationFailoverStatus]
+	if status == "in-progress" {
+		logger.Info("Manual failover already in progress", "target", targetReplica)
+		return nil, nil
+	}
+	if status == "completed" {
+		// Check if current primary matches target - if so, clear annotations
+		if ag.Status.PrimaryReplica == targetReplica {
+			logger.Info("Manual failover completed successfully, clearing annotations")
+			delete(ag.Annotations, AnnotationFailoverTarget)
+			delete(ag.Annotations, AnnotationFailoverRequested)
+			delete(ag.Annotations, AnnotationFailoverStatus)
+			if err := r.Update(ctx, ag); err != nil {
+				return nil, err
+			}
+			return &ctrl.Result{Requeue: true}, nil
+		}
+	}
+
+	logger.Info("Processing manual failover request", "target", targetReplica)
+	r.Recorder.Event(ag, corev1.EventTypeNormal, "ManualFailoverRequested",
+		fmt.Sprintf("Manual failover requested to replica: %s", targetReplica))
+
+	// Validate target replica exists
+	validTarget := false
+	for _, replica := range ag.Status.Replicas {
+		if replica.Name == targetReplica {
+			validTarget = true
+			if replica.Role == "PRIMARY" {
+				logger.Info("Target replica is already primary, clearing annotations")
+				delete(ag.Annotations, AnnotationFailoverTarget)
+				delete(ag.Annotations, AnnotationFailoverRequested)
+				delete(ag.Annotations, AnnotationFailoverStatus)
+				if err := r.Update(ctx, ag); err != nil {
+					return nil, err
+				}
+				r.Recorder.Event(ag, corev1.EventTypeNormal, "ManualFailoverSkipped",
+					fmt.Sprintf("Replica %s is already primary", targetReplica))
+				return &ctrl.Result{Requeue: true}, nil
+			}
+			break
+		}
+	}
+
+	if !validTarget {
+		// If status not populated yet, try to find the pod directly
+		pod := &corev1.Pod{}
+		err := r.Get(ctx, types.NamespacedName{Name: targetReplica, Namespace: ag.Namespace}, pod)
+		if err != nil {
+			logger.Error(err, "Invalid failover target - replica not found", "target", targetReplica)
+			r.Recorder.Event(ag, corev1.EventTypeWarning, "ManualFailoverFailed",
+				fmt.Sprintf("Invalid target replica: %s not found", targetReplica))
+			// Mark as failed and clear
+			ag.Annotations[AnnotationFailoverStatus] = "failed"
+			if err := r.Update(ctx, ag); err != nil {
+				return nil, err
+			}
+			return &ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+	}
+
+	// Mark failover as in-progress
+	if ag.Annotations == nil {
+		ag.Annotations = make(map[string]string)
+	}
+	ag.Annotations[AnnotationFailoverStatus] = "in-progress"
+	ag.Annotations[AnnotationFailoverRequested] = time.Now().Format(time.RFC3339)
+	if err := r.Update(ctx, ag); err != nil {
+		return nil, err
+	}
+
+	// Execute failover
+	logger.Info("Executing manual failover", "target", targetReplica, "ag", ag.Spec.AvailabilityGroup.Name)
+	if err := r.executeFailover(ctx, ag, sqlServer, targetReplica); err != nil {
+		logger.Error(err, "Manual failover execution failed")
+		r.Recorder.Event(ag, corev1.EventTypeWarning, "ManualFailoverFailed", err.Error())
+
+		// Mark as failed
+		ag.Annotations[AnnotationFailoverStatus] = "failed"
+		if err := r.Update(ctx, ag); err != nil {
+			return nil, err
+		}
+		return &ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
+	// Mark as completed
+	ag.Annotations[AnnotationFailoverStatus] = "completed"
+	if err := r.Update(ctx, ag); err != nil {
+		return nil, err
+	}
+
+	r.Recorder.Event(ag, corev1.EventTypeNormal, "ManualFailoverCompleted",
+		fmt.Sprintf("Successfully failed over to replica: %s", targetReplica))
+
+	// Record failover time
+	if r.lastFailoverTime == nil {
+		r.lastFailoverTime = make(map[string]time.Time)
+	}
+	agKey := fmt.Sprintf("%s/%s", ag.Namespace, ag.Name)
+	r.lastFailoverTime[agKey] = time.Now()
+
+	return &ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
 // ============================================================================
@@ -694,6 +828,49 @@ func (r *SQLServerAGReconciler) triggerFailover(ctx context.Context, ag *mssqlv1
 	return nil
 }
 
+// executeFailover performs a failover to the specified target replica (for manual failover)
+func (r *SQLServerAGReconciler) executeFailover(ctx context.Context, ag *mssqlv1alpha1.SQLServerAG, sqlServer *mssqlv1alpha1.SQLServer, targetReplica string) error {
+	logger := log.FromContext(ctx)
+
+	// Get the target pod
+	pod := &corev1.Pod{}
+	if err := r.Get(ctx, types.NamespacedName{Name: targetReplica, Namespace: ag.Namespace}, pod); err != nil {
+		return fmt.Errorf("target replica pod not found: %w", err)
+	}
+
+	if pod.Status.PodIP == "" {
+		return fmt.Errorf("target replica pod has no IP address")
+	}
+
+	// Query the target replica's current state via sidecar
+	state, err := r.querySidecar(ctx, pod.Status.PodIP)
+	if err != nil {
+		// If we can't reach the sidecar, try the failover anyway via the AG Helper deployment
+		logger.Info("Could not query target sidecar, attempting failover via AG Helper", "target", targetReplica)
+		// Fallback: trigger failover with unknown sync state
+		state = &SidecarState{
+			SyncState: "UNKNOWN",
+		}
+	}
+
+	// Create a candidate from the target
+	candidate := &FailoverCandidate{
+		PodName:        targetReplica,
+		PodIP:          pod.Status.PodIP,
+		SequenceNumber: state.SequenceNumber,
+		SyncState:      state.SyncState,
+		Health:         state.Health,
+	}
+
+	logger.Info("Executing failover to target replica",
+		"target", targetReplica,
+		"syncState", candidate.SyncState,
+		"sequenceNumber", candidate.SequenceNumber)
+
+	// Use the existing triggerFailover mechanism
+	return r.triggerFailover(ctx, ag, candidate)
+}
+
 // SetupWithManager sets up the controller with the Manager
 func (r *SQLServerAGReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
@@ -720,4 +897,40 @@ func removeString(slice []string, s string) []string {
 		}
 	}
 	return result
+}
+
+// getImageConfiguration loads the OperatorConfiguration named "default" and returns its Images config
+// Returns nil if no OperatorConfiguration exists (uses hardcoded defaults)
+func (r *SQLServerAGReconciler) getImageConfiguration(ctx context.Context) *mssqlv1alpha1.ImageConfiguration {
+	logger := log.FromContext(ctx)
+
+	config := &mssqlv1alpha1.OperatorConfiguration{}
+	if err := r.Get(ctx, types.NamespacedName{Name: "default"}, config); err != nil {
+		if !errors.IsNotFound(err) {
+			logger.V(1).Info("Failed to get OperatorConfiguration, using defaults", "error", err)
+		}
+		return nil
+	}
+
+	return config.Spec.Images
+}
+
+// getAGHelperImage returns the AG Helper image to use for this SQLServerAG
+// Priority: 1) ag.Spec.Sidecar.Image (explicit per-AG)
+//  2. OperatorConfiguration.spec.images.agHelper (cluster-wide)
+//  3. Default constant
+func (r *SQLServerAGReconciler) getAGHelperImage(ctx context.Context, ag *mssqlv1alpha1.SQLServerAG) string {
+	// Priority 1: Explicit image in SQLServerAG spec
+	if ag.Spec.Sidecar != nil && ag.Spec.Sidecar.Image != "" {
+		return ag.Spec.Sidecar.Image
+	}
+
+	// Priority 2: OperatorConfiguration
+	imageConfig := r.getImageConfiguration(ctx)
+	if imageConfig != nil {
+		return imageConfig.GetAGHelperImage()
+	}
+
+	// Priority 3: Default
+	return mssqlv1alpha1.DefaultSidecarImage
 }

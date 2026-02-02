@@ -187,14 +187,14 @@ dist: manifests generate-install-yaml ## Create distribution package for sharing
 	@echo '#!/bin/bash' > dist/sqlserver-operator-$(VERSION)/install.sh
 	@echo 'set -e' >> dist/sqlserver-operator-$(VERSION)/install.sh
 	@echo 'echo "Installing SQL Server Kubernetes Operator v$(VERSION)..."' >> dist/sqlserver-operator-$(VERSION)/install.sh
-	@echo 'kubectl create namespace mssql-operator --dry-run=client -o yaml | kubectl apply -f -' >> dist/sqlserver-operator-$(VERSION)/install.sh
+	@echo 'kubectl create namespace mssql-system --dry-run=client -o yaml | kubectl apply -f -' >> dist/sqlserver-operator-$(VERSION)/install.sh
 	@echo 'kubectl create namespace mssql --dry-run=client -o yaml | kubectl apply -f -' >> dist/sqlserver-operator-$(VERSION)/install.sh
 	@echo 'kubectl apply -f deploy/crds/' >> dist/sqlserver-operator-$(VERSION)/install.sh
 	@echo 'kubectl apply -f deploy/rbac.yaml' >> dist/sqlserver-operator-$(VERSION)/install.sh
 	@echo 'kubectl apply -f deploy/serviceaccount.yaml' >> dist/sqlserver-operator-$(VERSION)/install.sh
 	@echo 'kubectl apply -f deploy/operator.yaml' >> dist/sqlserver-operator-$(VERSION)/install.sh
 	@echo 'echo "Waiting for operator to be ready..."' >> dist/sqlserver-operator-$(VERSION)/install.sh
-	@echo 'kubectl wait --for=condition=available --timeout=120s deployment/mssql-operator -n mssql-operator' >> dist/sqlserver-operator-$(VERSION)/install.sh
+	@echo 'kubectl wait --for=condition=available --timeout=120s deployment/mssql-operator -n mssql-system' >> dist/sqlserver-operator-$(VERSION)/install.sh
 	@echo 'echo ""' >> dist/sqlserver-operator-$(VERSION)/install.sh
 	@echo 'echo "✅ SQL Server Operator installed successfully!"' >> dist/sqlserver-operator-$(VERSION)/install.sh
 	@echo 'echo ""' >> dist/sqlserver-operator-$(VERSION)/install.sh

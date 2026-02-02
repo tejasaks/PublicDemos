@@ -5,7 +5,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: mssql-operator-webhook
-  namespace: mssql-operator
+  namespace: mssql-system
   labels:
     app: mssql-operator
     component: webhook
@@ -35,7 +35,7 @@ webhooks:
     clientConfig:
       service:
         name: mssql-operator-webhook
-        namespace: mssql-operator
+        namespace: mssql-system
         path: /validate-mssql-microsoft-com-v1alpha1-sqlserver
       # CA bundle will be injected by cert-manager or manually
       caBundle: ""
@@ -61,7 +61,7 @@ webhooks:
     clientConfig:
       service:
         name: mssql-operator-webhook
-        namespace: mssql-operator
+        namespace: mssql-system
         path: /validate-mssql-microsoft-com-v1alpha1-sqlserverag
       caBundle: ""
     rules:
@@ -85,12 +85,12 @@ webhooks:
 # kind: Certificate
 # metadata:
 #   name: mssql-operator-webhook-cert
-#   namespace: mssql-operator
+#   namespace: mssql-system
 # spec:
 #   secretName: mssql-operator-webhook-tls
 #   dnsNames:
-#     - mssql-operator-webhook.mssql-operator.svc
-#     - mssql-operator-webhook.mssql-operator.svc.cluster.local
+#     - mssql-operator-webhook.mssql-system.svc
+#     - mssql-operator-webhook.mssql-system.svc.cluster.local
 #   issuerRef:
 #     name: mssql-operator-selfsigned-issuer
 #     kind: Issuer
@@ -100,7 +100,7 @@ webhooks:
 # kind: Issuer
 # metadata:
 #   name: mssql-operator-selfsigned-issuer
-#   namespace: mssql-operator
+#   namespace: mssql-system
 # spec:
 #   selfSigned: {}
 
@@ -108,11 +108,11 @@ webhooks:
 # Option 2: Manual TLS certificate secret
 # Generate with:
 #   openssl req -x509 -newkey rsa:4096 -keyout tls.key -out tls.crt -days 365 -nodes \
-#     -subj "/CN=mssql-operator-webhook.mssql-operator.svc" \
-#     -addext "subjectAltName=DNS:mssql-operator-webhook.mssql-operator.svc,DNS:mssql-operator-webhook.mssql-operator.svc.cluster.local"
+#     -subj "/CN=mssql-operator-webhook.mssql-system.svc" \
+#     -addext "subjectAltName=DNS:mssql-operator-webhook.mssql-system.svc,DNS:mssql-operator-webhook.mssql-system.svc.cluster.local"
 #
 # Then create secret:
-#   kubectl create secret tls mssql-operator-webhook-tls --cert=tls.crt --key=tls.key -n mssql-operator
+#   kubectl create secret tls mssql-operator-webhook-tls --cert=tls.crt --key=tls.key -n mssql-system
 #
 # And update the caBundle in ValidatingWebhookConfiguration with base64 of tls.crt:
 #   cat tls.crt | base64 | tr -d '\n'
@@ -121,7 +121,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: mssql-operator-webhook-tls
-  namespace: mssql-operator
+  namespace: mssql-system
   labels:
     app: mssql-operator
 type: kubernetes.io/tls

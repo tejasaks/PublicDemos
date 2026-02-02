@@ -20,7 +20,7 @@ Step-by-step guide to setting up Prometheus for SQL Server monitoring.
 |-------------|--------------|
 | Kubernetes 1.21+ | `kubectl version` |
 | Helm 3.x | `helm version` |
-| SQL Operator deployed | `kubectl get pods -n mssql-operator-system` |
+| SQL Operator deployed | `kubectl get pods -n mssql-system` |
 | Monitoring enabled | SQLServer spec has `monitoring.enabled: true` |
 
 ## Installation Options

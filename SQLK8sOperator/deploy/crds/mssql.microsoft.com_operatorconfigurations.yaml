@@ -65,8 +65,54 @@ spec:
                 type: object
               dockerImage:
                 default: mcr.microsoft.com/mssql/server:2022-latest
-                description: DockerImage is the default SQL Server image
+                description: 'DockerImage is the default SQL Server image (DEPRECATED:
+                  use images.sql2022 instead)'
                 type: string
+              images:
+                description: |-
+                  Images contains container image configuration for all components
+                  This is the recommended way to configure custom images for SQL Server,
+                  AG Helper, and SQL Exporter across the entire cluster
+                properties:
+                  agHelper:
+                    default: mssql-ag-helper:latest
+                    description: AGHelper is the container image for the AG Helper
+                      sidecar
+                    type: string
+                  defaultPullPolicy:
+                    default: IfNotPresent
+                    description: DefaultPullPolicy is the default image pull policy
+                      for all containers
+                    enum:
+                    - Always
+                    - IfNotPresent
+                    - Never
+                    type: string
+                  imagePullSecrets:
+                    description: |-
+                      ImagePullSecrets is a list of secret names for authenticating to private registries
+                      These secrets will be added to all pods created by the operator
+                    items:
+                      type: string
+                    type: array
+                  sql2019:
+                    default: mcr.microsoft.com/mssql/server:2019-latest
+                    description: SQL2019 is the container image for SQL Server 2019
+                    type: string
+                  sql2022:
+                    default: mcr.microsoft.com/mssql/server:2022-latest
+                    description: SQL2022 is the container image for SQL Server 2022
+                    type: string
+                  sql2025:
+                    default: mcr.microsoft.com/mssql/server:2025-latest
+                    description: SQL2025 is the container image for SQL Server 2025
+                    type: string
+                  sqlExporter:
+                    default: burningalchemist/sql_exporter:latest
+                    description: SQLExporter is the container image for the SQL Exporter
+                      (Prometheus metrics)
+                    type: string
+                type: object
               kubernetes:
                 description: Kubernetes contains Kubernetes-specific settings
                 properties:
@@ -192,7 +238,8 @@ spec:
                 type: string
               sidecarImage:
                 default: mssql-ag-helper:latest
-                description: SidecarImage is the default AG helper sidecar image
+                description: 'SidecarImage is the default AG helper sidecar image
+                  (DEPRECATED: use images.agHelper instead)'
                 type: string
               timeouts:
                 description: Timeouts contains various timeout configurations

@@ -12,6 +12,7 @@ This guide covers different SQL Server deployment patterns for various use cases
 - [Active Directory Authentication](#active-directory-authentication)
 - [Multi-Tenant Deployments](#multi-tenant-deployments)
 - [External Access](#external-access)
+- [Private Registry Deployment](#private-registry-deployment)
 
 ## Standalone Development
 
@@ -765,6 +766,185 @@ sqlcmd -S localhost,1433 -U sa -P 'YourPassword' -C
 
 Press `Ctrl+C` to stop the port forward when done.
 
+## Private Registry Deployment
+
+For production, air-gapped, or regulated environments where you need to control all container images.
+
+### Why Use a Private Registry?
+
+| Reason | Description |
+|--------|-------------|
+| **Security** | Control which images are allowed in your cluster |
+| **Compliance** | Meet regulatory requirements (SOC2, HIPAA, FedRAMP) |
+| **Air-Gapped** | Clusters without internet access |
+| **Performance** | Faster pulls from local registry |
+| **Versioning** | Pin specific versions for reproducibility |
+| **Vulnerability Scanning** | Scan images before deploying |
+
+### Deployment Steps
+
+**Step 1: Mirror SQL Server images to your private registry**
+
+```bash
+# Set your registry URL
+export REGISTRY=myregistry.azurecr.io
+
+# Login to your registry
+az acr login --name myregistry  # For ACR
+# OR: docker login $REGISTRY
+
+# Option A: Using Azure CLI (ACR only - fastest)
+az acr import --name myregistry \
+  --source mcr.microsoft.com/mssql/server:2022-CU16-ubuntu-22.04 \
+  --image mssql/server:2022-CU16-ubuntu-22.04
+
+az acr import --name myregistry \
+  --source mcr.microsoft.com/mssql/server:2019-CU27-ubuntu-22.04 \
+  --image mssql/server:2019-CU27-ubuntu-22.04
+
+az acr import --name myregistry \
+  --source mcr.microsoft.com/mssql/server:2025-latest \
+  --image mssql/server:2025-latest
+
+# Option B: Using Docker (any registry)
+docker pull mcr.microsoft.com/mssql/server:2022-CU16-ubuntu-22.04
+docker tag mcr.microsoft.com/mssql/server:2022-CU16-ubuntu-22.04 \
+  $REGISTRY/mssql/server:2022-CU16-ubuntu-22.04
+docker push $REGISTRY/mssql/server:2022-CU16-ubuntu-22.04
+```
+
+**Step 2: Build and push operator images**
+
+```bash
+# Clone the operator repository
+git clone https://github.com/yourorg/mssql-operator.git
+cd mssql-operator
+
+# Set version
+export VERSION=v1.0.0
+
+# Build and push operator
+make docker-build docker-push IMG=$REGISTRY/mssql-operator/operator:$VERSION
+
+# Build and push AG Helper
+make docker-build-sidecar docker-push-sidecar \
+  SIDECAR_IMG=$REGISTRY/mssql-operator/ag-helper:$VERSION
+
+# Mirror SQL Exporter (third-party)
+docker pull burningalchemist/sql_exporter:latest
+docker tag burningalchemist/sql_exporter:latest \
+  $REGISTRY/third-party/sql-exporter:0.14.0
+docker push $REGISTRY/third-party/sql-exporter:0.14.0
+```
+
+**Step 3: Create image pull secrets in each namespace**
+
+```bash
+# For the operator namespace
+kubectl create secret docker-registry acr-pull-secret \
+  --docker-server=myregistry.azurecr.io \
+  --docker-username=<service-principal-id> \
+  --docker-password=<service-principal-secret> \
+  -n mssql-system
+
+# For the SQL Server namespace
+kubectl create secret docker-registry acr-pull-secret \
+  --docker-server=myregistry.azurecr.io \
+  --docker-username=<service-principal-id> \
+  --docker-password=<service-principal-secret> \
+  -n mssql
+```
+
+**Step 4: Apply the OperatorConfiguration**
+
+Create or apply the private registry configuration:
+
+```bash
+# Use the provided sample (edit registry URL first)
+kubectl apply -f samples/operator-configuration-private-registry.yaml
+```
+
+**Sample OperatorConfiguration:**
+
+```yaml
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: OperatorConfiguration
+metadata:
+  name: default
+spec:
+  images:
+    sql2019: myregistry.azurecr.io/mssql/server:2019-CU27-ubuntu-22.04
+    sql2022: myregistry.azurecr.io/mssql/server:2022-CU16-ubuntu-22.04
+    sql2025: myregistry.azurecr.io/mssql/server:2025-latest
+    agHelper: myregistry.azurecr.io/mssql-operator/ag-helper:v1.0.0
+    sqlExporter: myregistry.azurecr.io/third-party/sql-exporter:0.14.0
+    imagePullSecrets:
+      - acr-pull-secret
+    defaultPullPolicy: IfNotPresent
+```
+
+**Step 5: Deploy SQL Server**
+
+Now any SQLServer you create will use images from your private registry:
+
+```bash
+kubectl apply -f samples/sqlserver-2022-standalone.yaml
+```
+
+**Step 6: Verify images are pulled from your registry**
+
+```bash
+kubectl describe pod -n mssql -l app=mssql | grep Image:
+
+# Expected output:
+# Image:         myregistry.azurecr.io/mssql/server:2022-CU16-ubuntu-22.04
+```
+
+### Troubleshooting Private Registry
+
+| Issue | Symptom | Solution |
+|-------|---------|----------|
+| `ImagePullBackOff` | Pod stuck in ImagePullBackOff | Check imagePullSecrets exist in namespace |
+| `unauthorized` | Authentication failed | Verify secret credentials |
+| `not found` | Image not in registry | Verify image was pushed correctly |
+| `manifest unknown` | Wrong tag | Check tag matches exactly |
+
+**Debug commands:**
+
+```bash
+# Check secret exists
+kubectl get secret acr-pull-secret -n mssql
+
+# Test image pull manually
+kubectl run test --image=myregistry.azurecr.io/mssql/server:2022-CU16-ubuntu-22.04 \
+  --overrides='{"spec":{"imagePullSecrets":[{"name":"acr-pull-secret"}]}}' \
+  -n mssql --rm -it --restart=Never -- echo "Success"
+
+# Check pod events
+kubectl describe pod <pod-name> -n mssql | tail -20
+```
+
+### Air-Gapped Clusters
+
+For completely disconnected environments, use `skopeo` to copy images without needing Docker:
+
+```bash
+# Copy SQL Server image
+skopeo copy \
+  docker://mcr.microsoft.com/mssql/server:2022-CU16-ubuntu-22.04 \
+  docker://internal-registry.local:5000/mssql/server:2022-CU16-ubuntu-22.04
+
+# Or export to a tar file for physical transfer
+skopeo copy \
+  docker://mcr.microsoft.com/mssql/server:2022-CU16-ubuntu-22.04 \
+  docker-archive:/tmp/mssql-2022.tar
+
+# Import on air-gapped network
+skopeo copy \
+  docker-archive:/tmp/mssql-2022.tar \
+  docker://internal-registry.local:5000/mssql/server:2022-CU16-ubuntu-22.04
+```
+
 ## Sample Files
 
 Pre-built sample configurations are available in the [samples/](../../samples/) directory:
@@ -776,6 +956,8 @@ Pre-built sample configurations are available in the [samples/](../../samples/) 
 | `sqlserver-availability-group.yaml` | 3-replica AG with full configuration |
 | `sqlserverag-minimal.yaml` | Minimal AG using CRD defaults |
 | `sqlserver-with-ad.yaml` | Active Directory authentication |
+| `operator-configuration-mcr-defaults.yaml` | MCR images with local operator components |
+| `operator-configuration-private-registry.yaml` | Private registry configuration with push instructions |
 
 ## Next Steps
 

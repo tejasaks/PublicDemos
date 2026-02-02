@@ -89,7 +89,7 @@ dependencies: []
 ```bash
 # Install with defaults
 helm install mssql-operator mssql-operator/mssql-operator \
-  --namespace mssql-operator-system \
+  --namespace mssql-system \
   --create-namespace
 ```
 
@@ -98,7 +98,7 @@ helm install mssql-operator mssql-operator/mssql-operator \
 ```bash
 # Install with custom values file
 helm install mssql-operator mssql-operator/mssql-operator \
-  --namespace mssql-operator-system \
+  --namespace mssql-system \
   --create-namespace \
   --values my-values.yaml
 ```
@@ -108,7 +108,7 @@ helm install mssql-operator mssql-operator/mssql-operator \
 ```bash
 # Install from local directory
 helm install mssql-operator ./charts/mssql-operator \
-  --namespace mssql-operator-system \
+  --namespace mssql-system \
   --create-namespace
 ```
 
@@ -116,10 +116,10 @@ helm install mssql-operator ./charts/mssql-operator \
 
 ```bash
 # Check release status
-helm status mssql-operator -n mssql-operator-system
+helm status mssql-operator -n mssql-system
 
 # List releases
-helm list -n mssql-operator-system
+helm list -n mssql-system
 ```
 
 ## Configuration Values
@@ -355,11 +355,11 @@ helm repo update
 
 # Check diff before upgrade
 helm diff upgrade mssql-operator mssql-operator/mssql-operator \
-  --namespace mssql-operator-system
+  --namespace mssql-system
 
 # Upgrade
 helm upgrade mssql-operator mssql-operator/mssql-operator \
-  --namespace mssql-operator-system \
+  --namespace mssql-system \
   --values my-values.yaml
 ```
 
@@ -367,10 +367,10 @@ helm upgrade mssql-operator mssql-operator/mssql-operator \
 
 ```bash
 # List revision history
-helm history mssql-operator -n mssql-operator-system
+helm history mssql-operator -n mssql-system
 
 # Rollback to previous
-helm rollback mssql-operator 1 -n mssql-operator-system
+helm rollback mssql-operator 1 -n mssql-system
 ```
 
 ### CRD Upgrades
@@ -441,7 +441,7 @@ ct install --config ct.yaml
 
 ```bash
 # Uninstall release
-helm uninstall mssql-operator -n mssql-operator-system
+helm uninstall mssql-operator -n mssql-system
 
 # CRDs are kept by default, delete manually if needed
 kubectl delete crd sqlservers.mssql.microsoft.com

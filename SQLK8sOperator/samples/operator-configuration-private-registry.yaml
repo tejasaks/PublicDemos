@@ -1,0 +1,330 @@
+# ============================================================================
+# OperatorConfiguration - Private Container Registry
+# ============================================================================
+#
+# USE CASE: Production and enterprise environments where you need:
+#   ✅ All container images from your private registry (ACR, ECR, Harbor, etc.)
+#   ✅ Air-gapped or network-restricted clusters
+#   ✅ Corporate security and compliance requirements
+#   ✅ Controlled image versions and vulnerability scanning
+#   ✅ Image signing and attestation
+#
+# This configuration is ideal for:
+#   - Production deployments
+#   - Enterprise environments with security requirements
+#   - Air-gapped or disconnected clusters
+#   - Regulated industries (healthcare, finance, government)
+#
+# ============================================================================
+
+---
+# Step 1: Create the image pull secret for your private registry
+# 
+# For Azure Container Registry (ACR):
+#   kubectl create secret docker-registry acr-pull-secret \
+#     --docker-server=<your-registry>.azurecr.io \
+#     --docker-username=<service-principal-id> \
+#     --docker-password=<service-principal-secret> \
+#     -n mssql-operator-system
+#
+# For Docker Hub (private):
+#   kubectl create secret docker-registry dockerhub-secret \
+#     --docker-server=https://index.docker.io/v1/ \
+#     --docker-username=<username> \
+#     --docker-password=<access-token> \
+#     -n mssql-operator-system
+#
+# For AWS ECR:
+#   kubectl create secret docker-registry ecr-secret \
+#     --docker-server=<account-id>.dkr.ecr.<region>.amazonaws.com \
+#     --docker-username=AWS \
+#     --docker-password=$(aws ecr get-login-password --region <region>) \
+#     -n mssql-operator-system
+#
+# For Harbor or generic registry:
+#   kubectl create secret docker-registry harbor-secret \
+#     --docker-server=registry.company.com \
+#     --docker-username=<username> \
+#     --docker-password=<password> \
+#     -n mssql-operator-system
+
+---
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: OperatorConfiguration
+metadata:
+  name: default  # Must be "default" - the operator only looks for this name
+spec:
+  # ===========================================================================
+  # Container Images Configuration - Private Registry
+  # ===========================================================================
+  #
+  # Replace "myregistry.azurecr.io" with your actual registry URL.
+  #
+  # IMAGE RESOLUTION PRIORITY:
+  #   1. Per-resource override (spec.instance.image in SQLServer)
+  #   2. OperatorConfiguration (this file)
+  #   3. Hardcoded defaults (only used if not specified here)
+  #
+  images:
+    # -------------------------------------------------------------------------
+    # SQL Server Images (Mirrored from MCR)
+    # -------------------------------------------------------------------------
+    # These images should be pulled from MCR and pushed to your private registry.
+    # See "HOW TO MIRROR IMAGES" section below for step-by-step instructions.
+    
+    # SQL Server 2019
+    sql2019: myregistry.azurecr.io/mssql/server:2019-CU27-ubuntu-22.04
+    
+    # SQL Server 2022
+    sql2022: myregistry.azurecr.io/mssql/server:2022-CU16-ubuntu-22.04
+    
+    # SQL Server 2025
+    sql2025: myregistry.azurecr.io/mssql/server:2025-latest
+    
+    # -------------------------------------------------------------------------
+    # Operator Component Images (Built and pushed to your registry)
+    # -------------------------------------------------------------------------
+    # These images are built from this repository.
+    # See "HOW TO BUILD AND PUSH OPERATOR IMAGES" section below.
+    
+    # AG Helper sidecar
+    agHelper: myregistry.azurecr.io/mssql-operator/ag-helper:v1.0.0
+    
+    # SQL Exporter for Prometheus monitoring
+    # Mirror from: burningalchemist/sql_exporter:latest
+    sqlExporter: myregistry.azurecr.io/third-party/sql-exporter:0.14.0
+    
+    # -------------------------------------------------------------------------
+    # Image Pull Secrets
+    # -------------------------------------------------------------------------
+    # List of Kubernetes secrets containing registry credentials.
+    # These secrets must exist in the namespace where SQL Server pods run.
+    # 
+    # The operator merges these cluster-wide secrets with any per-SQLServer
+    # imagePullSecrets, so you can use different secrets for different registries.
+    
+    imagePullSecrets:
+      - acr-pull-secret          # Primary registry secret
+      # - backup-registry-secret # Additional registry secret (if needed)
+    
+    # -------------------------------------------------------------------------
+    # Image Pull Policy
+    # -------------------------------------------------------------------------
+    # For production with tagged versions, use IfNotPresent for efficiency.
+    # Use Always only if you use mutable tags like 'latest' (not recommended).
+    
+    defaultPullPolicy: IfNotPresent
+
+  # ===========================================================================
+  # Operator Worker Configuration (Production Settings)
+  # ===========================================================================
+  
+  workers: 8              # More workers for larger deployments
+  resyncPeriod: "30m"     # Full resync interval
+  repairPeriod: "5m"      # Repair check interval
+
+  # ===========================================================================
+  # Validation Behavior (Strict for Production)
+  # ===========================================================================
+  
+  validation:
+    clusterCapabilityChecks: true
+    validationTimeout: "3s"
+    storageClassValidation: block   # Block deployments with invalid storage
+    secretValidation: block         # Block if secrets don't exist
+    passwordComplexity: enforce     # Enforce strong passwords
+    nodeValidation: block           # Block if node selectors don't match
+
+---
+# ============================================================================
+# HOW TO MIRROR SQL SERVER IMAGES TO YOUR PRIVATE REGISTRY
+# ============================================================================
+#
+# Option 1: Using Docker CLI
+# --------------------------
+# Pull from MCR and push to your registry:
+#
+#   # Login to your private registry
+#   docker login myregistry.azurecr.io
+#
+#   # SQL Server 2019
+#   docker pull mcr.microsoft.com/mssql/server:2019-CU27-ubuntu-22.04
+#   docker tag mcr.microsoft.com/mssql/server:2019-CU27-ubuntu-22.04 \
+#     myregistry.azurecr.io/mssql/server:2019-CU27-ubuntu-22.04
+#   docker push myregistry.azurecr.io/mssql/server:2019-CU27-ubuntu-22.04
+#
+#   # SQL Server 2022
+#   docker pull mcr.microsoft.com/mssql/server:2022-CU16-ubuntu-22.04
+#   docker tag mcr.microsoft.com/mssql/server:2022-CU16-ubuntu-22.04 \
+#     myregistry.azurecr.io/mssql/server:2022-CU16-ubuntu-22.04
+#   docker push myregistry.azurecr.io/mssql/server:2022-CU16-ubuntu-22.04
+#
+#   # SQL Server 2025
+#   docker pull mcr.microsoft.com/mssql/server:2025-latest
+#   docker tag mcr.microsoft.com/mssql/server:2025-latest \
+#     myregistry.azurecr.io/mssql/server:2025-latest
+#   docker push myregistry.azurecr.io/mssql/server:2025-latest
+#
+#   # SQL Exporter (third-party)
+#   docker pull burningalchemist/sql_exporter:latest
+#   docker tag burningalchemist/sql_exporter:latest \
+#     myregistry.azurecr.io/third-party/sql-exporter:0.14.0
+#   docker push myregistry.azurecr.io/third-party/sql-exporter:0.14.0
+#
+# Option 2: Using Azure CLI (for Azure Container Registry)
+# --------------------------------------------------------
+# Import directly without pulling locally:
+#
+#   az acr import \
+#     --name myregistry \
+#     --source mcr.microsoft.com/mssql/server:2022-CU16-ubuntu-22.04 \
+#     --image mssql/server:2022-CU16-ubuntu-22.04
+#
+#   az acr import \
+#     --name myregistry \
+#     --source mcr.microsoft.com/mssql/server:2019-CU27-ubuntu-22.04 \
+#     --image mssql/server:2019-CU27-ubuntu-22.04
+#
+#   az acr import \
+#     --name myregistry \
+#     --source mcr.microsoft.com/mssql/server:2025-latest \
+#     --image mssql/server:2025-latest
+#
+#   az acr import \
+#     --name myregistry \
+#     --source docker.io/burningalchemist/sql_exporter:latest \
+#     --image third-party/sql-exporter:0.14.0
+#
+# Option 3: Using skopeo (for air-gapped environments)
+# ----------------------------------------------------
+# Copy images without Docker daemon:
+#
+#   skopeo copy \
+#     docker://mcr.microsoft.com/mssql/server:2022-CU16-ubuntu-22.04 \
+#     docker://myregistry.azurecr.io/mssql/server:2022-CU16-ubuntu-22.04
+#
+# ============================================================================
+# HOW TO BUILD AND PUSH OPERATOR IMAGES TO YOUR PRIVATE REGISTRY
+# ============================================================================
+#
+# The MSSQL Operator and AG Helper are built from this repository.
+#
+# Step 1: Clone the repository
+# ----------------------------
+#   git clone https://github.com/yourorg/mssql-operator.git
+#   cd mssql-operator
+#
+# Step 2: Set your registry and version
+# -------------------------------------
+#   export REGISTRY=myregistry.azurecr.io/mssql-operator
+#   export VERSION=v1.0.0
+#
+# Step 3: Login to your registry
+# ------------------------------
+#   # For ACR with Azure CLI
+#   az acr login --name myregistry
+#
+#   # For Docker Hub or generic registry
+#   docker login myregistry.azurecr.io
+#
+# Step 4: Build and push the operator image
+# -----------------------------------------
+#   make docker-build docker-push IMG=$REGISTRY/operator:$VERSION
+#
+#   # Expected output:
+#   # docker build -t myregistry.azurecr.io/mssql-operator/operator:v1.0.0 .
+#   # ...
+#   # Successfully tagged myregistry.azurecr.io/mssql-operator/operator:v1.0.0
+#   # docker push myregistry.azurecr.io/mssql-operator/operator:v1.0.0
+#
+# Step 5: Build and push the AG Helper image
+# ------------------------------------------
+#   make docker-build-sidecar docker-push-sidecar \
+#     SIDECAR_IMG=$REGISTRY/ag-helper:$VERSION
+#
+#   # Or manually:
+#   docker build -t $REGISTRY/ag-helper:$VERSION -f Dockerfile.ag-helper .
+#   docker push $REGISTRY/ag-helper:$VERSION
+#
+# Step 6: Update the operator deployment
+# --------------------------------------
+# Edit deploy/deployment.yaml to use your operator image:
+#
+#   containers:
+#   - name: manager
+#     image: myregistry.azurecr.io/mssql-operator/operator:v1.0.0
+#     imagePullPolicy: IfNotPresent
+#   imagePullSecrets:
+#   - name: acr-pull-secret
+#
+# ============================================================================
+# USAGE INSTRUCTIONS
+# ============================================================================
+#
+# 1. Create the image pull secret in the operator namespace:
+#
+#    kubectl create secret docker-registry acr-pull-secret \
+#      --docker-server=myregistry.azurecr.io \
+#      --docker-username=<service-principal-id> \
+#      --docker-password=<service-principal-secret> \
+#      -n mssql-operator-system
+#
+# 2. Create the same secret in each namespace where you'll deploy SQL Server:
+#
+#    kubectl create secret docker-registry acr-pull-secret \
+#      --docker-server=myregistry.azurecr.io \
+#      --docker-username=<service-principal-id> \
+#      --docker-password=<service-principal-secret> \
+#      -n mssql
+#
+# 3. Apply this configuration:
+#
+#    kubectl apply -f samples/operator-configuration-private-registry.yaml
+#
+# 4. Verify the configuration:
+#
+#    kubectl get operatorconfigurations
+#    kubectl describe operatorconfiguration default
+#
+# 5. Deploy the operator (with your registry's image):
+#
+#    kubectl apply -f deploy/
+#
+# 6. Create a SQL Server instance:
+#
+#    kubectl apply -f samples/sqlserver-2022-standalone.yaml
+#
+# ============================================================================
+# TROUBLESHOOTING
+# ============================================================================
+#
+# Image Pull Errors (ErrImagePull or ImagePullBackOff):
+# ----------------------------------------------------
+#   1. Check the secret exists:
+#      kubectl get secret acr-pull-secret -n mssql
+#
+#   2. Verify the secret has correct credentials:
+#      kubectl get secret acr-pull-secret -n mssql -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d
+#
+#   3. Test pulling the image manually:
+#      kubectl run test --image=myregistry.azurecr.io/mssql/server:2022-CU16-ubuntu-22.04 \
+#        --overrides='{"spec":{"imagePullSecrets":[{"name":"acr-pull-secret"}]}}' \
+#        -n mssql --rm -it --restart=Never -- echo "Image pull successful"
+#
+#   4. Check pod events:
+#      kubectl describe pod <pod-name> -n mssql
+#
+# Secret Not Found in Target Namespace:
+# ------------------------------------
+# The imagePullSecrets specified in OperatorConfiguration must exist in EACH
+# namespace where you deploy SQLServer resources. Create them with:
+#
+#   for ns in mssql production staging; do
+#     kubectl create secret docker-registry acr-pull-secret \
+#       --docker-server=myregistry.azurecr.io \
+#       --docker-username=<username> \
+#       --docker-password=<password> \
+#       -n $ns
+#   done
+#
+# ============================================================================

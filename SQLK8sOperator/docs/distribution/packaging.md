@@ -242,7 +242,7 @@ kubectl apply -f https://github.com/yourorg/mssql-operator/releases/download/$VE
 
 **Expected output:**
 ```
-namespace/mssql-operator-system created
+namespace/mssql-system created
 customresourcedefinition.apiextensions.k8s.io/sqlservers.mssql.microsoft.com created
 ...
 deployment.apps/mssql-operator-controller-manager created
@@ -392,7 +392,7 @@ config/
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: mssql-operator-system
+namespace: mssql-system
 
 resources:
   - ../crd

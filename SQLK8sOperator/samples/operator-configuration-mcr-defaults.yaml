@@ -1,0 +1,147 @@
+# ============================================================================
+# OperatorConfiguration - MCR Default Images with Local Operator Components
+# ============================================================================
+#
+# USE CASE: Development, testing, and evaluation environments where you want:
+#   ✅ Official Microsoft Container Registry (MCR) SQL Server images
+#   ✅ Locally-built operator and AG Helper images
+#   ✅ Pinned Cumulative Update versions for consistency
+#   ✅ No private registry setup required
+#
+# This configuration is ideal for:
+#   - Development and testing environments
+#   - Quick proof-of-concept deployments
+#   - Learning and experimentation
+#   - CI/CD pipelines with local image builds
+#
+# ============================================================================
+
+---
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: OperatorConfiguration
+metadata:
+  name: default  # Must be "default" - the operator only looks for this name
+spec:
+  # ===========================================================================
+  # Container Images Configuration
+  # ===========================================================================
+  #
+  # SQL Server images: Using official MCR images with pinned CU versions
+  # Operator components: Using locally-built images (localhost registry)
+  #
+  # IMAGE RESOLUTION PRIORITY:
+  #   1. Per-resource override (spec.instance.image in SQLServer)
+  #   2. OperatorConfiguration (this file)
+  #   3. Hardcoded defaults (mcr.microsoft.com/mssql/server:xxxx-latest)
+  #
+  images:
+    # -------------------------------------------------------------------------
+    # SQL Server Images (Official MCR - No authentication required)
+    # -------------------------------------------------------------------------
+    # These are the official Microsoft images from Microsoft Container Registry
+    # https://mcr.microsoft.com/en-us/product/mssql/server/about
+    #
+    # Available tags: https://mcr.microsoft.com/v2/mssql/server/tags/list
+    
+    # SQL Server 2019 - Pinned to specific CU
+    sql2019: mcr.microsoft.com/mssql/server:2019-CU27-ubuntu-22.04
+    
+    # SQL Server 2022 - Pinned to specific CU
+    sql2022: mcr.microsoft.com/mssql/server:2022-CU16-ubuntu-22.04
+    
+    # SQL Server 2025 - Latest (or specify CU when available)
+    sql2025: mcr.microsoft.com/mssql/server:2025-latest
+    
+    # -------------------------------------------------------------------------
+    # Operator Component Images (Locally-built)
+    # -------------------------------------------------------------------------
+    # These images are built from this repository using `make docker-build`
+    # and pushed to a local registry for development/testing.
+    #
+    # To build and push these images:
+    #   1. Start a local registry (if not running):
+    #      docker run -d -p 5000:5000 --name registry registry:2
+    #
+    #   2. Build the operator image:
+    #      make docker-build IMG=localhost:5000/mssql-operator:latest
+    #      docker push localhost:5000/mssql-operator:latest
+    #
+    #   3. Build the AG Helper image:
+    #      make docker-build-sidecar IMG=localhost:5000/mssql-ag-helper:latest
+    #      docker push localhost:5000/mssql-ag-helper:latest
+    
+    # AG Helper sidecar (health monitoring for Availability Groups)
+    agHelper: localhost:5000/mssql-ag-helper:latest
+    
+    # SQL Exporter for Prometheus monitoring (optional third-party image)
+    # https://github.com/burningalchemist/sql_exporter
+    sqlExporter: burningalchemist/sql_exporter:latest
+    
+    # -------------------------------------------------------------------------
+    # Image Pull Configuration
+    # -------------------------------------------------------------------------
+    
+    # No imagePullSecrets needed - MCR is public, localhost doesn't require auth
+    imagePullSecrets: []
+    
+    # Use IfNotPresent for local dev (faster restarts)
+    # Use Always if you're frequently rebuilding images with the same tag
+    defaultPullPolicy: IfNotPresent
+
+  # ===========================================================================
+  # Operator Worker Configuration
+  # ===========================================================================
+  
+  workers: 4              # Fewer workers for dev environments
+  resyncPeriod: "30m"     # Full resync interval
+  repairPeriod: "5m"      # Repair check interval
+
+  # ===========================================================================
+  # Validation Behavior (Relaxed for Development)
+  # ===========================================================================
+  
+  validation:
+    clusterCapabilityChecks: true
+    validationTimeout: "5s"
+    storageClassValidation: warn    # Warn instead of block for flexibility
+    secretValidation: warn          # Warn instead of block
+    passwordComplexity: warn        # Warn for weak passwords (dev convenience)
+    nodeValidation: warn            # Warn for node selector issues
+
+---
+# ============================================================================
+# USAGE INSTRUCTIONS
+# ============================================================================
+#
+# 1. Start a local registry (for development):
+#
+#    docker run -d -p 5000:5000 --restart=always --name registry registry:2
+#
+# 2. Build and push the operator images:
+#
+#    # Build operator
+#    make docker-build IMG=localhost:5000/mssql-operator:latest
+#    docker push localhost:5000/mssql-operator:latest
+#
+#    # Build AG Helper
+#    make docker-build-sidecar IMG=localhost:5000/mssql-ag-helper:latest
+#    docker push localhost:5000/mssql-ag-helper:latest
+#
+# 3. Apply this configuration:
+#
+#    kubectl apply -f samples/operator-configuration-mcr-defaults.yaml
+#
+# 4. Verify the configuration:
+#
+#    kubectl get operatorconfigurations
+#    kubectl describe operatorconfiguration default
+#
+# 5. Deploy the operator (update deployment.yaml to use your local image):
+#
+#    kubectl apply -f deploy/
+#
+# 6. Create a SQL Server instance:
+#
+#    kubectl apply -f samples/sqlserver-2022-standalone.yaml
+#
+# ============================================================================

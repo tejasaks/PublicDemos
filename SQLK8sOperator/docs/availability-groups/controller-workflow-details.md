@@ -25,7 +25,7 @@ This document provides an in-depth explanation of how the AG Helper sidecar and 
 │                         KUBERNETES CLUSTER                                   │
 │                                                                              │
 │  ┌─────────────────────────────────────────────────────────────────────────┐│
-│  │                    CONTROLLER (mssql-operator-system)                   ││
+│  │                    CONTROLLER (mssql-system)                            ││
 │  │                                                                         ││
 │  │  SQLServerAGReconciler                                                  ││
 │  │  ┌─────────────────────┐                                                ││

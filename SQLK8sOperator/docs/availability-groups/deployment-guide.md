@@ -68,7 +68,7 @@ Before deploying an AG, ensure:
 
 | Requirement | How to Check |
 |-------------|--------------|
-| Operator installed | `kubectl get deployment -n mssql-operator-system` |
+| Operator installed | `kubectl get deployment -n mssql-system` |
 | 3+ nodes (recommended) | `kubectl get nodes` |
 | Storage provisioner | `kubectl get storageclass` |
 | Sufficient resources | 4+ CPU, 8+ GB per replica |

@@ -11,9 +11,9 @@
 # ├─────────────────────────────────────────────────────────────────────────┤
 # │  automaticFailover: false (DEFAULT - Recommended for most deployments) │
 # │  ─────────────────────────────────────────────────────────────────────  │
-# │  • Operator monitors AG health via AG Helper sidecar                    │
+# │  • Operator monitors AG health via AG Helper pod                        │
 # │  • LoadBalancer services route traffic to primary/secondaries           │
-# │  • Failover is MANUAL (via T-SQL or AG Helper API)                      │
+# │  • Failover is MANUAL (via kubectl annotate or T-SQL)                   │
 # │  • Gives DBA full control over failover decisions                       │
 # │                                                                         │
 # │  automaticFailover: true (Production deployments with HA requirements)  │
@@ -31,9 +31,12 @@
 #
 # WHAT THIS PROVIDES:
 #   ✅ Primary LoadBalancer service - routes traffic to current primary
+#      (named <AG-name>-primary, e.g., ProductionAG-primary)
 #   ✅ Secondary LoadBalancer service - routes read traffic to secondaries
-#   ✅ AG health monitoring via AG Helper sidecar
-#   ✅ Optional automatic failover (when enabled)
+#      (named <AG-name>-secondary, e.g., ProductionAG-secondary)
+#   ✅ AG health monitoring via AG Helper pod (one per SQLServerAG)
+#   ✅ Manual failover via kubectl annotate
+#   ✅ Optional automatic failover (when automaticFailover: true)
 #
 # PREREQUISITES:
 #   - ag-step1-replicas.yaml applied
@@ -166,21 +169,66 @@ spec:
 # 2. Verify SQLServerAG resource:
 #    kubectl get sqlserverag -n mssql
 #
-# 3. Check services created:
+# 3. Check services created (uses AG name from T-SQL, not resource name):
 #    kubectl get svc -n mssql
-#    # Should see: production-ag-primary, production-ag-secondary
+#    # Should see: ProductionAG-primary, ProductionAG-secondary
+#    # (Service names use the availabilityGroup.name field, e.g., "ProductionAG")
 #
 # 4. Connect to primary:
 #    # Get LoadBalancer IP
-#    kubectl get svc production-ag-primary -n mssql
+#    kubectl get svc ProductionAG-primary -n mssql
 #    
 #    # Connect (primary always routes to current primary)
 #    sqlcmd -S <PRIMARY_IP>,1433 -U sa -P 'YourStrong@Passw0rd!'
 #
 # 5. Connect to secondary (read-only):
-#    kubectl get svc production-ag-secondary -n mssql
+#    kubectl get svc ProductionAG-secondary -n mssql
 #    
 #    # Read-only connection to secondaries
 #    sqlcmd -S <SECONDARY_IP>,1434 -U sa -P 'YourStrong@Passw0rd!'
+#
+# ============================================================================
+# MANUAL FAILOVER (via kubectl)
+# ============================================================================
+#
+# To manually failover to a specific replica, use the annotation:
+#
+#   # Failover to sql-ag-1
+#   kubectl annotate sqlserverag production-ag -n mssql \
+#     mssql.microsoft.com/failover-to=sql-ag-1
+#
+#   # Check failover status
+#   kubectl get sqlserverag production-ag -n mssql -o jsonpath='{.metadata.annotations}'
+#
+#   # Watch for primary change
+#   kubectl get sqlserverag production-ag -n mssql -w
+#
+# To cancel/clear a failed failover request:
+#   kubectl annotate sqlserverag production-ag -n mssql \
+#     mssql.microsoft.com/failover-to- \
+#     mssql.microsoft.com/failover-status- \
+#     mssql.microsoft.com/failover-requested-
+#
+# ============================================================================
+# OTHER KUBECTL COMMANDS
+# ============================================================================
+#
+# View AG status and primary replica:
+#   kubectl get sqlserverag -n mssql
+#
+# View detailed AG status with replica health:
+#   kubectl describe sqlserverag production-ag -n mssql
+#
+# View AG replica status (JSON):
+#   kubectl get sqlserverag production-ag -n mssql -o jsonpath='{.status.replicas}' | jq
+#
+# Check which replica is primary:
+#   kubectl get sqlserverag production-ag -n mssql -o jsonpath='{.status.primaryReplica}'
+#
+# Check synchronization count:
+#   kubectl get sqlserverag production-ag -n mssql -o jsonpath='{.status.synchronizedReplicas}'
+#
+# View events (including failovers):
+#   kubectl get events -n mssql --field-selector involvedObject.name=production-ag
 #
 # ============================================================================

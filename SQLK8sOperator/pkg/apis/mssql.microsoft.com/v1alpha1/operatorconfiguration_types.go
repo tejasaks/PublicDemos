@@ -13,11 +13,17 @@ import (
 
 // OperatorConfigurationSpec defines the configuration for the MSSQL Operator
 type OperatorConfigurationSpec struct {
-	// DockerImage is the default SQL Server image
+	// Images contains container image configuration for all components
+	// This is the recommended way to configure custom images for SQL Server,
+	// AG Helper, and SQL Exporter across the entire cluster
+	// +optional
+	Images *ImageConfiguration `json:"images,omitempty"`
+
+	// DockerImage is the default SQL Server image (DEPRECATED: use images.sql2022 instead)
 	// +kubebuilder:default="mcr.microsoft.com/mssql/server:2022-latest"
 	DockerImage string `json:"dockerImage,omitempty"`
 
-	// SidecarImage is the default AG helper sidecar image
+	// SidecarImage is the default AG helper sidecar image (DEPRECATED: use images.agHelper instead)
 	// +kubebuilder:default="mssql-ag-helper:latest"
 	SidecarImage string `json:"sidecarImage,omitempty"`
 
@@ -58,6 +64,41 @@ type OperatorConfigurationSpec struct {
 	// ActiveDirectory contains AD defaults
 	// +optional
 	ActiveDirectory *ActiveDirectoryDefaults `json:"activeDirectory,omitempty"`
+}
+
+// ImageConfiguration defines container images for all operator-managed components
+// This allows cluster administrators to specify custom images from private registries
+// or pin to specific versions across all SQL Server deployments
+type ImageConfiguration struct {
+	// SQL2019 is the container image for SQL Server 2019
+	// +kubebuilder:default="mcr.microsoft.com/mssql/server:2019-latest"
+	SQL2019 string `json:"sql2019,omitempty"`
+
+	// SQL2022 is the container image for SQL Server 2022
+	// +kubebuilder:default="mcr.microsoft.com/mssql/server:2022-latest"
+	SQL2022 string `json:"sql2022,omitempty"`
+
+	// SQL2025 is the container image for SQL Server 2025
+	// +kubebuilder:default="mcr.microsoft.com/mssql/server:2025-latest"
+	SQL2025 string `json:"sql2025,omitempty"`
+
+	// AGHelper is the container image for the AG Helper sidecar
+	// +kubebuilder:default="mssql-ag-helper:latest"
+	AGHelper string `json:"agHelper,omitempty"`
+
+	// SQLExporter is the container image for the SQL Exporter (Prometheus metrics)
+	// +kubebuilder:default="burningalchemist/sql_exporter:latest"
+	SQLExporter string `json:"sqlExporter,omitempty"`
+
+	// ImagePullSecrets is a list of secret names for authenticating to private registries
+	// These secrets will be added to all pods created by the operator
+	// +optional
+	ImagePullSecrets []string `json:"imagePullSecrets,omitempty"`
+
+	// DefaultPullPolicy is the default image pull policy for all containers
+	// +kubebuilder:validation:Enum=Always;IfNotPresent;Never
+	// +kubebuilder:default="IfNotPresent"
+	DefaultPullPolicy string `json:"defaultPullPolicy,omitempty"`
 }
 
 // ValidationConfiguration defines validation behavior for the operator
@@ -278,3 +319,53 @@ const DefaultExporterImage = "burningalchemist/sql_exporter:latest"
 
 // DefaultSidecarImage is the default AG helper sidecar image
 const DefaultSidecarImage = "mssql-ag-helper:latest"
+
+// GetSQLImage returns the SQL Server image for the specified version
+// It checks the ImageConfiguration first, then falls back to DefaultImages
+func (c *ImageConfiguration) GetSQLImage(version string) string {
+	if c != nil {
+		switch version {
+		case "2019":
+			if c.SQL2019 != "" {
+				return c.SQL2019
+			}
+		case "2022":
+			if c.SQL2022 != "" {
+				return c.SQL2022
+			}
+		case "2025":
+			if c.SQL2025 != "" {
+				return c.SQL2025
+			}
+		}
+	}
+	// Fall back to defaults
+	if img, ok := DefaultImages[version]; ok {
+		return img
+	}
+	return DefaultImages["2022"] // Ultimate fallback
+}
+
+// GetAGHelperImage returns the AG Helper sidecar image
+func (c *ImageConfiguration) GetAGHelperImage() string {
+	if c != nil && c.AGHelper != "" {
+		return c.AGHelper
+	}
+	return DefaultSidecarImage
+}
+
+// GetSQLExporterImage returns the SQL Exporter image
+func (c *ImageConfiguration) GetSQLExporterImage() string {
+	if c != nil && c.SQLExporter != "" {
+		return c.SQLExporter
+	}
+	return DefaultExporterImage
+}
+
+// GetImagePullPolicy returns the default image pull policy
+func (c *ImageConfiguration) GetImagePullPolicy() string {
+	if c != nil && c.DefaultPullPolicy != "" {
+		return c.DefaultPullPolicy
+	}
+	return "IfNotPresent"
+}

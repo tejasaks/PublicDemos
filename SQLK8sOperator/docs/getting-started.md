@@ -87,12 +87,21 @@ kubectl apply -f deploy/deployment.yaml
 ### Verify the Operator is Running
 
 ```bash
-kubectl get pods -n mssql-operator-system
+kubectl get pods -n mssql-system
 
 # Expected output:
 # NAME                              READY   STATUS    RESTARTS   AGE
 # mssql-operator-xxxxxxxxx-xxxxx   1/1     Running   0          30s
 ```
+
+### Configure Container Images (Optional)
+
+By default, the operator pulls SQL Server images from Microsoft Container Registry (MCR), which requires no authentication. For private registry or air-gapped deployments, see [Private Registry Deployment](user-guide/deployment-scenarios.md#private-registry-deployment).
+
+| Sample Configuration | Use Case |
+|---------------------|----------|
+| [operator-configuration-mcr-defaults.yaml](../samples/operator-configuration-mcr-defaults.yaml) | Pin specific CU versions from MCR |
+| [operator-configuration-private-registry.yaml](../samples/operator-configuration-private-registry.yaml) | Use your own private container registry |
 
 ## Step 2: Create the SA Password Secret
 

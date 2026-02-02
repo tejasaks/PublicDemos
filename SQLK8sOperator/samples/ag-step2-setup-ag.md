@@ -10,17 +10,19 @@ Before proceeding, ensure:
 
 - [ ] `ag-step1-replicas.yaml` has been applied
 - [ ] All 3 pods are Running and Ready (`kubectl get pods -n mssql`)
-- [ ] AG Helper shows "waiting for AG" in logs
+- [ ] AG Helper credentials secret exists (created in Step 1)
 
 ```bash
 # Verify pods are ready
 kubectl get pods -n mssql
-# Expected: sql-ag-0, sql-ag-1, sql-ag-2 all showing 2/2 Ready
+# Expected: sql-ag-0, sql-ag-1, sql-ag-2 all showing 1/1 Ready
 
-# Check AG Helper is waiting
-kubectl logs sql-ag-0 -n mssql -c ag-helper | tail -5
-# Expected: "No Availability Groups found, waiting for AG configuration..."
+# Verify AG Helper credentials secret exists
+kubectl get secret sql-ag-helper -n mssql
+# Expected: secret/sql-ag-helper (will be used by AG Helper in Step 3)
 ```
+
+> **Note:** AG Helper is NOT running yet. It will be deployed in Step 3 when you create the SQLServerAG resource. The new architecture deploys one AG Helper pod per Availability Group (not per replica).
 
 ---
 
@@ -43,7 +45,7 @@ kubectl logs sql-ag-0 -n mssql -c ag-helper | tail -5
 
 Run on **ALL replicas** (sql-ag-0, sql-ag-1, sql-ag-2).
 
-The AG Helper sidecar needs a SQL login to monitor AG health and perform failover operations.
+The AG Helper (deployed in Step 3) will need a SQL login to monitor AG health and perform failover operations. Create the login now so it's ready when the AG Helper connects.
 
 ```bash
 # Connect to each replica and run the T-SQL
@@ -248,13 +250,14 @@ GO
 
 Run on **ALL replicas** (sql-ag-0, sql-ag-1, sql-ag-2).
 
+Each replica needs an endpoint, and we grant connect permission only to the logins that exist on that replica (i.e., logins for the *other* replicas).
+
 ```bash
-# Create endpoint on each replica
-for i in 0 1 2; do
-  echo "=== Creating endpoint on sql-ag-$i ==="
-  kubectl exec -it sql-ag-$i -n mssql -c mssql -- \
-    /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa \
-    -P 'YourStrong@Passw0rd!' -C -Q "
+# Create endpoint on sql-ag-0 (grant to logins 1 and 2)
+echo "=== Creating endpoint on sql-ag-0 ==="
+kubectl exec -it sql-ag-0 -n mssql -c mssql -- \
+  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa \
+  -P 'YourStrong@Passw0rd!' -C -Q "
 CREATE ENDPOINT AG_Endpoint
     STATE = STARTED
     AS TCP (
@@ -263,21 +266,73 @@ CREATE ENDPOINT AG_Endpoint
     )
     FOR DATABASE_MIRRORING (
         ROLE = ALL,
-        AUTHENTICATION = CERTIFICATE AG_Cert_$i,
+        AUTHENTICATION = CERTIFICATE AG_Cert_0,
         ENCRYPTION = REQUIRED ALGORITHM AES
     );
 GO
 
--- Grant connect to the other replica logins
-GRANT CONNECT ON ENDPOINT::AG_Endpoint TO sql_ag_0_login;
+-- Grant connect to the OTHER replica logins (1 and 2 exist on this node)
 GRANT CONNECT ON ENDPOINT::AG_Endpoint TO sql_ag_1_login;
 GRANT CONNECT ON ENDPOINT::AG_Endpoint TO sql_ag_2_login;
 GO
 
-PRINT 'Endpoint created on sql-ag-$i';
+PRINT 'Endpoint created on sql-ag-0';
 GO
 "
-done
+
+# Create endpoint on sql-ag-1 (grant to logins 0 and 2)
+echo "=== Creating endpoint on sql-ag-1 ==="
+kubectl exec -it sql-ag-1 -n mssql -c mssql -- \
+  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa \
+  -P 'YourStrong@Passw0rd!' -C -Q "
+CREATE ENDPOINT AG_Endpoint
+    STATE = STARTED
+    AS TCP (
+        LISTENER_PORT = 5022,
+        LISTENER_IP = ALL
+    )
+    FOR DATABASE_MIRRORING (
+        ROLE = ALL,
+        AUTHENTICATION = CERTIFICATE AG_Cert_1,
+        ENCRYPTION = REQUIRED ALGORITHM AES
+    );
+GO
+
+-- Grant connect to the OTHER replica logins (0 and 2 exist on this node)
+GRANT CONNECT ON ENDPOINT::AG_Endpoint TO sql_ag_0_login;
+GRANT CONNECT ON ENDPOINT::AG_Endpoint TO sql_ag_2_login;
+GO
+
+PRINT 'Endpoint created on sql-ag-1';
+GO
+"
+
+# Create endpoint on sql-ag-2 (grant to logins 0 and 1)
+echo "=== Creating endpoint on sql-ag-2 ==="
+kubectl exec -it sql-ag-2 -n mssql -c mssql -- \
+  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa \
+  -P 'YourStrong@Passw0rd!' -C -Q "
+CREATE ENDPOINT AG_Endpoint
+    STATE = STARTED
+    AS TCP (
+        LISTENER_PORT = 5022,
+        LISTENER_IP = ALL
+    )
+    FOR DATABASE_MIRRORING (
+        ROLE = ALL,
+        AUTHENTICATION = CERTIFICATE AG_Cert_2,
+        ENCRYPTION = REQUIRED ALGORITHM AES
+    );
+GO
+
+-- Grant connect to the OTHER replica logins (0 and 1 exist on this node)
+GRANT CONNECT ON ENDPOINT::AG_Endpoint TO sql_ag_0_login;
+GRANT CONNECT ON ENDPOINT::AG_Endpoint TO sql_ag_1_login;
+GO
+
+PRINT 'Endpoint created on sql-ag-2';
+GO
+"
 ```
 
 > **Note:** The endpoint port (5022) is configured here in T-SQL. You can change this if needed, but ensure all replicas use the same port.
@@ -611,17 +666,15 @@ GO
 
 ---
 
-## Verify AG Helper Detection
+## What's Next: Deploy AG Helper
 
-After completing T-SQL setup, AG Helper should automatically detect the new AG.
+At this point, the T-SQL Availability Group is configured and running, but there is **no AG Helper monitoring it yet**. The AG Helper will be deployed in Step 3 when you create the SQLServerAG resource.
 
-```bash
-# Check AG Helper logs - should now show discovered AG
-kubectl logs sql-ag-0 -n mssql -c ag-helper | tail -10
-
-# Expected output:
-# [INFO] AG 'ProductionAG' State: role=PRIMARY, sync=SYNCHRONIZED, health=Healthy
-```
+> **Architecture Note:** The operator uses a **single AG Helper pod per Availability Group** (not per replica). This centralized approach:
+> - Provides a single source of truth for AG health
+> - Eliminates coordination conflicts between multiple helpers
+> - Simplifies credential management
+> - Reduces resource overhead
 
 ---
 
@@ -631,24 +684,32 @@ After completing T-SQL setup, proceed to Step 3:
 
 **Apply [ag-step3-ag-config.yaml](ag-step3-ag-config.yaml)** to:
 
-- ✅ **Deploy AG Helper sidecar** - Monitor AG health on each replica
-- ✅ **Create Primary/Secondary LoadBalancer Services** - Route traffic to current primary or secondaries
+- ✅ **Deploy AG Helper pod** - A single pod that monitors AG health across all replicas
+- ✅ **Create Primary/Secondary Services** - Route traffic to current primary or secondaries
 - ✅ **Enable optional automatic failover** - Set `automaticFailover: true` for controller-managed failover
+
+The SQLServerAG resource triggers deployment of the AG Helper, which will:
+1. Connect to each replica using the credentials from `sql-ag-helper` secret
+2. Monitor the Availability Group health status
+3. Update the SQLServerAG status with current primary and sync state
+4. Perform automatic failover if enabled and primary becomes unhealthy
 
 ---
 
 ## Troubleshooting
 
-### AG Helper not detecting AG
+### Verify AG Helper Login Works (Before Step 3)
+
+Test that the AG Helper login you created can connect:
 
 ```bash
-# Check AG Helper can connect
-kubectl logs sql-ag-0 -n mssql -c ag-helper | grep -i error
-
-# Verify AG Helper login works
-kubectl exec -it sql-ag-0 -n mssql -c mssql -- \
-  /opt/mssql-tools18/bin/sqlcmd -S localhost -U ag_helper \
-  -P 'AGHelper@Passw0rd!' -C -Q "SELECT @@SERVERNAME"
+# Verify AG Helper login works on all replicas
+for i in 0 1 2; do
+  echo "=== Testing AG Helper login on sql-ag-$i ==="
+  kubectl exec -it sql-ag-$i -n mssql -c mssql -- \
+    /opt/mssql-tools18/bin/sqlcmd -S localhost -U ag_helper \
+    -P 'AGHelper@Passw0rd!' -C -Q "SELECT @@SERVERNAME AS ServerName, SUSER_NAME() AS LoginName"
+done
 ```
 
 ### Secondaries not joining

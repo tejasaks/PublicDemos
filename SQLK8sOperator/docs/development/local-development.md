@@ -156,7 +156,7 @@ Build and deploy to your Kind cluster:
 make deploy IMG=mssql-operator:dev
 
 # Verify
-kubectl get pods -n mssql-operator-system
+kubectl get pods -n mssql-system
 ```
 
 ### Option 3: Tilt (Hot Reload)
@@ -212,7 +212,7 @@ make docker-build docker-push deploy IMG=mssql-operator:dev
 kubectl apply -f samples/sqlserver-basic.yaml
 
 # 5. Check logs
-kubectl logs -f deployment/mssql-operator-controller-manager -n mssql-operator-system
+kubectl logs -f deployment/mssql-operator-controller-manager -n mssql-system
 ```
 
 ### Regenerate Generated Code
@@ -353,7 +353,7 @@ ENTRYPOINT ["/dlv", "--listen=:40000", "--headless=true", "--api-version=2", "ex
 Port-forward to debugger:
 
 ```bash
-kubectl port-forward deployment/mssql-operator-controller-manager 40000:40000 -n mssql-operator-system
+kubectl port-forward deployment/mssql-operator-controller-manager 40000:40000 -n mssql-system
 ```
 
 Connect VS Code debugger to `localhost:40000`.
@@ -362,10 +362,10 @@ Connect VS Code debugger to `localhost:40000`.
 
 ```bash
 # Follow operator logs
-kubectl logs -f deployment/mssql-operator-controller-manager -n mssql-operator-system
+kubectl logs -f deployment/mssql-operator-controller-manager -n mssql-system
 
 # With increased verbosity
-kubectl logs -f deployment/mssql-operator-controller-manager -n mssql-operator-system | grep -i sqlserver
+kubectl logs -f deployment/mssql-operator-controller-manager -n mssql-system | grep -i sqlserver
 ```
 
 ### Enable Debug Logging

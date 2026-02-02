@@ -54,6 +54,7 @@ type SQLServerReconciler struct {
 	Recorder record.EventRecorder
 }
 
+// +kubebuilder:rbac:groups=mssql.microsoft.com,resources=operatorconfigurations,verbs=get;list;watch
 // +kubebuilder:rbac:groups=mssql.microsoft.com,resources=sqlservers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=mssql.microsoft.com,resources=sqlservers/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=mssql.microsoft.com,resources=sqlservers/finalizers,verbs=update
@@ -120,7 +121,9 @@ func (r *SQLServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Update status based on StatefulSet status
-	if err := r.updateStatus(ctx, sqlServer); err != nil {
+	// Get image config again for status (could cache but it's a fast read)
+	imageConfig := r.getImageConfiguration(ctx)
+	if err := r.updateStatus(ctx, sqlServer, imageConfig); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -291,7 +294,10 @@ func (r *SQLServerReconciler) reconcileService(ctx context.Context, sqlServer *m
 func (r *SQLServerReconciler) reconcileStatefulSet(ctx context.Context, sqlServer *mssqlv1alpha1.SQLServer) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	sts := r.buildStatefulSet(sqlServer)
+	// Get cluster-wide image configuration (if any)
+	imageConfig := r.getImageConfiguration(ctx)
+
+	sts := r.buildStatefulSet(ctx, sqlServer, imageConfig)
 
 	if err := ctrl.SetControllerReference(sqlServer, sts, r.Scheme); err != nil {
 		return ctrl.Result{}, err
@@ -359,7 +365,8 @@ func (r *SQLServerReconciler) compareStatefulSetWith(current, desired *appsv1.St
 }
 
 // buildStatefulSet creates the StatefulSet specification
-func (r *SQLServerReconciler) buildStatefulSet(sqlServer *mssqlv1alpha1.SQLServer) *appsv1.StatefulSet {
+// imageConfig is optional - if nil, uses hardcoded defaults
+func (r *SQLServerReconciler) buildStatefulSet(ctx context.Context, sqlServer *mssqlv1alpha1.SQLServer, imageConfig *mssqlv1alpha1.ImageConfiguration) *appsv1.StatefulSet {
 	labels := r.labelsForSQLServer(sqlServer)
 	replicas := sqlServer.Spec.Instance.Replicas
 	if replicas == 0 {
@@ -461,7 +468,7 @@ func (r *SQLServerReconciler) buildStatefulSet(sqlServer *mssqlv1alpha1.SQLServe
 	containers := []corev1.Container{
 		{
 			Name:            "mssql",
-			Image:           sqlServer.Spec.GetImage(),
+			Image:           sqlServer.Spec.GetImageWithConfig(imageConfig),
 			ImagePullPolicy: sqlServer.Spec.Instance.ImagePullPolicy,
 			Ports: []corev1.ContainerPort{
 				{Name: "sql", ContainerPort: SQLServerPort},
@@ -496,7 +503,12 @@ func (r *SQLServerReconciler) buildStatefulSet(sqlServer *mssqlv1alpha1.SQLServe
 	if sqlServer.Spec.Monitoring != nil && sqlServer.Spec.Monitoring.Enabled {
 		exporterImage := sqlServer.Spec.Monitoring.ExporterImage
 		if exporterImage == "" {
-			exporterImage = mssqlv1alpha1.DefaultExporterImage
+			// Use OperatorConfiguration if available, otherwise default
+			if imageConfig != nil {
+				exporterImage = imageConfig.GetSQLExporterImage()
+			} else {
+				exporterImage = mssqlv1alpha1.DefaultExporterImage
+			}
 		}
 		exporterPort := sqlServer.Spec.Monitoring.ExporterPort
 		if exporterPort == 0 {
@@ -583,7 +595,7 @@ func (r *SQLServerReconciler) buildStatefulSet(sqlServer *mssqlv1alpha1.SQLServe
 					NodeSelector:       sqlServer.Spec.Instance.NodeSelector,
 					Tolerations:        sqlServer.Spec.Instance.Tolerations,
 					Affinity:           sqlServer.Spec.Instance.Affinity,
-					ImagePullSecrets:   sqlServer.Spec.Instance.ImagePullSecrets,
+					ImagePullSecrets:   r.buildImagePullSecrets(sqlServer, imageConfig),
 					PriorityClassName:  sqlServer.Spec.Instance.PriorityClassName,
 					ServiceAccountName: "mssql-sa",
 				},
@@ -621,7 +633,7 @@ func (r *SQLServerReconciler) buildPVCSpec(vol mssqlv1alpha1.VolumeSpec) corev1.
 }
 
 // updateStatus updates the SQLServer status
-func (r *SQLServerReconciler) updateStatus(ctx context.Context, sqlServer *mssqlv1alpha1.SQLServer) error {
+func (r *SQLServerReconciler) updateStatus(ctx context.Context, sqlServer *mssqlv1alpha1.SQLServer, imageConfig *mssqlv1alpha1.ImageConfiguration) error {
 	logger := log.FromContext(ctx)
 
 	// Get StatefulSet
@@ -676,7 +688,7 @@ func (r *SQLServerReconciler) updateStatus(ctx context.Context, sqlServer *mssql
 	sqlServer.Status.Phase = phase
 	sqlServer.Status.Ready = phase == "Running"
 	sqlServer.Status.CurrentVersion = sqlServer.Spec.Version
-	sqlServer.Status.CurrentImage = sqlServer.Spec.GetImage()
+	sqlServer.Status.CurrentImage = sqlServer.Spec.GetImageWithConfig(imageConfig)
 	sqlServer.Status.Instances = instances
 	sqlServer.Status.ObservedGeneration = sqlServer.Generation
 
@@ -782,4 +794,42 @@ func removeString(slice []string, s string) []string {
 		}
 	}
 	return result
+}
+
+// getImageConfiguration loads the OperatorConfiguration named "default" and returns its Images config
+// Returns nil if no OperatorConfiguration exists (uses hardcoded defaults)
+func (r *SQLServerReconciler) getImageConfiguration(ctx context.Context) *mssqlv1alpha1.ImageConfiguration {
+	logger := log.FromContext(ctx)
+
+	config := &mssqlv1alpha1.OperatorConfiguration{}
+	if err := r.Get(ctx, types.NamespacedName{Name: "default"}, config); err != nil {
+		if !errors.IsNotFound(err) {
+			logger.V(1).Info("Failed to get OperatorConfiguration, using defaults", "error", err)
+		}
+		return nil
+	}
+
+	return config.Spec.Images
+}
+
+// buildImagePullSecrets merges ImagePullSecrets from SQLServer spec and OperatorConfiguration
+// SQLServer-level secrets take precedence, then OperatorConfiguration secrets are added
+func (r *SQLServerReconciler) buildImagePullSecrets(sqlServer *mssqlv1alpha1.SQLServer, imageConfig *mssqlv1alpha1.ImageConfiguration) []corev1.LocalObjectReference {
+	// Start with SQLServer-level secrets
+	secrets := sqlServer.Spec.Instance.ImagePullSecrets
+
+	// Add OperatorConfiguration secrets if not already present
+	if imageConfig != nil && len(imageConfig.ImagePullSecrets) > 0 {
+		existingNames := make(map[string]bool)
+		for _, s := range secrets {
+			existingNames[s.Name] = true
+		}
+		for _, name := range imageConfig.ImagePullSecrets {
+			if !existingNames[name] {
+				secrets = append(secrets, corev1.LocalObjectReference{Name: name})
+			}
+		}
+	}
+
+	return secrets
 }

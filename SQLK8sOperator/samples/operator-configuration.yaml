@@ -1,0 +1,162 @@
+# ============================================================================
+# OperatorConfiguration - Cluster-Wide Image and Operator Settings
+# ============================================================================
+#
+# This manifest configures cluster-wide defaults for the MSSQL Operator.
+# The operator looks for an OperatorConfiguration named "default" (cluster-scoped).
+#
+# FOR SPECIFIC USE CASES, SEE THESE SAMPLES:
+#   📁 operator-configuration-mcr-defaults.yaml
+#      → MCR SQL Server images + local operator/AG Helper images
+#      → Best for: Development, testing, CI/CD pipelines
+#
+#   📁 operator-configuration-private-registry.yaml
+#      → All images from your private registry (ACR, ECR, Harbor, etc.)
+#      → Best for: Production, air-gapped, regulated environments
+#      → Includes step-by-step instructions for pushing images
+#
+# This file contains a comprehensive reference with all options documented.
+#
+# KEY USE CASES:
+#   ✅ Private Registry: Use custom images from your private container registry
+#   ✅ Version Pinning: Pin specific CU versions for all SQL Server deployments
+#   ✅ Air-Gapped Clusters: Point to local registry mirrors
+#   ✅ Centralized Config: Single place to manage all image versions
+#
+# IMAGE RESOLUTION PRIORITY:
+#   1. Per-resource override (spec.instance.image in SQLServer, spec.sidecar.image in SQLServerAG)
+#   2. OperatorConfiguration (this file)
+#   3. Hardcoded defaults (mcr.microsoft.com/mssql/server:xxxx-latest)
+#
+# ============================================================================
+
+---
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: OperatorConfiguration
+metadata:
+  name: default  # Must be "default" - the operator only looks for this name
+spec:
+  # ===========================================================================
+  # Container Images Configuration
+  # ===========================================================================
+  # Specify custom container images for all operator-managed components.
+  # Useful for private registries, air-gapped environments, or version pinning.
+  
+  images:
+    # SQL Server 2019 image (used when SQLServer.spec.version = "2019")
+    sql2019: mcr.microsoft.com/mssql/server:2019-CU27-ubuntu-22.04
+    
+    # SQL Server 2022 image (used when SQLServer.spec.version = "2022")
+    sql2022: mcr.microsoft.com/mssql/server:2022-CU15-ubuntu-22.04
+    
+    # SQL Server 2025 image (used when SQLServer.spec.version = "2025")
+    sql2025: mcr.microsoft.com/mssql/server:2025-latest
+    
+    # AG Helper sidecar image (used by SQLServerAG for health monitoring)
+    agHelper: mssql-ag-helper:latest
+    
+    # SQL Exporter image (used when SQLServer.spec.monitoring.enabled = true)
+    sqlExporter: burningalchemist/sql_exporter:latest
+    
+    # Image pull secrets for private registries
+    # These are merged with per-SQLServer imagePullSecrets
+    imagePullSecrets: []
+    # Example:
+    # imagePullSecrets:
+    #   - my-acr-secret
+    #   - dockerhub-secret
+    
+    # Default image pull policy for all containers
+    # Options: Always, IfNotPresent, Never
+    defaultPullPolicy: IfNotPresent
+
+  # ===========================================================================
+  # Operator Worker Configuration
+  # ===========================================================================
+  
+  # Number of concurrent reconciliation workers
+  workers: 8
+  
+  # Interval for full resync of all resources
+  resyncPeriod: "30m"
+  
+  # Interval for repair checks
+  repairPeriod: "5m"
+
+  # ===========================================================================
+  # Validation Behavior
+  # ===========================================================================
+  
+  validation:
+    # Enable cluster capability checks (StorageClass existence, etc.)
+    clusterCapabilityChecks: true
+    
+    # Timeout for validation operations
+    validationTimeout: "3s"
+    
+    # How to handle StorageClass validation failures: block or warn
+    storageClassValidation: block
+    
+    # How to handle Secret validation failures: block or warn
+    secretValidation: warn
+    
+    # Password complexity validation: enforce or warn
+    passwordComplexity: enforce
+    
+    # Node selector validation: block or warn
+    nodeValidation: block
+
+---
+# ============================================================================
+# EXAMPLE: Private Registry Configuration
+# ============================================================================
+#
+# For organizations using a private container registry (ACR, ECR, Harbor, etc.):
+#
+# apiVersion: mssql.microsoft.com/v1alpha1
+# kind: OperatorConfiguration
+# metadata:
+#   name: default
+# spec:
+#   images:
+#     sql2019: myregistry.azurecr.io/mssql/server:2019-CU27
+#     sql2022: myregistry.azurecr.io/mssql/server:2022-CU15
+#     sql2025: myregistry.azurecr.io/mssql/server:2025-rc1
+#     agHelper: myregistry.azurecr.io/mssql-operator/ag-helper:1.0.0
+#     sqlExporter: myregistry.azurecr.io/prometheus/sql-exporter:0.14
+#     imagePullSecrets:
+#       - acr-auth-secret
+#     defaultPullPolicy: Always
+#
+# ============================================================================
+# EXAMPLE: Air-Gapped / Disconnected Cluster
+# ============================================================================
+#
+# For clusters without internet access, mirror images to a local registry:
+#
+# apiVersion: mssql.microsoft.com/v1alpha1
+# kind: OperatorConfiguration
+# metadata:
+#   name: default
+# spec:
+#   images:
+#     sql2022: registry.local:5000/mssql-server:2022-CU15
+#     agHelper: registry.local:5000/ag-helper:1.0.0
+#     sqlExporter: registry.local:5000/sql-exporter:latest
+#     defaultPullPolicy: IfNotPresent
+#
+# ============================================================================
+# USAGE
+# ============================================================================
+#
+# 1. Apply this manifest (before or after deploying the operator):
+#    kubectl apply -f samples/operator-configuration.yaml
+#
+# 2. Verify the configuration:
+#    kubectl get operatorconfigurations
+#    kubectl describe operatorconfiguration default
+#
+# 3. Any SQLServer resources created after this will use these image defaults.
+#    Existing resources will pick up changes on their next reconciliation.
+#
+# ============================================================================

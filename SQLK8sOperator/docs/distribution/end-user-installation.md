@@ -447,7 +447,7 @@ kubectl apply -f https://github.com/yourorg/mssql-operator/releases/latest/downl
 
 **Expected output:**
 ```
-namespace/mssql-operator-system created
+namespace/mssql-system created
 customresourcedefinition.apiextensions.k8s.io/sqlservers.mssql.microsoft.com created
 customresourcedefinition.apiextensions.k8s.io/sqlserverags.mssql.microsoft.com created
 serviceaccount/mssql-operator-controller-manager created
@@ -490,7 +490,7 @@ Update Complete. ⎈Happy Helming!⎈
 
 ```bash
 helm install mssql-operator mssql-operator/mssql-operator \
-  --namespace mssql-operator-system \
+  --namespace mssql-system \
   --create-namespace
 ```
 
@@ -498,7 +498,7 @@ helm install mssql-operator mssql-operator/mssql-operator \
 ```
 NAME: mssql-operator
 LAST DEPLOYED: Mon Jan 15 10:00:00 2024
-NAMESPACE: mssql-operator-system
+NAMESPACE: mssql-system
 STATUS: deployed
 REVISION: 1
 TEST SUITE: None
@@ -511,7 +511,7 @@ The MSSQL Operator has been installed.
 
 ```bash
 helm install mssql-operator mssql-operator/mssql-operator \
-  --namespace mssql-operator-system \
+  --namespace mssql-system \
   --create-namespace \
   --set resources.limits.memory=512Mi
 ```
@@ -546,7 +546,7 @@ kind: Kustomization
 resources:
   - https://github.com/yourorg/mssql-operator/releases/download/v1.0.0/install.yaml
 
-namespace: mssql-operator-system
+namespace: mssql-system
 
 # Optional: Customize resources
 patchesStrategicMerge:
@@ -568,7 +568,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: mssql-operator-controller-manager
-  namespace: mssql-operator-system
+  namespace: mssql-system
 spec:
   template:
     spec:
@@ -588,7 +588,7 @@ kubectl apply -k .
 
 **Expected output:**
 ```
-namespace/mssql-operator-system created
+namespace/mssql-system created
 customresourcedefinition.apiextensions.k8s.io/sqlservers.mssql.microsoft.com created
 ...
 deployment.apps/mssql-operator-controller-manager created
@@ -653,7 +653,7 @@ After installing the operator, verify everything is working correctly.
 ### Verify Operator is Running
 
 ```bash
-kubectl get pods -n mssql-operator-system
+kubectl get pods -n mssql-system
 ```
 
 **Expected output:**
@@ -690,6 +690,43 @@ kubectl create namespace mssql
 ```
 namespace/mssql created
 ```
+
+### Configure Container Images (Optional)
+
+By default, the operator uses official Microsoft Container Registry (MCR) images. For production environments, you may want to configure custom images from a private registry.
+
+**Option A: Use MCR defaults (default behavior)**
+
+No additional configuration needed. SQL Server images are pulled directly from MCR.
+
+**Option B: Configure a private registry**
+
+For air-gapped, regulated, or production environments:
+
+```bash
+# 1. Create image pull secrets
+kubectl create secret docker-registry acr-pull-secret \
+  --docker-server=myregistry.azurecr.io \
+  --docker-username=<service-principal-id> \
+  --docker-password=<service-principal-secret> \
+  -n mssql
+
+# 2. Apply the OperatorConfiguration
+# Edit the sample to use your registry URL, then apply:
+kubectl apply -f samples/operator-configuration-private-registry.yaml
+```
+
+See [Private Registry Deployment](../user-guide/deployment-scenarios.md#private-registry-deployment) for complete instructions on:
+- Mirroring SQL Server images to your private registry
+- Building and pushing operator/AG Helper images
+- Configuring imagePullSecrets
+
+**Available configuration samples:**
+
+| Sample | Description |
+|--------|-------------|
+| [operator-configuration-mcr-defaults.yaml](../../samples/operator-configuration-mcr-defaults.yaml) | MCR SQL images + local operator images (dev/test) |
+| [operator-configuration-private-registry.yaml](../../samples/operator-configuration-private-registry.yaml) | All images from private registry (production) |
 
 ## Verification
 
@@ -850,19 +887,19 @@ secret "sql-test-sa" deleted
 **For Helm installations:**
 
 ```bash
-helm list -n mssql-operator-system
+helm list -n mssql-system
 ```
 
 **Expected output:**
 ```
 NAME            NAMESPACE                REVISION  UPDATED                                 STATUS    CHART                  APP VERSION
-mssql-operator  mssql-operator-system    1         2024-01-15 10:00:00.000000 -0800 PST    deployed  mssql-operator-1.0.0   1.0.0
+mssql-operator  mssql-system    1         2024-01-15 10:00:00.000000 -0800 PST    deployed  mssql-operator-1.0.0   1.0.0
 ```
 
 **For kubectl installations:**
 
 ```bash
-kubectl get deployment -n mssql-operator-system -o jsonpath='{.items[0].spec.template.spec.containers[0].image}'
+kubectl get deployment -n mssql-system -o jsonpath='{.items[0].spec.template.spec.containers[0].image}'
 ```
 
 **Expected output:**
@@ -902,7 +939,7 @@ mssql-operator/mssql-operator   1.0.0           1.0.0           SQL Server Kuber
 
 ```bash
 helm upgrade mssql-operator mssql-operator/mssql-operator \
-  --namespace mssql-operator-system \
+  --namespace mssql-system \
   --reuse-values
 ```
 
@@ -911,7 +948,7 @@ helm upgrade mssql-operator mssql-operator/mssql-operator \
 Release "mssql-operator" has been upgraded. Happy Helming!
 NAME: mssql-operator
 LAST DEPLOYED: Mon Jan 22 10:00:00 2024
-NAMESPACE: mssql-operator-system
+NAMESPACE: mssql-system
 STATUS: deployed
 REVISION: 2
 ```
@@ -944,7 +981,7 @@ If the upgrade causes issues, rollback to the previous version.
 **For Helm:**
 
 ```bash
-helm rollback mssql-operator 1 -n mssql-operator-system
+helm rollback mssql-operator 1 -n mssql-system
 ```
 
 **Expected output:**
@@ -995,7 +1032,7 @@ No resources found in mssql namespace.
 **For Helm installations:**
 
 ```bash
-helm uninstall mssql-operator -n mssql-operator-system
+helm uninstall mssql-operator -n mssql-system
 ```
 
 **Expected output:**
@@ -1011,7 +1048,7 @@ kubectl delete -f https://github.com/yourorg/mssql-operator/releases/latest/down
 
 **Expected output:**
 ```
-namespace "mssql-operator-system" deleted
+namespace "mssql-system" deleted
 customresourcedefinition.apiextensions.k8s.io "sqlservers.mssql.microsoft.com" deleted
 ...
 deployment.apps "mssql-operator-controller-manager" deleted
@@ -1035,13 +1072,13 @@ customresourcedefinition.apiextensions.k8s.io "sqlserverags.mssql.microsoft.com"
 ### Remove Namespaces
 
 ```bash
-kubectl delete namespace mssql-operator-system
+kubectl delete namespace mssql-system
 kubectl delete namespace mssql
 ```
 
 **Expected output:**
 ```
-namespace "mssql-operator-system" deleted
+namespace "mssql-system" deleted
 namespace "mssql" deleted
 ```
 
@@ -1052,7 +1089,7 @@ namespace "mssql" deleted
 **Step 1: Check pod status**
 
 ```bash
-kubectl describe pod -n mssql-operator-system -l control-plane=controller-manager
+kubectl describe pod -n mssql-system -l control-plane=controller-manager
 ```
 
 Look for the "Events" section at the bottom for error messages.
@@ -1060,7 +1097,7 @@ Look for the "Events" section at the bottom for error messages.
 **Step 2: Check container logs**
 
 ```bash
-kubectl logs -n mssql-operator-system -l control-plane=controller-manager
+kubectl logs -n mssql-system -l control-plane=controller-manager
 ```
 
 **Common issues and solutions:**
@@ -1107,7 +1144,7 @@ If the operator reports permission errors:
 **Step 1: Check if the service account has permissions**
 
 ```bash
-kubectl auth can-i create sqlservers --as=system:serviceaccount:mssql-operator-system:mssql-operator-controller-manager
+kubectl auth can-i create sqlservers --as=system:serviceaccount:mssql-system:mssql-operator-controller-manager
 ```
 
 **Expected output:**

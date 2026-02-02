@@ -234,6 +234,16 @@ spec:
 
 ## OperatorConfiguration CRD
 
+The OperatorConfiguration CRD provides cluster-wide defaults for the operator. Create a resource named `default` to configure images, validation behavior, and resource defaults.
+
+### Image Resolution Priority
+
+When determining which container image to use, the operator follows this priority order:
+
+1. **Per-resource override** - `spec.instance.image` in SQLServer or `spec.sidecar.image` in SQLServerAG
+2. **OperatorConfiguration** - `spec.images.sql{version}` in the `default` OperatorConfiguration
+3. **Hardcoded defaults** - Built-in MCR images (mcr.microsoft.com/mssql/server:xxxx-latest)
+
 ### Full Spec Reference
 
 ```yaml
@@ -242,13 +252,16 @@ kind: OperatorConfiguration
 metadata:
   name: default          # Singleton, must be "default"
 spec:
-  # Default images per SQL version
+  # Container image configuration
   images:
     sql2019: string      # Default: mcr.microsoft.com/mssql/server:2019-latest
     sql2022: string      # Default: mcr.microsoft.com/mssql/server:2022-latest
     sql2025: string      # Default: mcr.microsoft.com/mssql/server:2025-latest
-    agHelper: string     # Default: mssql-operator/ag-helper:latest
+    agHelper: string     # Default: mssql-ag-helper:latest
     sqlExporter: string  # Default: burningalchemist/sql_exporter:latest
+    imagePullSecrets:    # List of secret names for private registries
+      - string
+    defaultPullPolicy: Always | IfNotPresent | Never  # Default: IfNotPresent
   
   # Validation settings
   validation:
@@ -268,6 +281,25 @@ spec:
       requests:
         cpu: string
         memory: string
+```
+
+### Private Registry Example
+
+For organizations using a private container registry:
+
+```yaml
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: OperatorConfiguration
+metadata:
+  name: default
+spec:
+  images:
+    sql2022: myregistry.azurecr.io/mssql/server:2022-CU15
+    sql2025: myregistry.azurecr.io/mssql/server:2025-rc1
+    agHelper: myregistry.azurecr.io/mssql-operator/ag-helper:1.0.0
+    imagePullSecrets:
+      - acr-auth-secret
+    defaultPullPolicy: Always
 ```
 
 ## Common Patterns
