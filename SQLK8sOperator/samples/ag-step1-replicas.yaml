@@ -117,6 +117,97 @@ spec:
     type: LoadBalancer
     port: 1433
 
+---
+# ============================================================================
+# INDIVIDUAL REPLICA SERVICES
+# ============================================================================
+# These services provide direct access to each SQL Server replica individually.
+# This is required for:
+#   - T-SQL AG setup (connecting to each replica separately)
+#   - Managing standalone databases on specific replicas
+#   - Direct replica access for troubleshooting
+#
+# Service naming pattern: <sqlserver-name>-<ordinal>
+#   sql-ag-0 -> connects to pod sql-ag-0
+#   sql-ag-1 -> connects to pod sql-ag-1
+#   sql-ag-2 -> connects to pod sql-ag-2
+# ============================================================================
+
+---
+# Service for replica 0
+apiVersion: v1
+kind: Service
+metadata:
+  name: sql-ag-0
+  namespace: mssql
+  labels:
+    app: mssql
+    mssql.microsoft.com/instance: sql-ag
+    mssql.microsoft.com/replica: "0"
+spec:
+  type: LoadBalancer
+  selector:
+    app: mssql
+    mssql.microsoft.com/instance: sql-ag
+    statefulset.kubernetes.io/pod-name: sql-ag-0
+  ports:
+    - name: sql
+      port: 1433
+      targetPort: 1433
+    - name: ag-endpoint
+      port: 5022
+      targetPort: 5022
+
+---
+# Service for replica 1
+apiVersion: v1
+kind: Service
+metadata:
+  name: sql-ag-1
+  namespace: mssql
+  labels:
+    app: mssql
+    mssql.microsoft.com/instance: sql-ag
+    mssql.microsoft.com/replica: "1"
+spec:
+  type: LoadBalancer
+  selector:
+    app: mssql
+    mssql.microsoft.com/instance: sql-ag
+    statefulset.kubernetes.io/pod-name: sql-ag-1
+  ports:
+    - name: sql
+      port: 1433
+      targetPort: 1433
+    - name: ag-endpoint
+      port: 5022
+      targetPort: 5022
+
+---
+# Service for replica 2
+apiVersion: v1
+kind: Service
+metadata:
+  name: sql-ag-2
+  namespace: mssql
+  labels:
+    app: mssql
+    mssql.microsoft.com/instance: sql-ag
+    mssql.microsoft.com/replica: "2"
+spec:
+  type: LoadBalancer
+  selector:
+    app: mssql
+    mssql.microsoft.com/instance: sql-ag
+    statefulset.kubernetes.io/pod-name: sql-ag-2
+  ports:
+    - name: sql
+      port: 1433
+      targetPort: 1433
+    - name: ag-endpoint
+      port: 5022
+      targetPort: 5022
+
 # ============================================================================
 # NOTE ON AG HELPER DEPLOYMENT
 # ============================================================================
@@ -142,18 +233,30 @@ spec:
 #    kubectl get pods -n mssql -w
 #    # Wait until all 3 pods show 1/1 Ready (no AG Helper sidecar yet)
 #
-# 3. Follow T-SQL steps in ag-step2-setup-ag.md to:
+# 3. Verify all services are created:
+#    kubectl get svc -n mssql
+#    # Should see:
+#    #   sql-ag           LoadBalancer (shared service - ANY pod)
+#    #   sql-ag-headless  ClusterIP    (StatefulSet DNS)
+#    #   sql-ag-0         LoadBalancer (replica 0 only)
+#    #   sql-ag-1         LoadBalancer (replica 1 only)
+#    #   sql-ag-2         LoadBalancer (replica 2 only)
+#
+# 4. Get external IPs for each replica (for minikube: run 'minikube tunnel'):
+#    kubectl get svc -n mssql -l mssql.microsoft.com/instance=sql-ag
+#
+# 5. Follow T-SQL steps in ag-step2-setup-ag.md to:
 #    - Create AG Helper login on all replicas
 #    - Create certificates and endpoints
 #    - Create the Availability Group
 #    - Join secondary replicas
 #
-# 4. Apply ag-step3-ag-config.yaml to:
+# 6. Apply ag-step3-ag-config.yaml to:
 #    - Deploy AG Helper sidecar (monitors the specified AG)
 #    - Create Primary/Secondary LoadBalancer services
 #    - Enable health monitoring (automatic failover optional)
 #
-# 5. Verify AG Helper is monitoring the AG:
+# 7. Verify AG Helper is monitoring the AG:
 #    kubectl logs sql-ag-0 -n mssql -c ag-helper
 #    # Expected: "AG 'ProductionAG' State: role=PRIMARY, sync=SYNCHRONIZED, health=Healthy"
 #

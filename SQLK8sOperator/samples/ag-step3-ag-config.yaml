@@ -232,3 +232,29 @@ spec:
 #   kubectl get events -n mssql --field-selector involvedObject.name=production-ag
 #
 # ============================================================================
+# TROUBLESHOOTING
+# ============================================================================
+#
+# If services (ProductionAG-primary, ProductionAG-secondary) are NOT created:
+#
+# 1. Check if the SQLServer resource is Ready:
+#    kubectl get sqlserver sql-ag -n mssql -o jsonpath='{.status.ready}'
+#    # Must return "true" - AG services are only created after SQLServer is Ready
+#
+# 2. Check operator logs for errors:
+#    kubectl logs deployment/mssql-operator -n mssql-system --tail=100
+#
+# 3. Check SQLServerAG status for issues:
+#    kubectl describe sqlserverag production-ag -n mssql
+#
+# 4. Check events for any warnings:
+#    kubectl get events -n mssql --sort-by='.lastTimestamp' | tail -20
+#
+# 5. Verify sqlServerRef.name matches your SQLServer resource:
+#    kubectl get sqlserver -n mssql
+#    # The name must match spec.sqlServerRef.name (e.g., "sql-ag")
+#
+# 6. Force a re-reconcile by patching the resource:
+#    kubectl annotate sqlserverag production-ag -n mssql force-reconcile=$(date +%s)
+#
+# ============================================================================

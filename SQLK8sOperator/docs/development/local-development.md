@@ -10,6 +10,7 @@ Guide to setting up a local development environment for the SQL Server Kubernete
 - [Environment Setup](#environment-setup)
 - [Running Locally](#running-locally)
 - [Development Workflow](#development-workflow)
+- [Quick Patching (Incremental Updates)](#quick-patching-incremental-updates)
 - [IDE Configuration](#ide-configuration)
 - [Debugging](#debugging)
 
@@ -247,6 +248,100 @@ make fmt
 # Or directly
 go fmt ./...
 ```
+
+## Quick Patching (Incremental Updates)
+
+During development, you'll frequently need to patch the operator or AG Helper with code changes without reconfiguring everything from scratch. This section covers the fast iteration workflow.
+
+### Patch Operator (Minikube)
+
+The fastest way to test operator changes in minikube:
+
+```bash
+# 1. Point Docker to minikube's daemon
+eval $(minikube docker-env)
+
+# 2. Build the operator image locally
+make docker-build IMG=mssql-operator:latest
+
+# 3. Restart the operator to pick up changes
+kubectl rollout restart deployment/mssql-operator -n mssql-system
+
+# 4. Watch the logs
+kubectl logs -f deployment/mssql-operator -n mssql-system --tail=50
+```
+
+### Patch Operator with CRD Changes
+
+When you've modified the API types (in `pkg/apis/`):
+
+```bash
+eval $(minikube docker-env)
+
+# Regenerate CRDs and build
+make manifests
+make docker-build IMG=mssql-operator:latest
+
+# Apply CRDs and restart operator
+kubectl apply -f deploy/crds/ --force
+kubectl rollout restart deployment/mssql-operator -n mssql-system
+```
+
+### Patch AG Helper
+
+```bash
+eval $(minikube docker-env)
+make docker-build-ag-helper IMG=ag-helper:latest
+
+# Delete AG Helper pods to pick up new image
+kubectl delete pods -n mssql -l app.kubernetes.io/component=ag-helper
+```
+
+### One-Liner Aliases
+
+Add these to your `~/.bashrc` or `~/.zshrc` for quick iteration:
+
+```bash
+# Quick patch operator
+alias patch-op='eval $(minikube docker-env) && make docker-build IMG=mssql-operator:latest && kubectl rollout restart deployment/mssql-operator -n mssql-system'
+
+# Quick patch with CRDs
+alias patch-op-crd='eval $(minikube docker-env) && make manifests && make docker-build IMG=mssql-operator:latest && kubectl apply -f deploy/crds/ --force && kubectl rollout restart deployment/mssql-operator -n mssql-system'
+
+# Quick patch AG Helper
+alias patch-ag='eval $(minikube docker-env) && make docker-build-ag-helper IMG=ag-helper:latest && kubectl delete pods -n mssql -l app.kubernetes.io/component=ag-helper'
+```
+
+### Patch with Kind
+
+For Kind clusters, you need to load the image:
+
+```bash
+# Build and load operator
+make docker-build IMG=mssql-operator:latest
+kind load docker-image mssql-operator:latest --name mssql-operator
+
+# Restart operator
+kubectl rollout restart deployment/mssql-operator -n mssql-system
+```
+
+### Verify Patch Success
+
+After patching, verify the operator is running correctly:
+
+```bash
+# Check pod status
+kubectl get pods -n mssql-system
+
+# Check logs for errors
+kubectl logs deployment/mssql-operator -n mssql-system --tail=30
+
+# Verify resources are still healthy
+kubectl get sqlserver -n mssql
+kubectl get sqlserverag -n mssql
+```
+
+> **📚 Full Documentation:** For production patching procedures and detailed explanations, see [Operations > Upgrades > Patching the Operators](../operations/upgrades.md#patching-the-operators).
 
 ## IDE Configuration
 
