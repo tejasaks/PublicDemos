@@ -138,9 +138,9 @@ func (v *Validator) ValidateStorageClass(ctx context.Context, name string) *Vali
 				name, availableSCs)
 
 			if v.config.StorageClassValidation == "block" {
-				result.AddError(msg)
+				result.AddError("%s", msg)
 			} else {
-				result.AddWarning(msg)
+				result.AddWarning("%s", msg)
 			}
 		} else if ctx.Err() == context.DeadlineExceeded {
 			// Timeout - allow with warning
@@ -209,9 +209,9 @@ func (v *Validator) ValidateSecretExists(ctx context.Context, name, namespace st
 				name, namespace, name, namespace)
 
 			if v.config.SecretValidation == "block" {
-				result.AddError(msg)
+				result.AddError("%s", msg)
 			} else {
-				result.AddWarning(msg)
+				result.AddWarning("%s", msg)
 				klog.Warningf("Secret '%s' not found in namespace '%s', proceeding with warning", name, namespace)
 			}
 		} else if ctx.Err() == context.DeadlineExceeded {

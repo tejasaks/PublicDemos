@@ -176,9 +176,9 @@ func (v *SQLServerValidator) validateSecretAndPassword(ctx context.Context, sqls
 				secretName, sqlserver.Namespace, secretName, secretKey, sqlserver.Namespace)
 
 			if v.config.SecretValidation == "block" {
-				result.AddError(msg)
+				result.AddError("%s", msg)
 			} else {
-				result.AddWarning(msg)
+				result.AddWarning("%s", msg)
 			}
 			return result
 		}
@@ -198,7 +198,7 @@ func (v *SQLServerValidator) validateSecretAndPassword(ctx context.Context, sqls
 		password := string(passwordBytes)
 		pwResult := validation.ValidatePasswordComplexity(password)
 		if !pwResult.Valid {
-			result.AddError(pwResult.Message)
+			result.AddError("%s", pwResult.Message)
 		}
 	}
 
