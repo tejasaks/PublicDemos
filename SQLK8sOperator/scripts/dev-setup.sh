@@ -305,6 +305,22 @@ cleanup() {
         sleep 2
     done
     
+    # Clean Docker images (if using minikube's Docker daemon)
+    log_info "Cleaning Docker images..."
+    if command -v minikube &> /dev/null && minikube status &>/dev/null; then
+        log_info "Detected minikube - cleaning images from minikube's Docker daemon..."
+        eval $(minikube docker-env 2>/dev/null) || true
+        docker rmi mssql-operator:dev mssql-operator:latest mssql-ag-helper:latest mssql-sidecar:latest 2>/dev/null || true
+        # Also clean any dangling images to free up space
+        docker image prune -f 2>/dev/null || true
+    else
+        # For non-minikube environments, clean local Docker if available
+        if command -v docker &> /dev/null; then
+            docker rmi mssql-operator:dev mssql-operator:latest mssql-ag-helper:latest mssql-sidecar:latest 2>/dev/null || true
+            docker image prune -f 2>/dev/null || true
+        fi
+    fi
+    
     log_info "✅ Cleanup complete! Cluster is pristine."
 }
 

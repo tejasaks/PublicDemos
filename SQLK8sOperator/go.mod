@@ -1,8 +1,6 @@
 module github.com/microsoft/mssql-operator
 
-go 1.25
-
-toolchain go1.25.6
+go 1.24
 
 require (
 	github.com/denisenkom/go-mssqldb v0.12.3

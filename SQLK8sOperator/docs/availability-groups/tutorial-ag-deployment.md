@@ -297,21 +297,48 @@ PRINT 'Endpoint created on sql-ag-2';
 "
 ```
 
-### 3.5: Create Availability Group (Primary Only)
+### 3.5: Create Database and Backup (Primary Only)
 
-Create the AG on the primary replica (sql-ag-0):
+Create a database on the primary replica before creating the AG:
 
 ```bash
 kubectl exec -it sql-ag-0 -n mssql -c mssql -- \
   /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa \
   -P 'YourStrong@Passw0rd!' -C -Q "
--- Create the Availability Group
+-- Create application database
+CREATE DATABASE SampleDB;
+GO
+
+-- Set to FULL recovery model (required for AG)
+ALTER DATABASE SampleDB SET RECOVERY FULL;
+GO
+
+-- Take initial full backup (required before adding to AG)
+BACKUP DATABASE SampleDB 
+    TO DISK = '/var/opt/mssql/backup/SampleDB_init.bak'
+    WITH INIT, COMPRESSION;
+GO
+
+PRINT 'SampleDB created and backed up - ready for AG';
+"
+```
+
+### 3.6: Create Availability Group with Database (Primary Only)
+
+Create the AG on the primary replica, including the database:
+
+```bash
+kubectl exec -it sql-ag-0 -n mssql -c mssql -- \
+  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa \
+  -P 'YourStrong@Passw0rd!' -C -Q "
+-- Create the Availability Group with the database
 CREATE AVAILABILITY GROUP [ProductionAG]
 WITH (
     CLUSTER_TYPE = EXTERNAL,
     DB_FAILOVER = ON
 )
-FOR REPLICA ON
+FOR DATABASE SampleDB
+REPLICA ON
     N'sql-ag-0' WITH (
         ENDPOINT_URL = N'tcp://sql-ag-0.mssql.svc.cluster.local:5022',
         AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
@@ -335,11 +362,11 @@ FOR REPLICA ON
     );
 
 ALTER AVAILABILITY GROUP [ProductionAG] GRANT CREATE ANY DATABASE;
-PRINT 'Availability Group ProductionAG created on sql-ag-0';
+PRINT 'Availability Group ProductionAG created with SampleDB';
 "
 ```
 
-### 3.6: Join Secondary Replicas
+### 3.7: Join Secondary Replicas
 
 Join sql-ag-1 and sql-ag-2 to the AG:
 
@@ -363,12 +390,15 @@ PRINT 'sql-ag-2 joined ProductionAG';
 "
 ```
 
-### 3.7: Verify the AG is Healthy
+### 3.8: Verify AG Health and Database Sync
+
+Wait a few seconds for automatic seeding to complete, then verify:
 
 ```bash
 kubectl exec -it sql-ag-0 -n mssql -c mssql -- \
   /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa \
   -P 'YourStrong@Passw0rd!' -C -Q "
+-- Check replica health
 SELECT 
     ar.replica_server_name,
     ars.role_desc,
@@ -378,57 +408,10 @@ FROM sys.availability_replicas ar
 JOIN sys.dm_hadr_availability_replica_states ars 
     ON ar.replica_id = ars.replica_id
 WHERE ar.group_id = (SELECT group_id FROM sys.availability_groups WHERE name = 'ProductionAG');
-"
-```
 
-**Expected output:**
-
-```
-replica_server_name  role_desc  synchronization_health_desc  connected_state_desc
-sql-ag-0             PRIMARY    HEALTHY                      CONNECTED
-sql-ag-1             SECONDARY  HEALTHY                      CONNECTED
-sql-ag-2             SECONDARY  HEALTHY                      CONNECTED
-```
-
-### 3.8: Create a Database and Add to AG (Primary Only)
-
-Create a database on the primary and add it to the Availability Group:
-
-```bash
-kubectl exec -it sql-ag-0 -n mssql -c mssql -- \
-  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa \
-  -P 'YourStrong@Passw0rd!' -C -Q "
--- Create application database
-CREATE DATABASE SampleDB;
-GO
-
--- Set to FULL recovery model (required for AG)
-ALTER DATABASE SampleDB SET RECOVERY FULL;
-GO
-
--- Take initial full backup (required before adding to AG)
-BACKUP DATABASE SampleDB 
-    TO DISK = '/var/opt/mssql/backup/SampleDB_init.bak'
-    WITH INIT, COMPRESSION;
-GO
-
--- Add database to the Availability Group
-ALTER AVAILABILITY GROUP [ProductionAG] ADD DATABASE SampleDB;
-GO
-
-PRINT 'SampleDB created and added to ProductionAG';
-"
-```
-
-Verify the database is synchronized across all replicas:
-
-```bash
-kubectl exec -it sql-ag-0 -n mssql -c mssql -- \
-  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa \
-  -P 'YourStrong@Passw0rd!' -C -Q "
+-- Check database sync status
 SELECT 
     d.name AS database_name,
-    drs.replica_id,
     ar.replica_server_name,
     drs.synchronization_state_desc,
     drs.synchronization_health_desc
@@ -442,11 +425,18 @@ WHERE d.name = 'SampleDB';
 **Expected output:**
 
 ```
+replica_server_name  role_desc  synchronization_health_desc  connected_state_desc
+sql-ag-0             PRIMARY    HEALTHY                      CONNECTED
+sql-ag-1             SECONDARY  HEALTHY                      CONNECTED
+sql-ag-2             SECONDARY  HEALTHY                      CONNECTED
+
 database_name  replica_server_name  synchronization_state_desc  synchronization_health_desc
 SampleDB       sql-ag-0             SYNCHRONIZED                HEALTHY
 SampleDB       sql-ag-1             SYNCHRONIZED                HEALTHY
 SampleDB       sql-ag-2             SYNCHRONIZED                HEALTHY
 ```
+
+> **Note:** If secondaries show `SYNCHRONIZING` instead of `SYNCHRONIZED`, wait a few more seconds for automatic seeding to complete.
 
 ---
 
@@ -459,21 +449,39 @@ kubectl apply -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQL
 ```
 
 This creates:
-- SQLServerAG resource (monitors the AG)
-- AG Helper pod (queries SQL Server for health)
+- SQLServerAG resource (Kubernetes representation of the AG)
 - Listener Service (VIP for client connections)
 
-Verify the AG Helper pod is running:
+Verify the SQLServerAG resource was created:
 
 ```bash
-kubectl get pods -n mssql -l "mssql.microsoft.com/ag=production-ag"
+kubectl get sqlserverag -n mssql
 ```
 
 **Expected output:**
 
 ```
-NAME                          READY   STATUS    RESTARTS   AGE
-production-ag-helper-xxxxx    1/1     Running   0          30s
+NAME            AGE
+production-ag   10s
+```
+
+Check the SQLServerAG status:
+
+```bash
+kubectl describe sqlserverag production-ag -n mssql
+```
+
+Verify the listener service was created:
+
+```bash
+kubectl get svc productionag-listener -n mssql
+```
+
+**Expected output:**
+
+```
+NAME                    TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)    AGE
+productionag-listener   ClusterIP   10.96.x.x       <none>        1433/TCP   10s
 ```
 
 ---
