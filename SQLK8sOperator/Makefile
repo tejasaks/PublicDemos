@@ -128,6 +128,12 @@ undeploy: ## Undeploy operator from the K8s cluster.
 	kubectl delete -f deploy/serviceaccount.yaml --ignore-not-found=true
 	kubectl delete -f deploy/namespace.yaml --ignore-not-found=true
 
+.PHONY: clean-all
+clean-all: ensure-scripts-executable ## Remove ALL operator resources including SQL instances, PVCs, CRDs, and namespaces.
+	@echo "🧹 Cleaning ALL SQL Server Operator resources..."
+	@echo "⚠️  This will delete all SQL Server instances, data, and operator components!"
+	@./scripts/dev-setup.sh cleanup
+
 ##@ Local Development (Minikube)
 
 .PHONY: minikube-setup

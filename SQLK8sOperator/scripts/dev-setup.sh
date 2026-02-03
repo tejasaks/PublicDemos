@@ -249,24 +249,63 @@ show_status() {
 
 # Cleanup
 cleanup() {
-    log_info "Cleaning up..."
+    log_info "Cleaning up all SQL Server Operator resources..."
     
-    # Delete sample resources
-    kubectl delete -f samples/ --ignore-not-found=true
+    # Delete SQLServerAG resources first (they depend on SQLServer)
+    log_info "Deleting SQLServerAG resources..."
+    kubectl delete sqlserverag --all -n mssql --ignore-not-found=true 2>/dev/null || true
     
-    # Delete operator
-    helm uninstall mssql-operator -n mssql-system --ignore-not-found || true
+    # Delete SQLServer resources
+    log_info "Deleting SQLServer resources..."
+    kubectl delete sqlserver --all -n mssql --ignore-not-found=true 2>/dev/null || true
     
-    # Delete CRDs
-    kubectl delete crd sqlservers.mssql.microsoft.com --ignore-not-found=true
-    kubectl delete crd sqlserverags.mssql.microsoft.com --ignore-not-found=true
-    kubectl delete crd operatorconfigurations.mssql.microsoft.com --ignore-not-found=true
+    # Wait for pods to be deleted
+    log_info "Waiting for SQL Server pods to terminate..."
+    kubectl wait --for=delete pod -l app=mssql -n mssql --timeout=120s 2>/dev/null || true
     
-    # Delete namespaces
-    kubectl delete namespace mssql --ignore-not-found=true
-    kubectl delete namespace mssql-system --ignore-not-found=true
+    # Delete any remaining sample resources
+    log_info "Deleting sample resources..."
+    kubectl delete -f samples/ --ignore-not-found=true 2>/dev/null || true
     
-    log_info "Cleanup complete!"
+    # Delete operator (kubectl method)
+    log_info "Deleting operator deployment..."
+    kubectl delete -f deploy/deployment.yaml --ignore-not-found=true 2>/dev/null || true
+    kubectl delete -f deploy/rbac.yaml --ignore-not-found=true 2>/dev/null || true
+    kubectl delete -f deploy/serviceaccount.yaml --ignore-not-found=true 2>/dev/null || true
+    
+    # Delete operator (Helm method, if installed via Helm)
+    helm uninstall mssql-operator -n mssql-system 2>/dev/null || true
+    
+    # Delete operator (install.yaml method)
+    if [ -f "${PROJECT_ROOT}/install.yaml" ]; then
+        kubectl delete -f "${PROJECT_ROOT}/install.yaml" --ignore-not-found=true 2>/dev/null || true
+    fi
+    
+    # Delete CRDs (this also deletes all CRs)
+    log_info "Deleting CRDs..."
+    kubectl delete crd sqlservers.mssql.microsoft.com --ignore-not-found=true 2>/dev/null || true
+    kubectl delete crd sqlserverags.mssql.microsoft.com --ignore-not-found=true 2>/dev/null || true
+    kubectl delete crd operatorconfigurations.mssql.microsoft.com --ignore-not-found=true 2>/dev/null || true
+    
+    # Delete PVCs (optional - uncomment if you want to remove data)
+    log_info "Deleting PVCs..."
+    kubectl delete pvc --all -n mssql --ignore-not-found=true 2>/dev/null || true
+    
+    # Delete namespaces (this removes everything in them)
+    log_info "Deleting namespaces..."
+    kubectl delete namespace mssql --ignore-not-found=true 2>/dev/null || true
+    kubectl delete namespace mssql-system --ignore-not-found=true 2>/dev/null || true
+    
+    # Wait for namespaces to be deleted
+    log_info "Waiting for namespaces to be fully removed..."
+    while kubectl get namespace mssql 2>/dev/null; do
+        sleep 2
+    done
+    while kubectl get namespace mssql-system 2>/dev/null; do
+        sleep 2
+    done
+    
+    log_info "✅ Cleanup complete! Cluster is pristine."
 }
 
 # Connect to SQL Server
