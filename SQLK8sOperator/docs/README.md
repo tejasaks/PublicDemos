@@ -94,6 +94,7 @@ Contributing to the operator.
 | [Local Development](development/local-development.md) | Development environment setup |
 | [Building](development/building.md) | Build process and artifacts |
 | [Testing](development/testing.md) | Test framework and coverage |
+| [Release Process](development/release-process.md) | Versioning and publishing releases |
 | [Contributing](development/contributing.md) | Contribution guidelines |
 
 ---
