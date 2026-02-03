@@ -224,19 +224,19 @@ kubectl exec -it sql-ag-0 -n mssql -c mssql -- \
       FOR DATABASE ApplicationDB
       REPLICA ON
         N'sql-ag-0' WITH (
-          ENDPOINT_URL = N'TCP://sql-ag-0.sql-ag-headless.mssql.svc.cluster.local:5022',
+          ENDPOINT_URL = N'TCP://sql-ag-0.mssql.svc.cluster.local:5022',
           AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
           FAILOVER_MODE = EXTERNAL,
           SEEDING_MODE = AUTOMATIC,
           SECONDARY_ROLE (ALLOW_CONNECTIONS = READ_ONLY)),
         N'sql-ag-1' WITH (
-          ENDPOINT_URL = N'TCP://sql-ag-1.sql-ag-headless.mssql.svc.cluster.local:5022',
+          ENDPOINT_URL = N'TCP://sql-ag-1.mssql.svc.cluster.local:5022',
           AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
           FAILOVER_MODE = EXTERNAL,
           SEEDING_MODE = AUTOMATIC,
           SECONDARY_ROLE (ALLOW_CONNECTIONS = READ_ONLY)),
         N'sql-ag-2' WITH (
-          ENDPOINT_URL = N'TCP://sql-ag-2.sql-ag-headless.mssql.svc.cluster.local:5022',
+          ENDPOINT_URL = N'TCP://sql-ag-2.mssql.svc.cluster.local:5022',
           AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
           FAILOVER_MODE = EXTERNAL,
           SEEDING_MODE = AUTOMATIC,

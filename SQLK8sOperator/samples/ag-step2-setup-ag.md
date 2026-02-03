@@ -389,7 +389,7 @@ CREATE AVAILABILITY GROUP ProductionAG
     FOR DATABASE ApplicationDB
     REPLICA ON
         N'sql-ag-0' WITH (
-            ENDPOINT_URL = N'TCP://sql-ag-0.sql-ag-pods.mssql.svc.cluster.local:5022',
+            ENDPOINT_URL = N'TCP://sql-ag-0.mssql.svc.cluster.local:5022',
             AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
             FAILOVER_MODE = EXTERNAL,
             SEEDING_MODE = AUTOMATIC,
@@ -397,7 +397,7 @@ CREATE AVAILABILITY GROUP ProductionAG
             SECONDARY_ROLE (ALLOW_CONNECTIONS = READ_ONLY)
         ),
         N'sql-ag-1' WITH (
-            ENDPOINT_URL = N'TCP://sql-ag-1.sql-ag-pods.mssql.svc.cluster.local:5022',
+            ENDPOINT_URL = N'TCP://sql-ag-1.mssql.svc.cluster.local:5022',
             AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
             FAILOVER_MODE = EXTERNAL,
             SEEDING_MODE = AUTOMATIC,
@@ -405,7 +405,7 @@ CREATE AVAILABILITY GROUP ProductionAG
             SECONDARY_ROLE (ALLOW_CONNECTIONS = READ_ONLY)
         ),
         N'sql-ag-2' WITH (
-            ENDPOINT_URL = N'TCP://sql-ag-2.sql-ag-pods.mssql.svc.cluster.local:5022',
+            ENDPOINT_URL = N'TCP://sql-ag-2.mssql.svc.cluster.local:5022',
             AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
             FAILOVER_MODE = EXTERNAL,
             SEEDING_MODE = AUTOMATIC,
@@ -434,7 +434,7 @@ CREATE AVAILABILITY GROUP ProductionAG
     FOR DATABASE ApplicationDB
     REPLICA ON
         N'sql-ag-0' WITH (
-            ENDPOINT_URL = N'TCP://sql-ag-0.sql-ag-pods.mssql.svc.cluster.local:5022',
+            ENDPOINT_URL = N'TCP://sql-ag-0.mssql.svc.cluster.local:5022',
             AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
             FAILOVER_MODE = EXTERNAL,
             SEEDING_MODE = AUTOMATIC,
@@ -442,7 +442,7 @@ CREATE AVAILABILITY GROUP ProductionAG
             SECONDARY_ROLE (ALLOW_CONNECTIONS = READ_ONLY)
         ),
         N'sql-ag-1' WITH (
-            ENDPOINT_URL = N'TCP://sql-ag-1.sql-ag-pods.mssql.svc.cluster.local:5022',
+            ENDPOINT_URL = N'TCP://sql-ag-1.mssql.svc.cluster.local:5022',
             AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
             FAILOVER_MODE = EXTERNAL,
             SEEDING_MODE = AUTOMATIC,
@@ -451,7 +451,7 @@ CREATE AVAILABILITY GROUP ProductionAG
         ),
         -- Geo-DR replica: Async for low latency on primary
         N'sql-ag-2' WITH (
-            ENDPOINT_URL = N'TCP://sql-ag-2.sql-ag-pods.mssql.svc.cluster.local:5022',
+            ENDPOINT_URL = N'TCP://sql-ag-2.mssql.svc.cluster.local:5022',
             AVAILABILITY_MODE = ASYNCHRONOUS_COMMIT,
             FAILOVER_MODE = MANUAL,  -- Must be MANUAL for async
             SEEDING_MODE = AUTOMATIC,
@@ -474,21 +474,21 @@ CREATE AVAILABILITY GROUP ProductionAG
     WITH (CLUSTER_TYPE = EXTERNAL, DB_FAILOVER = ON)
     REPLICA ON
         N'sql-ag-0' WITH (
-            ENDPOINT_URL = N'TCP://sql-ag-0.sql-ag-pods.mssql.svc.cluster.local:5022',
+            ENDPOINT_URL = N'TCP://sql-ag-0.mssql.svc.cluster.local:5022',
             AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
             FAILOVER_MODE = EXTERNAL,
             SEEDING_MODE = MANUAL,  -- Manual seeding
             SECONDARY_ROLE (ALLOW_CONNECTIONS = READ_ONLY)
         ),
         N'sql-ag-1' WITH (
-            ENDPOINT_URL = N'TCP://sql-ag-1.sql-ag-pods.mssql.svc.cluster.local:5022',
+            ENDPOINT_URL = N'TCP://sql-ag-1.mssql.svc.cluster.local:5022',
             AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
             FAILOVER_MODE = EXTERNAL,
             SEEDING_MODE = MANUAL,
             SECONDARY_ROLE (ALLOW_CONNECTIONS = READ_ONLY)
         ),
         N'sql-ag-2' WITH (
-            ENDPOINT_URL = N'TCP://sql-ag-2.sql-ag-pods.mssql.svc.cluster.local:5022',
+            ENDPOINT_URL = N'TCP://sql-ag-2.mssql.svc.cluster.local:5022',
             AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
             FAILOVER_MODE = EXTERNAL,
             SEEDING_MODE = MANUAL,
@@ -534,7 +534,7 @@ CREATE AVAILABILITY GROUP ReportingAG
     FOR DATABASE ReportingDB
     REPLICA ON
         N'sql-ag-0' WITH (
-            ENDPOINT_URL = N'TCP://sql-ag-0.sql-ag-pods.mssql.svc.cluster.local:5022',
+            ENDPOINT_URL = N'TCP://sql-ag-0.mssql.svc.cluster.local:5022',
             AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
             FAILOVER_MODE = EXTERNAL,
             SEEDING_MODE = AUTOMATIC,
@@ -543,7 +543,7 @@ CREATE AVAILABILITY GROUP ReportingAG
         ),
         -- Read-only reporting replica
         N'sql-ag-1' WITH (
-            ENDPOINT_URL = N'TCP://sql-ag-1.sql-ag-pods.mssql.svc.cluster.local:5022',
+            ENDPOINT_URL = N'TCP://sql-ag-1.mssql.svc.cluster.local:5022',
             AVAILABILITY_MODE = ASYNCHRONOUS_COMMIT,
             FAILOVER_MODE = MANUAL,
             SEEDING_MODE = AUTOMATIC,
@@ -565,7 +565,7 @@ CREATE AVAILABILITY GROUP ProductionAG
     FOR DATABASE ApplicationDB
     REPLICA ON
         N'sql-ag-0' WITH (
-            ENDPOINT_URL = N'TCP://sql-ag-0.sql-ag-pods.mssql.svc.cluster.local:5022',
+            ENDPOINT_URL = N'TCP://sql-ag-0.mssql.svc.cluster.local:5022',
             AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
             FAILOVER_MODE = EXTERNAL,
             SEEDING_MODE = AUTOMATIC,
@@ -573,7 +573,7 @@ CREATE AVAILABILITY GROUP ProductionAG
             SECONDARY_ROLE (ALLOW_CONNECTIONS = READ_ONLY)
         ),
         N'sql-ag-1' WITH (
-            ENDPOINT_URL = N'TCP://sql-ag-1.sql-ag-pods.mssql.svc.cluster.local:5022',
+            ENDPOINT_URL = N'TCP://sql-ag-1.mssql.svc.cluster.local:5022',
             AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
             FAILOVER_MODE = EXTERNAL,
             SEEDING_MODE = AUTOMATIC,
@@ -581,7 +581,7 @@ CREATE AVAILABILITY GROUP ProductionAG
             SECONDARY_ROLE (ALLOW_CONNECTIONS = READ_ONLY)
         ),
         N'sql-ag-2' WITH (
-            ENDPOINT_URL = N'TCP://sql-ag-2.sql-ag-pods.mssql.svc.cluster.local:5022',
+            ENDPOINT_URL = N'TCP://sql-ag-2.mssql.svc.cluster.local:5022',
             AVAILABILITY_MODE = ASYNCHRONOUS_COMMIT,
             FAILOVER_MODE = MANUAL,
             SEEDING_MODE = AUTOMATIC,

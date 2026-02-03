@@ -313,21 +313,21 @@ WITH (
 )
 FOR REPLICA ON
     N'sql-ag-0' WITH (
-        ENDPOINT_URL = N'tcp://sql-ag-0.sql-ag-pods.mssql.svc.cluster.local:5022',
+        ENDPOINT_URL = N'tcp://sql-ag-0.mssql.svc.cluster.local:5022',
         AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
         FAILOVER_MODE = EXTERNAL,
         SEEDING_MODE = AUTOMATIC,
         SECONDARY_ROLE (ALLOW_CONNECTIONS = READ_ONLY)
     ),
     N'sql-ag-1' WITH (
-        ENDPOINT_URL = N'tcp://sql-ag-1.sql-ag-pods.mssql.svc.cluster.local:5022',
+        ENDPOINT_URL = N'tcp://sql-ag-1.mssql.svc.cluster.local:5022',
         AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
         FAILOVER_MODE = EXTERNAL,
         SEEDING_MODE = AUTOMATIC,
         SECONDARY_ROLE (ALLOW_CONNECTIONS = READ_ONLY)
     ),
     N'sql-ag-2' WITH (
-        ENDPOINT_URL = N'tcp://sql-ag-2.sql-ag-pods.mssql.svc.cluster.local:5022',
+        ENDPOINT_URL = N'tcp://sql-ag-2.mssql.svc.cluster.local:5022',
         AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
         FAILOVER_MODE = EXTERNAL,
         SEEDING_MODE = AUTOMATIC,
