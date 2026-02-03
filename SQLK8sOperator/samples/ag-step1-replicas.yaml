@@ -119,6 +119,41 @@ spec:
 
 ---
 # ============================================================================
+# HEADLESS SERVICE FOR AG ENDPOINT COMMUNICATION
+# ============================================================================
+# This headless service enables StatefulSet DNS for AG endpoint communication.
+# Each pod gets a DNS entry: <pod-name>.<service-name>.<namespace>.svc.cluster.local
+#
+# Example DNS names:
+#   sql-ag-0.sql-ag-pods.mssql.svc.cluster.local
+#   sql-ag-1.sql-ag-pods.mssql.svc.cluster.local
+#   sql-ag-2.sql-ag-pods.mssql.svc.cluster.local
+#
+# This is REQUIRED for AG replicas to communicate with each other on port 5022.
+# ============================================================================
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sql-ag-pods
+  namespace: mssql
+  labels:
+    app: mssql
+    mssql.microsoft.com/instance: sql-ag
+    mssql.microsoft.com/service-type: headless
+spec:
+  clusterIP: None  # Headless service
+  selector:
+    app: mssql
+    mssql.microsoft.com/instance: sql-ag
+  ports:
+    - name: ag-endpoint
+      port: 5022
+      targetPort: 5022
+
+---
+# ============================================================================
 # INDIVIDUAL REPLICA SERVICES
 # ============================================================================
 # These services provide direct access to each SQL Server replica individually.
