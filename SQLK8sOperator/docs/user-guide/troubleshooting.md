@@ -12,6 +12,7 @@ Common issues and solutions when using the MSSQL Kubernetes Operator.
 - [AG Helper Issues](#ag-helper-issues)
 - [Validation Errors](#validation-errors)
 - [Monitoring Issues](#monitoring-issues)
+- [Operator Issues](#operator-issues)
 - [Debugging Commands](#debugging-commands)
 
 ## Pod Issues
@@ -278,6 +279,128 @@ kubectl get servicemonitor -n mssql
 - ServiceMonitor not matching labels
 - Prometheus not watching namespace
 - Network policy blocking port 9399
+
+## Operator Issues
+
+### Operator Pod Not Running
+
+**Symptoms:**
+```bash
+kubectl get pods -n mssql-system
+# No pods or pods in Error/CrashLoopBackOff state
+```
+
+**Diagnosis:**
+```bash
+# Check deployment status
+kubectl get deployment mssql-operator -n mssql-system
+
+# Check events
+kubectl describe deployment mssql-operator -n mssql-system
+
+# Check logs if pod exists
+kubectl logs -n mssql-system -l app=mssql-operator
+```
+
+### Operator Using Wrong/Cached Image
+
+**Symptoms:**
+- Operator behavior doesn't match expected version
+- New features not working after upgrade
+
+**Validate the container image:**
+```bash
+# 1. Check what image the deployment is configured to use
+kubectl get deployment mssql-operator -n mssql-system \
+  -o jsonpath='{.spec.template.spec.containers[0].image}'
+echo ""
+# Expected: ghcr.io/tejasaks/mssql-operator:v1.0.0 (or your version)
+
+# 2. Check the imagePullPolicy
+kubectl get deployment mssql-operator -n mssql-system \
+  -o jsonpath='{.spec.template.spec.containers[0].imagePullPolicy}'
+echo ""
+# Expected: IfNotPresent or Always
+
+# 3. Check the actual image ID being used (includes registry digest)
+kubectl get pod -n mssql-system -l app=mssql-operator \
+  -o jsonpath='{.items[0].status.containerStatuses[0].imageID}'
+echo ""
+# Should show: ghcr.io/tejasaks/mssql-operator@sha256:...
+
+# 4. Check pod events for image pull activity
+kubectl describe pod -n mssql-system -l app=mssql-operator | grep -A10 "Events:"
+```
+
+**Force a fresh image pull:**
+```bash
+# Delete the pod to trigger re-creation and fresh pull
+kubectl delete pod -n mssql-system -l app=mssql-operator
+
+# Watch it restart
+kubectl get pods -n mssql-system -w
+```
+
+**If using local development (minikube):**
+```bash
+# Point to minikube's Docker daemon
+eval $(minikube docker-env)
+
+# Check local images
+docker images | grep mssql-operator
+
+# Rebuild if needed
+make docker-build IMG=mssql-operator:dev
+
+# Restart operator
+kubectl rollout restart deployment/mssql-operator -n mssql-system
+```
+
+### Operator Not Reconciling Resources
+
+**Symptoms:**
+- SQLServer or SQLServerAG stuck in "Pending" phase
+- No events on the custom resources
+
+**Diagnosis:**
+```bash
+# Check operator logs for errors
+kubectl logs -n mssql-system -l app=mssql-operator --tail=100
+
+# Check if operator is watching the right namespace
+kubectl get deployment mssql-operator -n mssql-system -o yaml | grep -A5 "env:"
+
+# Verify CRDs are installed
+kubectl get crd | grep mssql
+```
+
+### Image Pull Errors
+
+**Symptoms:**
+```
+ErrImagePull or ImagePullBackOff
+```
+
+**Common causes and solutions:**
+
+| Cause | Solution |
+|-------|----------|
+| Image doesn't exist | Verify image tag exists in registry |
+| Private registry | Add imagePullSecrets to deployment |
+| Network issues | Check cluster can reach ghcr.io |
+| Rate limiting | Wait and retry, or use authenticated pulls |
+
+**Check image accessibility:**
+```bash
+# From a machine with Docker access
+docker pull ghcr.io/tejasaks/mssql-operator:v1.0.0
+
+# Or create a test pod
+kubectl run test-pull --image=ghcr.io/tejasaks/mssql-operator:v1.0.0 \
+  --restart=Never -n mssql-system -- sleep 10
+kubectl describe pod test-pull -n mssql-system
+kubectl delete pod test-pull -n mssql-system
+```
 
 ## Debugging Commands
 
