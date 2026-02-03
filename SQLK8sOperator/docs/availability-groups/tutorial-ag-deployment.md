@@ -390,6 +390,64 @@ sql-ag-1             SECONDARY  HEALTHY                      CONNECTED
 sql-ag-2             SECONDARY  HEALTHY                      CONNECTED
 ```
 
+### 3.8: Create a Database and Add to AG (Primary Only)
+
+Create a database on the primary and add it to the Availability Group:
+
+```bash
+kubectl exec -it sql-ag-0 -n mssql -c mssql -- \
+  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa \
+  -P 'YourStrong@Passw0rd!' -C -Q "
+-- Create application database
+CREATE DATABASE SampleDB;
+GO
+
+-- Set to FULL recovery model (required for AG)
+ALTER DATABASE SampleDB SET RECOVERY FULL;
+GO
+
+-- Take initial full backup (required before adding to AG)
+BACKUP DATABASE SampleDB 
+    TO DISK = '/var/opt/mssql/backup/SampleDB_init.bak'
+    WITH INIT, COMPRESSION;
+GO
+
+-- Add database to the Availability Group
+ALTER AVAILABILITY GROUP [ProductionAG] ADD DATABASE SampleDB;
+GO
+
+PRINT 'SampleDB created and added to ProductionAG';
+"
+```
+
+Verify the database is synchronized across all replicas:
+
+```bash
+kubectl exec -it sql-ag-0 -n mssql -c mssql -- \
+  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa \
+  -P 'YourStrong@Passw0rd!' -C -Q "
+SELECT 
+    d.name AS database_name,
+    drs.replica_id,
+    ar.replica_server_name,
+    drs.synchronization_state_desc,
+    drs.synchronization_health_desc
+FROM sys.dm_hadr_database_replica_states drs
+JOIN sys.databases d ON drs.database_id = d.database_id
+JOIN sys.availability_replicas ar ON drs.replica_id = ar.replica_id
+WHERE d.name = 'SampleDB';
+"
+```
+
+**Expected output:**
+
+```
+database_name  replica_server_name  synchronization_state_desc  synchronization_health_desc
+SampleDB       sql-ag-0             SYNCHRONIZED                HEALTHY
+SampleDB       sql-ag-1             SYNCHRONIZED                HEALTHY
+SampleDB       sql-ag-2             SYNCHRONIZED                HEALTHY
+```
+
 ---
 
 ## Step 4: Deploy the SQLServerAG Resource
