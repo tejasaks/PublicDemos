@@ -32,6 +32,13 @@ help: ## Display this help.
 
 ##@ Development
 
+.PHONY: ensure-scripts-executable
+ensure-scripts-executable: ## Ensure all shell scripts have executable permissions.
+	@if [ -d scripts ]; then \
+		chmod +x scripts/*.sh 2>/dev/null || true; \
+		echo "Shell scripts in scripts/ are now executable"; \
+	fi
+
 .PHONY: tidy
 tidy: ## Run go mod tidy to download dependencies and update go.sum
 	go mod tidy
@@ -42,7 +49,7 @@ manifests: controller-gen tidy ## Generate CRD manifests.
 	@echo "CRDs generated in deploy/crds/"
 
 .PHONY: generate-install-yaml
-generate-install-yaml: ## Generate the combined install.yaml for direct URL installation.
+generate-install-yaml: ensure-scripts-executable ## Generate the combined install.yaml for direct URL installation.
 	@echo "Generating install.yaml..."
 	@./scripts/generate-install-yaml.sh $(VERSION) $(IMG)
 
@@ -124,7 +131,7 @@ undeploy: ## Undeploy operator from the K8s cluster.
 ##@ Local Development (Minikube)
 
 .PHONY: minikube-setup
-minikube-setup: ## Setup minikube for local development.
+minikube-setup: ensure-scripts-executable ## Setup minikube for local development.
 	./scripts/dev-setup.sh prereq
 	./scripts/dev-setup.sh start
 

@@ -4,6 +4,8 @@
 
 SQL Server Availability Groups (AGs) provide high availability and disaster recovery for your databases running in Kubernetes.
 
+> **New to AGs?** Start with the [Step-by-Step Tutorial](tutorial-ag-deployment.md) for a complete walkthrough from operator installation to working listener.
+
 ## Table of Contents
 
 - [What is an Availability Group?](#what-is-an-availability-group)

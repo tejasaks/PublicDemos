@@ -8,6 +8,7 @@ Welcome to the SQL Server Kubernetes Operator documentation.
 |--------------|------------|
 | Deploy my first SQL Server | [Getting Started](getting-started.md) |
 | Understand the architecture | [Architecture Overview](architecture/overview.md) |
+| **Deploy an AG (Tutorial)** | **[AG Tutorial](availability-groups/tutorial-ag-deployment.md)** |
 | Set up high availability | [AG Deployment Guide](availability-groups/deployment-guide.md) |
 | Monitor my SQL Servers | [Monitoring Overview](monitoring/overview.md) |
 | Contribute to the project | [Contributing](development/contributing.md) |
@@ -50,7 +51,9 @@ High availability configuration and management.
 | Document | Description |
 |----------|-------------|
 | [Overview](availability-groups/overview.md) | AG concepts and architecture |
-| [Deployment Guide](availability-groups/deployment-guide.md) | Step-by-step AG setup |
+| **[Tutorial: AG Deployment](availability-groups/tutorial-ag-deployment.md)** | **Complete walkthrough from scratch** |
+| [Deployment Guide](availability-groups/deployment-guide.md) | Step-by-step AG setup (reference) |
+| [Listener Configuration](availability-groups/listener-configuration.md) | AG Listener options and setup |
 | [Failover Management](availability-groups/failover-management.md) | Automatic and manual failover |
 | [Multi-AG Scenarios](availability-groups/multi-ag-scenarios.md) | Multiple AGs on same cluster |
 | [AG Helper Reference](availability-groups/ag-helper-reference.md) | Complete sidecar API |
