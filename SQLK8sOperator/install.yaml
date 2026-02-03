@@ -3168,7 +3168,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: mssql-operator-webhook
-  namespace: mssql-operator
+  namespace: mssql-system
   labels:
     app: mssql-operator
     component: webhook
@@ -3198,7 +3198,7 @@ webhooks:
     clientConfig:
       service:
         name: mssql-operator-webhook
-        namespace: mssql-operator
+        namespace: mssql-system
         path: /validate-mssql-microsoft-com-v1alpha1-sqlserver
       # CA bundle will be injected by cert-manager or manually
       caBundle: ""
@@ -3224,7 +3224,7 @@ webhooks:
     clientConfig:
       service:
         name: mssql-operator-webhook
-        namespace: mssql-operator
+        namespace: mssql-system
         path: /validate-mssql-microsoft-com-v1alpha1-sqlserverag
       caBundle: ""
     rules:
@@ -3248,7 +3248,7 @@ webhooks:
 # kind: Certificate
 # metadata:
 #   name: mssql-operator-webhook-cert
-#   namespace: mssql-operator
+#   namespace: mssql-system
 # spec:
 #   secretName: mssql-operator-webhook-tls
 #   dnsNames:
@@ -3263,7 +3263,7 @@ webhooks:
 # kind: Issuer
 # metadata:
 #   name: mssql-operator-selfsigned-issuer
-#   namespace: mssql-operator
+#   namespace: mssql-system
 # spec:
 #   selfSigned: {}
 
@@ -3284,7 +3284,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: mssql-operator-webhook-tls
-  namespace: mssql-operator
+  namespace: mssql-system
   labels:
     app: mssql-operator
 type: kubernetes.io/tls
