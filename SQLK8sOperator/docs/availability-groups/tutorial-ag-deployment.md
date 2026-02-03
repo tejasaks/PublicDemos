@@ -211,11 +211,7 @@ CREATE USER sql_ag_2_user FOR LOGIN sql_ag_2_login;
 CREATE CERTIFICATE AG_Cert_2 AUTHORIZATION sql_ag_2_user
     FROM FILE = '/var/opt/mssql/data/AG_Cert_2.cer';
 
--- Grant connect permissions
-GRANT CONNECT ON ENDPOINT::Hadr_endpoint TO sql_ag_1_login;
-GRANT CONNECT ON ENDPOINT::Hadr_endpoint TO sql_ag_2_login;
-
--- Create the mirroring endpoint
+-- Create the mirroring endpoint FIRST
 CREATE ENDPOINT Hadr_endpoint
     STATE = STARTED
     AS TCP (LISTENER_PORT = 5022)
@@ -224,6 +220,11 @@ CREATE ENDPOINT Hadr_endpoint
         AUTHENTICATION = CERTIFICATE AG_Cert_0,
         ENCRYPTION = REQUIRED ALGORITHM AES
     );
+
+-- Grant connect permissions AFTER endpoint exists
+GRANT CONNECT ON ENDPOINT::Hadr_endpoint TO sql_ag_1_login;
+GRANT CONNECT ON ENDPOINT::Hadr_endpoint TO sql_ag_2_login;
+
 PRINT 'Endpoint created on sql-ag-0';
 "
 ```
@@ -244,9 +245,7 @@ CREATE USER sql_ag_2_user FOR LOGIN sql_ag_2_login;
 CREATE CERTIFICATE AG_Cert_2 AUTHORIZATION sql_ag_2_user
     FROM FILE = '/var/opt/mssql/data/AG_Cert_2.cer';
 
-GRANT CONNECT ON ENDPOINT::Hadr_endpoint TO sql_ag_0_login;
-GRANT CONNECT ON ENDPOINT::Hadr_endpoint TO sql_ag_2_login;
-
+-- Create the mirroring endpoint FIRST
 CREATE ENDPOINT Hadr_endpoint
     STATE = STARTED
     AS TCP (LISTENER_PORT = 5022)
@@ -255,6 +254,11 @@ CREATE ENDPOINT Hadr_endpoint
         AUTHENTICATION = CERTIFICATE AG_Cert_1,
         ENCRYPTION = REQUIRED ALGORITHM AES
     );
+
+-- Grant connect permissions AFTER endpoint exists
+GRANT CONNECT ON ENDPOINT::Hadr_endpoint TO sql_ag_0_login;
+GRANT CONNECT ON ENDPOINT::Hadr_endpoint TO sql_ag_2_login;
+
 PRINT 'Endpoint created on sql-ag-1';
 "
 ```
@@ -275,9 +279,7 @@ CREATE USER sql_ag_1_user FOR LOGIN sql_ag_1_login;
 CREATE CERTIFICATE AG_Cert_1 AUTHORIZATION sql_ag_1_user
     FROM FILE = '/var/opt/mssql/data/AG_Cert_1.cer';
 
-GRANT CONNECT ON ENDPOINT::Hadr_endpoint TO sql_ag_0_login;
-GRANT CONNECT ON ENDPOINT::Hadr_endpoint TO sql_ag_1_login;
-
+-- Create the mirroring endpoint FIRST
 CREATE ENDPOINT Hadr_endpoint
     STATE = STARTED
     AS TCP (LISTENER_PORT = 5022)
@@ -286,6 +288,11 @@ CREATE ENDPOINT Hadr_endpoint
         AUTHENTICATION = CERTIFICATE AG_Cert_2,
         ENCRYPTION = REQUIRED ALGORITHM AES
     );
+
+-- Grant connect permissions AFTER endpoint exists
+GRANT CONNECT ON ENDPOINT::Hadr_endpoint TO sql_ag_0_login;
+GRANT CONNECT ON ENDPOINT::Hadr_endpoint TO sql_ag_1_login;
+
 PRINT 'Endpoint created on sql-ag-2';
 "
 ```
