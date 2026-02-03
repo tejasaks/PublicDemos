@@ -1,9 +1,13 @@
 # =============================================================================
-# GitHub Actions Workflow: Build and Push Operator Image
+# GitHub Actions Workflow: Build and Push Operator Images
 # =============================================================================
 # 
-# This workflow builds and pushes the SQL Server Kubernetes Operator image
+# This workflow builds and pushes the SQL Server Kubernetes Operator images
 # to GitHub Container Registry (ghcr.io).
+#
+# IMAGES BUILT:
+#   - mssql-operator     : Main controller
+#   - mssql-ag-helper    : AG monitoring sidecar
 #
 # TRIGGERS:
 #   - Push to main branch (when SQLK8sOperator files change)
@@ -11,7 +15,7 @@
 #   - Manual trigger (workflow_dispatch)
 #
 # IMAGE TAGS:
-#   - On main push: latest, main, sha-<commit>
+#   - On main push: latest, main, sha-<commit>, v1.0.0
 #   - On tag push: v1.0.0, latest (if not pre-release)
 #
 # USAGE:
@@ -19,7 +23,7 @@
 #
 # =============================================================================
 
-name: Build and Push Operator Image
+name: Build and Push Operator Images
 
 on:
   push:
@@ -39,7 +43,8 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: tejasaks/mssql-operator
+  OPERATOR_IMAGE: tejasaks/mssql-operator
+  AG_HELPER_IMAGE: tejasaks/mssql-ag-helper
 
 jobs:
   build-and-push:
@@ -50,7 +55,6 @@ jobs:
 
     outputs:
       version: ${{ steps.version.outputs.version }}
-      image: ${{ steps.meta.outputs.tags }}
 
     steps:
       - name: Checkout repository
@@ -60,13 +64,10 @@ jobs:
         id: version
         run: |
           if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_type }}" == "tag" ]]; then
-            # Tag push - use the tag name
             VERSION="${{ github.ref_name }}"
           elif [[ -n "${{ github.event.inputs.version }}" ]]; then
-            # Manual trigger with version
             VERSION="${{ github.event.inputs.version }}"
           else
-            # Main branch push - use commit SHA
             VERSION="sha-$(echo ${{ github.sha }} | cut -c1-7)"
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
@@ -94,37 +95,68 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels)
-        id: meta
+      # =====================================================================
+      # Build mssql-operator image
+      # =====================================================================
+      - name: Extract metadata for Operator
+        id: meta-operator
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ env.OPERATOR_IMAGE }}
           tags: |
-            # For tag pushes (releases), use the tag
             type=ref,event=tag
-            # For main branch, add 'latest' and 'main'
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
-            # Always add short SHA
             type=sha,prefix=sha-,format=short
-            # Add v1.0.0 for main branch (for install.yaml compatibility)
             type=raw,value=v1.0.0,enable=${{ github.ref == 'refs/heads/main' }}
 
-      - name: Build and push Docker image
+      - name: Build and push Operator image
         uses: docker/build-push-action@v5
         with:
           context: ./SQLK8sOperator
           file: ./SQLK8sOperator/Dockerfile.operator
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ steps.meta-operator.outputs.tags }}
+          labels: ${{ steps.meta-operator.outputs.labels }}
+          cache-from: type=gha,scope=operator
+          cache-to: type=gha,mode=max,scope=operator
           platforms: linux/amd64,linux/arm64
           build-args: |
             VERSION=${{ steps.version.outputs.version }}
 
-      - name: Create GitHub Release (on tag push)
+      # =====================================================================
+      # Build mssql-ag-helper image
+      # =====================================================================
+      - name: Extract metadata for AG Helper
+        id: meta-ag-helper
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.AG_HELPER_IMAGE }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,prefix=sha-,format=short
+            type=raw,value=v1.0.0,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push AG Helper image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./SQLK8sOperator
+          file: ./SQLK8sOperator/Dockerfile.ag-helper
+          push: true
+          tags: ${{ steps.meta-ag-helper.outputs.tags }}
+          labels: ${{ steps.meta-ag-helper.outputs.labels }}
+          cache-from: type=gha,scope=ag-helper
+          cache-to: type=gha,mode=max,scope=ag-helper
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+
+      # =====================================================================
+      # Create Release (on tag push)
+      # =====================================================================
+      - name: Create GitHub Release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v1
         with:
@@ -139,11 +171,12 @@ jobs:
             kubectl apply -f https://raw.githubusercontent.com/tejasaks/PublicDemos/${{ github.ref_name }}/SQLK8sOperator/install.yaml
             ```
             
-            ### Docker Image
+            ### Docker Images
             
-            ```
-            ghcr.io/tejasaks/mssql-operator:${{ github.ref_name }}
-            ```
+            | Image | Tag |
+            |-------|-----|
+            | Operator | `ghcr.io/tejasaks/mssql-operator:${{ github.ref_name }}` |
+            | AG Helper | `ghcr.io/tejasaks/mssql-ag-helper:${{ github.ref_name }}` |
             
             ### Upgrade
             
@@ -159,18 +192,16 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Images pushed:**" >> $GITHUB_STEP_SUMMARY
+          echo "### Operator Image" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta-operator.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### AG Helper Image" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta-ag-helper.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            echo "📦 **Draft Release Created:** Review and publish at [Releases](https://github.com/tejasaks/PublicDemos/releases)" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "ℹ️ **Dev Build:** To create a release, push a git tag (e.g., \`git tag v1.0.0 && git push origin v1.0.0\`)" >> $GITHUB_STEP_SUMMARY
+            echo "📦 **Draft Release Created**" >> $GITHUB_STEP_SUMMARY
           fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### User Installation" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "kubectl apply -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/install.yaml" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY

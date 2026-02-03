@@ -85,7 +85,7 @@ spec:
         service.beta.kubernetes.io/description: "Production OLTP read replicas"
   
   sidecar:
-    image: mssql-ag-helper:latest
+    image: ghcr.io/tejasaks/mssql-ag-helper:v1.0.0
     monitorInterval: "10s"
     connectionTimeout: "30s"
 
@@ -149,7 +149,7 @@ spec:
         service.beta.kubernetes.io/description: "Reporting read replicas"
   
   sidecar:
-    image: mssql-ag-helper:latest
+    image: ghcr.io/tejasaks/mssql-ag-helper:v1.0.0
     monitorInterval: "30s"  # Less frequent for reporting AG
     connectionTimeout: "30s"
 
@@ -212,7 +212,7 @@ spec:
       port: 3434
   
   sidecar:
-    image: mssql-ag-helper:latest
+    image: ghcr.io/tejasaks/mssql-ag-helper:v1.0.0
     monitorInterval: "60s"  # Infrequent monitoring for DR
     connectionTimeout: "60s"
 

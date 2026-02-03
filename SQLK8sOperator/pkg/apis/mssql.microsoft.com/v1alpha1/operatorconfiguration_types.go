@@ -318,7 +318,7 @@ var DefaultImages = map[string]string{
 const DefaultExporterImage = "burningalchemist/sql_exporter:latest"
 
 // DefaultSidecarImage is the default AG helper sidecar image
-const DefaultSidecarImage = "mssql-ag-helper:latest"
+const DefaultSidecarImage = "ghcr.io/tejasaks/mssql-ag-helper:v1.0.0"
 
 // GetSQLImage returns the SQL Server image for the specified version
 // It checks the ImageConfiguration first, then falls back to DefaultImages

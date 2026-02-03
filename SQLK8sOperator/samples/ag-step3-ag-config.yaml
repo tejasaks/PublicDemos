@@ -186,7 +186,7 @@ spec:
   
   # AG Helper sidecar configuration
   sidecar:
-    image: mssql-ag-helper:latest
+    image: ghcr.io/tejasaks/mssql-ag-helper:v1.0.0
     monitorInterval: "10s"
     connectionTimeout: "30s"
 
