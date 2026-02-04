@@ -1,0 +1,84 @@
+# =============================================================================
+# OperatorConfiguration for Local Development
+# =============================================================================
+#
+# This configuration overrides the default container images to use locally-built
+# images instead of pulling from ghcr.io. Use this when testing local code changes.
+#
+# USAGE:
+#   1. Build local images first:
+#      eval $(minikube docker-env)
+#      make docker-build IMG=mssql-operator:dev
+#      make docker-build-sidecar IMG_SIDECAR=mssql-ag-helper:dev
+#
+#   2. Apply this configuration:
+#      kubectl apply -f samples/operator-configuration-local-dev.yaml
+#
+#   3. Or use dev-setup.sh which does this automatically:
+#      scripts/dev-setup.sh install  # Default uses local images
+#
+# TO SWITCH TO GHCR.IO IMAGES:
+#   scripts/dev-setup.sh install --remote
+#   OR
+#   Don't apply this configuration (operator will use ghcr.io defaults)
+#
+# =============================================================================
+
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: OperatorConfiguration
+metadata:
+  name: mssql-operator-config
+  namespace: mssql-system
+spec:
+  # Override default images to use local builds
+  images:
+    # AG Helper sidecar - local build
+    # Default (remote): ghcr.io/tejasaks/mssql-ag-helper:v1.0.0
+    agHelper: mssql-ag-helper:dev
+    
+    # SQL Exporter - using upstream image (no local build needed)
+    sqlExporter: burningalchemist/sql_exporter:latest
+  
+  # Image pull policy for local development
+  # "Never" ensures Kubernetes uses locally-built images in minikube
+  imagePullPolicy: Never
+  
+  # Validation settings - relaxed for development
+  validation:
+    # Allow missing StorageClass (minikube uses default)
+    storageClassValidation: warn
+    
+    # Allow missing secrets (will be created during testing)
+    secretValidation: warn
+    
+    # Skip password complexity for dev (use strong passwords in production!)
+    passwordComplexity: warn
+
+---
+# =============================================================================
+# COMPARISON: Local vs Remote Image Sources
+# =============================================================================
+#
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  LOCAL DEVELOPMENT (default for dev-setup.sh)                           │
+# ├─────────────────────────────────────────────────────────────────────────┤
+# │  Operator:    mssql-operator:dev          (built locally)               │
+# │  AG Helper:   mssql-ag-helper:dev         (built locally)               │
+# │  SQL Server:  mcr.microsoft.com/mssql/server:2022-latest (pulled)       │
+# │  Exporter:    burningalchemist/sql_exporter:latest       (pulled)       │
+# │                                                                         │
+# │  imagePullPolicy: Never                                                 │
+# │  Source: deploy/deployment.yaml + this OperatorConfiguration            │
+# └─────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  REMOTE/PRODUCTION (install.yaml or dev-setup.sh --remote)              │
+# ├─────────────────────────────────────────────────────────────────────────┤
+# │  Operator:    ghcr.io/tejasaks/mssql-operator:v1.0.0     (pulled)       │
+# │  AG Helper:   ghcr.io/tejasaks/mssql-ag-helper:v1.0.0    (pulled)       │
+# │  SQL Server:  mcr.microsoft.com/mssql/server:2022-latest (pulled)       │
+# │  Exporter:    burningalchemist/sql_exporter:latest       (pulled)       │
+# │                                                                         │
+# │  imagePullPolicy: IfNotPresent                                          │
+# │  Source: install.yaml (default OperatorConfiguration)                   │
+# └─────────────────────────────────────────────────────────────────────────┘

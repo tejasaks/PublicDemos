@@ -7,6 +7,7 @@ Guide to setting up a local development environment for the SQL Server Kubernete
 ## Table of Contents
 
 - [Prerequisites](#prerequisites)
+- [Image Source Modes](#image-source-modes)
 - [Environment Setup](#environment-setup)
 - [Running Locally](#running-locally)
 - [Development Workflow](#development-workflow)
@@ -20,11 +21,102 @@ Guide to setting up a local development environment for the SQL Server Kubernete
 
 | Tool | Version | Installation |
 |------|---------|--------------|
-| Go | 1.21+ | [go.dev/dl](https://go.dev/dl/) |
+| Go | 1.24+ | [go.dev/dl](https://go.dev/dl/) |
 | Docker | 20.10+ | [docker.com](https://docker.com) |
 | kubectl | 1.28+ | [kubernetes.io](https://kubernetes.io/docs/tasks/tools/) |
 | Kind or Minikube | Latest | See below |
 | Make | 3.81+ | System package manager |
+
+---
+
+## Image Source Modes
+
+The development environment supports two image source modes:
+
+| Mode | Flag | Use Case |
+|------|------|----------|
+| **Local** (default) | `--local` | Testing local code changes |
+| **Remote** | `--remote` | Testing published images from ghcr.io |
+
+### Local Mode (Default)
+
+Uses locally-built images from minikube's Docker cache. **Use this when developing.**
+
+```bash
+# Build local images first
+eval $(minikube docker-env)
+make docker-build IMG=mssql-operator:dev
+make docker-build-sidecar IMG_SIDECAR=mssql-ag-helper:dev
+
+# Install with local images (default)
+scripts/dev-setup.sh install
+
+# Or explicitly specify local mode
+scripts/dev-setup.sh --local install
+```
+
+**Images used in Local mode:**
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  IMAGE SOURCE: LOCAL (minikube docker cache)                            │
+├─────────────────────────────────────────────────────────────────────────┤
+│  Operator:     mssql-operator:dev          (built locally)              │
+│  AG Helper:    mssql-ag-helper:dev         (built locally)              │
+│  SQL Server:   mcr.microsoft.com/mssql/server:2022-latest (pulled)      │
+│  Exporter:     burningalchemist/sql_exporter:latest       (pulled)      │
+│                                                                         │
+│  imagePullPolicy: Never                                                 │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Remote Mode
+
+Uses pre-built images from GitHub Container Registry. **Use this to test published releases.**
+
+```bash
+# Install with remote images
+scripts/dev-setup.sh --remote install
+
+# Or set via environment variable
+IMAGE_SOURCE=remote scripts/dev-setup.sh install
+```
+
+**Images used in Remote mode:**
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  IMAGE SOURCE: REMOTE (ghcr.io)                                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│  Operator:     ghcr.io/tejasaks/mssql-operator:v1.0.0     (pulled)      │
+│  AG Helper:    ghcr.io/tejasaks/mssql-ag-helper:v1.0.0    (pulled)      │
+│  SQL Server:   mcr.microsoft.com/mssql/server:2022-latest (pulled)      │
+│  Exporter:     burningalchemist/sql_exporter:latest       (pulled)      │
+│                                                                         │
+│  imagePullPolicy: IfNotPresent                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### How It Works
+
+| Mode | Operator Deployment | OperatorConfiguration |
+|------|---------------------|----------------------|
+| Local | `deploy/deployment.yaml` | `samples/operator-configuration-local-dev.yaml` |
+| Remote | Inline YAML (ghcr.io images) | Default (ghcr.io AG Helper) |
+
+The `dev-setup.sh` script will display which images are being used when you run `install`:
+
+```bash
+scripts/dev-setup.sh install
+# Output:
+# ╔════════════════════════════════════════════════════════════════╗
+# ║  IMAGE SOURCE: LOCAL (minikube docker cache)                   ║
+# ╠════════════════════════════════════════════════════════════════╣
+# [IMAGE] Operator:   mssql-operator:dev
+# [IMAGE] AG Helper:  mssql-ag-helper:dev
+# [IMAGE] Pull Policy: Never (uses local images)
+# ╚════════════════════════════════════════════════════════════════╝
+```
+
+---
 
 ### Install Kind (recommended)
 

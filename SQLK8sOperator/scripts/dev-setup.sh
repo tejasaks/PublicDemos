@@ -7,10 +7,27 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# =============================================================================
+# IMAGE SOURCE CONFIGURATION
+# =============================================================================
+# Default: local (uses locally-built images in minikube)
+# Override with --remote flag to use ghcr.io images
+IMAGE_SOURCE="${IMAGE_SOURCE:-local}"
+
+# Local image names (built with make docker-build)
+LOCAL_OPERATOR_IMAGE="mssql-operator:dev"
+LOCAL_AG_HELPER_IMAGE="mssql-ag-helper:dev"
+
+# Remote image names (pulled from ghcr.io)
+REMOTE_OPERATOR_IMAGE="ghcr.io/tejasaks/mssql-operator:v1.0.0"
+REMOTE_AG_HELPER_IMAGE="ghcr.io/tejasaks/mssql-ag-helper:v1.0.0"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 log_info() {
@@ -23,6 +40,10 @@ log_warn() {
 
 log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+}
+
+log_image() {
+    echo -e "${CYAN}[IMAGE]${NC} $1"
 }
 
 # Check prerequisites
@@ -105,7 +126,17 @@ build_operator() {
     make build
     
     # Build Docker images for minikube
-    log_info "Building Docker images in minikube environment..."
+    echo ""
+    echo -e "${BLUE}╔════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║${NC}  ${CYAN}BUILDING LOCAL DOCKER IMAGES${NC}                                  ${BLUE}║${NC}"
+    echo -e "${BLUE}╠════════════════════════════════════════════════════════════════╣${NC}"
+    log_image "Building: ${LOCAL_OPERATOR_IMAGE}"
+    log_image "Building: ${LOCAL_AG_HELPER_IMAGE}"
+    log_image "Target: minikube docker daemon"
+    echo -e "${BLUE}╚════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    
+    log_info "Switching to minikube docker environment..."
     eval $(minikube docker-env)
     
     make docker-build IMG=mssql-operator:dev
@@ -119,6 +150,31 @@ install_operator() {
     log_info "Installing operator..."
     cd "${PROJECT_ROOT}"
     
+    # Display image source configuration
+    echo ""
+    echo -e "${BLUE}╔════════════════════════════════════════════════════════════════╗${NC}"
+    if [[ "${IMAGE_SOURCE}" == "local" ]]; then
+        echo -e "${BLUE}║${NC}  ${CYAN}IMAGE SOURCE: LOCAL${NC} (minikube docker cache)                   ${BLUE}║${NC}"
+        echo -e "${BLUE}╠════════════════════════════════════════════════════════════════╣${NC}"
+        log_image "Operator:   ${LOCAL_OPERATOR_IMAGE}"
+        log_image "AG Helper:  ${LOCAL_AG_HELPER_IMAGE}"
+        log_image "Pull Policy: Never (uses local images)"
+        echo -e "${BLUE}╚════════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        log_info "Using locally-built images from minikube docker cache"
+        log_info "Run 'make docker-build' first if images are not built"
+    else
+        echo -e "${BLUE}║${NC}  ${CYAN}IMAGE SOURCE: REMOTE${NC} (ghcr.io)                               ${BLUE}║${NC}"
+        echo -e "${BLUE}╠════════════════════════════════════════════════════════════════╣${NC}"
+        log_image "Operator:   ${REMOTE_OPERATOR_IMAGE}"
+        log_image "AG Helper:  ${REMOTE_AG_HELPER_IMAGE}"
+        log_image "Pull Policy: IfNotPresent (pulls from registry)"
+        echo -e "${BLUE}╚════════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        log_info "Using pre-built images from GitHub Container Registry"
+    fi
+    echo ""
+    
     # Install CRDs first
     log_info "Installing CRDs..."
     kubectl apply -f deploy/crds/
@@ -128,14 +184,100 @@ install_operator() {
     kubectl apply -f deploy/namespace.yaml
     kubectl apply -f deploy/serviceaccount.yaml
     kubectl apply -f deploy/rbac.yaml
-    kubectl apply -f deploy/deployment.yaml
+    
+    if [[ "${IMAGE_SOURCE}" == "local" ]]; then
+        # Local mode: use deploy/deployment.yaml (has local image config)
+        log_info "Deploying operator with LOCAL images..."
+        kubectl apply -f deploy/deployment.yaml
+        
+        # Apply local dev OperatorConfiguration to override AG Helper image
+        log_info "Applying local development OperatorConfiguration..."
+        kubectl apply -f samples/operator-configuration-local-dev.yaml
+    else
+        # Remote mode: use install.yaml style deployment with ghcr.io images
+        log_info "Deploying operator with REMOTE images from ghcr.io..."
+        
+        # Create a temporary deployment with remote images
+        cat <<EOF | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mssql-operator
+  namespace: mssql-system
+  labels:
+    app.kubernetes.io/name: mssql-operator
+    app: mssql-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mssql-operator
+      app: mssql-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mssql-operator
+        app: mssql-operator
+    spec:
+      serviceAccountName: mssql-operator
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: operator
+          image: ${REMOTE_OPERATOR_IMAGE}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          ports:
+            - containerPort: 8080
+              name: metrics
+            - containerPort: 8081
+              name: health
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 64Mi
+EOF
+        # Note: Remote mode uses default OperatorConfiguration with ghcr.io AG Helper
+    fi
     
     # Wait for operator to be ready
     log_info "Waiting for operator to be ready..."
     kubectl wait --for=condition=Available deployment/mssql-operator \
         -n mssql-system --timeout=120s
     
+    # Show the actual image being used
+    echo ""
     log_info "Operator installed successfully!"
+    ACTUAL_IMAGE=$(kubectl get deployment mssql-operator -n mssql-system -o jsonpath='{.spec.template.spec.containers[0].image}')
+    log_image "Operator running with image: ${ACTUAL_IMAGE}"
+    
+    if [[ "${IMAGE_SOURCE}" == "local" ]]; then
+        log_image "AG Helper will use: ${LOCAL_AG_HELPER_IMAGE} (from OperatorConfiguration)"
+    else
+        log_image "AG Helper will use: ${REMOTE_AG_HELPER_IMAGE} (default)"
+    fi
 }
 
 # Uninstall the operator
@@ -404,8 +546,20 @@ main() {
             deploy_sample
             show_status
             ;;
+        --remote)
+            IMAGE_SOURCE="remote"
+            log_info "Image source set to: REMOTE (ghcr.io)"
+            ;;
+        --local)
+            IMAGE_SOURCE="local"
+            log_info "Image source set to: LOCAL (minikube docker cache)"
+            ;;
         *)
-            echo "Usage: $0 {prereq|start|build|install|uninstall|deploy|monitoring|status|cleanup|connect|all|all-with-monitoring} [options]"
+            echo "Usage: $0 [--local|--remote] {command} [options]"
+            echo ""
+            echo "Image Source Flags (must come BEFORE command):"
+            echo "  --local   - Use locally-built images (DEFAULT)"
+            echo "  --remote  - Use images from ghcr.io"
             echo ""
             echo "Commands:"
             echo "  prereq    - Check prerequisites (Docker, minikube, kubectl, Go)"
@@ -423,15 +577,43 @@ main() {
             echo "  all-with-monitoring - Full setup including Prometheus/Grafana"
             echo ""
             echo "Examples:"
-            echo "  $0 all                                       # Full setup with SQL 2025"
-            echo "  $0 all-with-monitoring                       # Full setup with monitoring"
-            echo "  $0 monitoring                                # Deploy monitoring only"
-            echo "  $0 deploy                                    # Deploy SQL 2025 standalone (default)"
-            echo "  $0 deploy samples/sqlserver-2025-standalone.yaml"
-            echo "  $0 deploy samples/sqlserver-availability-group.yaml"
+            echo "  $0 install                    # Install with LOCAL images (default)"
+            echo "  $0 --remote install           # Install with GHCR.IO images"
+            echo "  $0 all                        # Full local dev setup"
+            echo "  $0 --remote all               # Full setup using remote images"
+            echo "  $0 deploy samples/ag-step1-replicas.yaml"
             exit 1
             ;;
     esac
 }
 
-main "$@"
+# Parse arguments - handle flags first
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --remote)
+                IMAGE_SOURCE="remote"
+                shift
+                ;;
+            --local)
+                IMAGE_SOURCE="local"
+                shift
+                ;;
+            *)
+                # Not a flag, must be a command
+                COMMAND="$1"
+                shift
+                REMAINING_ARGS="$@"
+                break
+                ;;
+        esac
+    done
+}
+
+# Main entry point
+parse_args "$@"
+if [[ -n "${COMMAND}" ]]; then
+    main "${COMMAND}" ${REMAINING_ARGS}
+else
+    main "help"
+fi
