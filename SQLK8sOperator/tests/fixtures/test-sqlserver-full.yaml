@@ -10,7 +10,7 @@ spec:
   version: "2022"
   edition: Developer
   instance:
-    replicas: 1
+    count: 1
     image: mcr.microsoft.com/mssql/server:2022-latest
     imagePullPolicy: IfNotPresent
     resources:

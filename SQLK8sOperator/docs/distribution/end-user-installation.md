@@ -771,7 +771,7 @@ spec:
   version: "2025"
   edition: Developer
   instance:
-    replicas: 1
+    count: 1
     resources:
       limits:
         cpu: "2"

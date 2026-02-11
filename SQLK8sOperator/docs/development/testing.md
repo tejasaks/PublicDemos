@@ -86,7 +86,7 @@ func TestSQLServerReconciler_validateSpec(t *testing.T) {
                 Version:  "2025",
                 Edition:  "Developer",
                 Instance: mssqlv1alpha1.InstanceSpec{
-                    Replicas: 1,
+                    Count: 1,
                 },
             },
             wantErr: false,
@@ -132,7 +132,7 @@ func TestSQLServerReconciler_buildStatefulSet(t *testing.T) {
             Version:  "2025",
             Edition:  "Developer",
             Instance: mssqlv1alpha1.InstanceSpec{
-                Replicas: 3,
+                Count: 3,
             },
         },
     }
@@ -337,7 +337,7 @@ var _ = Describe("SQLServer Controller", func() {
                     Version:  "2025",
                     Edition:  "Developer",
                     Instance: mssqlv1alpha1.InstanceSpec{
-                        Replicas: 1,
+                        Count: 1,
                     },
                     Credentials: mssqlv1alpha1.CredentialsSpec{
                         SAPasswordSecretRef: mssqlv1alpha1.SecretRef{

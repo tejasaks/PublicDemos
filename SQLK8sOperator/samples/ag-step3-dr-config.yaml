@@ -40,8 +40,8 @@ spec:
     # Must match the AG name created in T-SQL
     name: DisasterRecoveryAG
     
-    # Number of replicas
-    replicas: 3
+    # Number of instances
+    instanceCount: 3
     
     # Primary replica configuration
     primaryConfig:

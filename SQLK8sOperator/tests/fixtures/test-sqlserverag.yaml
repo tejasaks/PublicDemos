@@ -8,7 +8,7 @@ spec:
     name: test-ag-cluster
   availabilityGroup:
     name: TestAG
-    replicas: 3
+    instanceCount: 3
     primaryConfig:
       availabilityMode: SynchronousCommit
       failoverMode: External

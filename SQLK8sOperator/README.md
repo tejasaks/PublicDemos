@@ -44,7 +44,7 @@ kubectl get pods -n mssql -w
 - **Deploy SQL Server Instances**: Declarative management of SQL Server 2019, 2022, and 2025
 - **High Availability**: Availability Groups with automatic failover
 - **Zero-Downtime Upgrades**: Rolling upgrades with AG failover
-- **Scaling**: Scale replicas with persistent storage
+- **Scaling**: Scale instances with persistent storage
 - **Monitoring**: Prometheus metrics and Grafana dashboards
 - **Active Directory**: Windows Authentication support
 
@@ -86,7 +86,7 @@ spec:
   version: "2025"
   edition: Developer
   instance:
-    replicas: 1
+    count: 1
     resources:
       limits:
         cpu: "2"
@@ -180,7 +180,7 @@ spec:
   version: "2022"
   edition: Enterprise
   instance:
-    replicas: 3
+    count: 3
     config:
       hadrEnabled: true
   credentials:
@@ -205,7 +205,7 @@ spec:
     name: sql-prod
   availabilityGroup:
     name: ProductionAG
-    replicas: 3
+    instanceCount: 3
     automaticFailover: true
 ```
 

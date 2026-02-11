@@ -97,7 +97,7 @@ spec:
     name: sql-ag
   availabilityGroup:
     name: ProductionAG
-    replicas: 3
+    instanceCount: 3
     # ... other AG config ...
 
   listener:

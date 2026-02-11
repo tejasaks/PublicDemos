@@ -77,7 +77,7 @@ spec:
   version: "2025"
   edition: Developer
   instance:
-    replicas: 1
+    count: 1
     resources:
       limits:
         cpu: "2"
@@ -194,7 +194,7 @@ spec:
   version: "2025"
   edition: Standard  # Or Enterprise for advanced features
   instance:
-    replicas: 1
+    count: 1
     resources:
       limits:
         cpu: "4"
@@ -322,7 +322,7 @@ spec:
   version: "2025"
   edition: Developer  # Enterprise for production
   instance:
-    replicas: 3
+    count: 3
     resources:
       limits:
         cpu: "4"
@@ -360,7 +360,7 @@ spec:
     name: sql-ha-01
   availabilityGroup:
     name: ProductionAG
-    replicas: 3
+    instanceCount: 3
     automaticFailover: true  # Opt-in: enable controller failover (default: false)
     primaryConfig:
       availabilityMode: SynchronousCommit
@@ -448,7 +448,7 @@ spec:
   version: "2025"
   edition: Enterprise
   instance:
-    replicas: 1
+    count: 1
     resources:
       limits:
         cpu: "4"
@@ -539,7 +539,7 @@ spec:
   version: "2025"
   edition: Developer
   instance:
-    replicas: 1
+    count: 1
     resources:
       limits:
         cpu: "2"
@@ -572,7 +572,7 @@ spec:
   version: "2025"
   edition: Developer
   instance:
-    replicas: 1
+    count: 1
     resources:
       limits:
         cpu: "2"

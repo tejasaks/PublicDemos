@@ -66,7 +66,7 @@ spec:
   edition: Developer
   description: "Test SQL Server for CRD validation"
   instance:
-    replicas: 1
+    count: 1
     storage:
       data:
         size: 1Gi
@@ -97,7 +97,7 @@ spec:
   version: "2022"
   edition: Developer
   instance:
-    replicas: 1
+    count: 1
     storage:
       data:
         size: 1Gi
@@ -126,7 +126,7 @@ spec:
   version: "${version}"
   edition: Developer
   instance:
-    replicas: 1
+    count: 1
     storage:
       data:
         size: 1Gi
@@ -152,7 +152,7 @@ spec:
   version: "2018"
   edition: Developer
   instance:
-    replicas: 1
+    count: 1
     storage:
       data:
         size: 1Gi
@@ -182,7 +182,7 @@ spec:
   version: "2022"
   edition: "${edition}"
   instance:
-    replicas: 1
+    count: 1
     storage:
       data:
         size: 1Gi
@@ -199,11 +199,11 @@ EOF
 done
 
 # ============================================================================
-# Test 6: SQLServer Replica Bounds Validation
+# Test 6: SQLServer Instance Count Bounds Validation
 # ============================================================================
-log_step "Test 6: SQLServer Replica Bounds Validation"
+log_step "Test 6: SQLServer Instance Count Bounds Validation"
 
-# Valid replica count (within 1-9)
+# Valid count (within 1-9)
 cat <<EOF | kubectl apply -n "${TEST_NAMESPACE}" -f - 2>/dev/null
 apiVersion: mssql.microsoft.com/v1alpha1
 kind: SQLServer
@@ -213,7 +213,7 @@ spec:
   version: "2022"
   edition: Developer
   instance:
-    replicas: 3
+    count: 3
     storage:
       data:
         size: 1Gi
@@ -222,9 +222,9 @@ spec:
       name: test-sa-password
 EOF
 
-REPLICAS=$(kubectl get sqlserver tst-rep3 -n "${TEST_NAMESPACE}" \
-    -o jsonpath='{.spec.instance.replicas}' 2>/dev/null)
-assert_equals "3" "${REPLICAS}" "Replicas should be 3"
+INSTANCE_COUNT=$(kubectl get sqlserver tst-rep3 -n "${TEST_NAMESPACE}" \
+    -o jsonpath='{.spec.instance.count}' 2>/dev/null)
+assert_equals "3" "${INSTANCE_COUNT}" "Instance count should be 3"
 
 # ============================================================================
 # Test 7: SQLServerAG Resource Creation
@@ -242,7 +242,7 @@ spec:
     name: test-sql-01
   availabilityGroup:
     name: TestAG
-    replicas: 3
+    instanceCount: 3
     primaryConfig:
       availabilityMode: SynchronousCommit
       failoverMode: External
@@ -266,9 +266,9 @@ AG_NAME=$(kubectl get sqlserverag test-ag -n "${TEST_NAMESPACE}" \
     -o jsonpath='{.spec.availabilityGroup.name}')
 assert_equals "TestAG" "${AG_NAME}" "AG name should be 'TestAG'"
 
-AG_REPLICAS=$(kubectl get sqlserverag test-ag -n "${TEST_NAMESPACE}" \
-    -o jsonpath='{.spec.availabilityGroup.replicas}')
-assert_equals "3" "${AG_REPLICAS}" "AG replicas should be 3"
+AG_INSTANCE_COUNT=$(kubectl get sqlserverag test-ag -n "${TEST_NAMESPACE}" \
+    -o jsonpath='{.spec.availabilityGroup.instanceCount}')
+assert_equals "3" "${AG_INSTANCE_COUNT}" "AG instanceCount should be 3"
 
 PRIMARY_MODE=$(kubectl get sqlserverag test-ag -n "${TEST_NAMESPACE}" \
     -o jsonpath='{.spec.availabilityGroup.primaryConfig.availabilityMode}')
@@ -289,7 +289,7 @@ spec:
   version: "2022"
   edition: Developer
   instance:
-    replicas: 1
+    count: 1
     storage:
       data:
         size: 1Gi
@@ -309,7 +309,7 @@ spec:
   version: "2022"
   edition: Developer
   instance:
-    replicas: 1
+    count: 1
   credentials:
     saPasswordSecretRef:
       name: test-sa-password

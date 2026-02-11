@@ -1112,6 +1112,16 @@ spec:
                           type: integer
                         type: array
                     type: object
+                  count:
+                    default: 1
+                    description: |-
+                      Count is the number of SQL Server instances to deploy (1 for standalone, 2+ for AG)
+                      Note: These are independent instances, not identical replicas. For AGs, each instance
+                      has its own identity, storage, and can serve different roles (primary/secondary).
+                    format: int32
+                    maximum: 9
+                    minimum: 1
+                    type: integer
                   image:
                     description: Image is the SQL Server container image
                     type: string
@@ -1146,14 +1156,6 @@ spec:
                   priorityClassName:
                     description: PriorityClassName for the pods
                     type: string
-                  replicas:
-                    default: 1
-                    description: Replicas is the number of SQL Server instances (1
-                      for standalone, 2+ for AG)
-                    format: int32
-                    maximum: 9
-                    minimum: 1
-                    type: integer
                   resources:
                     description: Resources defines CPU/memory resources for the SQL
                       Server container

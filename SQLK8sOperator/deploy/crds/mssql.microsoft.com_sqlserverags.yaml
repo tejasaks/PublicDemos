@@ -20,8 +20,8 @@ spec:
     - jsonPath: .spec.availabilityGroup.name
       name: AG-Name
       type: string
-    - jsonPath: .spec.availabilityGroup.replicas
-      name: Replicas
+    - jsonPath: .spec.availabilityGroup.instanceCount
+      name: Instances
       type: integer
     - jsonPath: .status.phase
       name: Phase
@@ -29,7 +29,7 @@ spec:
     - jsonPath: .status.primaryReplica
       name: Primary
       type: string
-    - jsonPath: .status.synchronizedReplicas
+    - jsonPath: .status.synchronizedInstances
       name: Synced
       type: integer
     - jsonPath: .status.listener.phase
@@ -122,7 +122,7 @@ spec:
                   healthCheckCredentials:
                     description: |-
                       HealthCheckCredentials defines the SQL login credentials for AG health monitoring
-                      This is the default for all replicas; individual replicas can override
+                      This is the default for all instances; individual instances can override
                     properties:
                       password:
                         description: |-
@@ -172,47 +172,16 @@ spec:
                           Use secretRef instead for production deployments
                         type: string
                     type: object
-                  name:
+                  instanceCount:
+                    default: 3
                     description: |-
-                      Name is the name of the Availability Group (required)
-                      Each SQLServerAG resource monitors exactly one AG
-                    maxLength: 128
-                    minLength: 1
-                    type: string
-                  primaryConfig:
-                    description: PrimaryConfig defines the primary replica configuration
-                    properties:
-                      availabilityMode:
-                        default: SynchronousCommit
-                        description: AvailabilityMode defines the synchronization
-                          mode
-                        enum:
-                        - SynchronousCommit
-                        - AsynchronousCommit
-                        type: string
-                      failoverMode:
-                        default: External
-                        description: FailoverMode is always External for Kubernetes-managed
-                          AG
-                        enum:
-                        - External
-                        type: string
-                      readableSecondary:
-                        default: ReadOnly
-                        description: ReadableSecondary defines read access to secondary
-                          replicas
-                        enum:
-                        - "No"
-                        - ReadOnly
-                        - All
-                        type: string
-                      sessionTimeout:
-                        default: 10
-                        description: SessionTimeout in seconds
-                        format: int32
-                        type: integer
-                    type: object
-                  replicaCredentials:
+                      InstanceCount is the number of SQL Server instances participating in the AG (typically 2-5)
+                      Note: These are independent instances, not replicas. Each has its own identity and storage.
+                    format: int32
+                    maximum: 9
+                    minimum: 2
+                    type: integer
+                  instanceCredentials:
                     additionalProperties:
                       description: |-
                         HealthCheckCredentialsSpec defines credentials for AG Helper health monitoring
@@ -268,19 +237,18 @@ spec:
                           type: string
                       type: object
                     description: |-
-                      ReplicaCredentials allows per-replica credential overrides
-                      Key is the replica index (0, 1, 2, etc.)
+                      InstanceCredentials allows per-instance credential overrides
+                      Key is the instance index (0, 1, 2, etc.)
                     type: object
-                  replicas:
-                    default: 3
-                    description: Replicas is the number of AG replicas (typically
-                      2-5)
-                    format: int32
-                    maximum: 9
-                    minimum: 2
-                    type: integer
-                  secondaryConfig:
-                    description: SecondaryConfig defines the secondary replicas configuration
+                  name:
+                    description: |-
+                      Name is the name of the Availability Group (required)
+                      Each SQLServerAG resource monitors exactly one AG
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                  primaryConfig:
+                    description: PrimaryConfig defines the primary instance configuration
                     properties:
                       availabilityMode:
                         default: SynchronousCommit
@@ -300,7 +268,40 @@ spec:
                       readableSecondary:
                         default: ReadOnly
                         description: ReadableSecondary defines read access to secondary
-                          replicas
+                          instances
+                        enum:
+                        - "No"
+                        - ReadOnly
+                        - All
+                        type: string
+                      sessionTimeout:
+                        default: 10
+                        description: SessionTimeout in seconds
+                        format: int32
+                        type: integer
+                    type: object
+                  secondaryConfig:
+                    description: SecondaryConfig defines the secondary instances configuration
+                    properties:
+                      availabilityMode:
+                        default: SynchronousCommit
+                        description: AvailabilityMode defines the synchronization
+                          mode
+                        enum:
+                        - SynchronousCommit
+                        - AsynchronousCommit
+                        type: string
+                      failoverMode:
+                        default: External
+                        description: FailoverMode is always External for Kubernetes-managed
+                          AG
+                        enum:
+                        - External
+                        type: string
+                      readableSecondary:
+                        default: ReadOnly
+                        description: ReadableSecondary defines read access to secondary
+                          instances
                         enum:
                         - "No"
                         - ReadOnly
@@ -565,6 +566,55 @@ spec:
                 items:
                   type: string
                 type: array
+              instances:
+                description: Instances contains status of each AG instance
+                items:
+                  description: |-
+                    AGInstanceStatus represents the status of an AG instance
+                    Note: SQL Server documentation refers to these as "availability replicas", but
+                    they are independent SQL Server instances with unique identities.
+                  properties:
+                    availabilityMode:
+                      description: AvailabilityMode of this replica
+                      type: string
+                    connectedState:
+                      description: ConnectedState (CONNECTED, DISCONNECTED)
+                      type: string
+                    health:
+                      description: Health indicates overall replica health
+                      enum:
+                      - Healthy
+                      - Warning
+                      - Critical
+                      - Unknown
+                      type: string
+                    isLocal:
+                      description: IsLocal indicates if this is the local replica
+                      type: boolean
+                    name:
+                      description: Name is the instance name (pod name)
+                      type: string
+                    role:
+                      description: Role is the current role (PRIMARY, SECONDARY, RESOLVING)
+                      enum:
+                      - PRIMARY
+                      - SECONDARY
+                      - RESOLVING
+                      - CONFIGURATION_ONLY
+                      type: string
+                    sequenceNumber:
+                      description: SequenceNumber for determining promotion eligibility
+                      format: int64
+                      type: integer
+                    synchronizationState:
+                      description: SynchronizationState (SYNCHRONIZED, SYNCHRONIZING,
+                        NOT_SYNCHRONIZING)
+                      type: string
+                  required:
+                  - name
+                  - role
+                  type: object
+                type: array
               lastFailoverTime:
                 description: LastFailoverTime is when the last failover occurred
                 format: date-time
@@ -638,54 +688,8 @@ spec:
                 description: PrimaryReplica is the name of the current primary replica
                   pod
                 type: string
-              replicas:
-                description: Replicas contains status of each AG replica
-                items:
-                  description: AGReplicaStatus represents the status of an AG replica
-                  properties:
-                    availabilityMode:
-                      description: AvailabilityMode of this replica
-                      type: string
-                    connectedState:
-                      description: ConnectedState (CONNECTED, DISCONNECTED)
-                      type: string
-                    health:
-                      description: Health indicates overall replica health
-                      enum:
-                      - Healthy
-                      - Warning
-                      - Critical
-                      - Unknown
-                      type: string
-                    isLocal:
-                      description: IsLocal indicates if this is the local replica
-                      type: boolean
-                    name:
-                      description: Name is the replica name (pod name)
-                      type: string
-                    role:
-                      description: Role is the current role (PRIMARY, SECONDARY, RESOLVING)
-                      enum:
-                      - PRIMARY
-                      - SECONDARY
-                      - RESOLVING
-                      - CONFIGURATION_ONLY
-                      type: string
-                    sequenceNumber:
-                      description: SequenceNumber for determining promotion eligibility
-                      format: int64
-                      type: integer
-                    synchronizationState:
-                      description: SynchronizationState (SYNCHRONIZED, SYNCHRONIZING,
-                        NOT_SYNCHRONIZING)
-                      type: string
-                  required:
-                  - name
-                  - role
-                  type: object
-                type: array
-              synchronizedReplicas:
-                description: SynchronizedReplicas is the count of synchronized replicas
+              synchronizedInstances:
+                description: SynchronizedInstances is the count of synchronized instances
                 format: int32
                 type: integer
             type: object

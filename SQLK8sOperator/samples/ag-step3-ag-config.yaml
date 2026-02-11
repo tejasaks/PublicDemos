@@ -70,8 +70,8 @@ spec:
     # Must match the AG name created in T-SQL
     name: ProductionAG
     
-    # Number of replicas (informational, must match SQLServer.spec.instance.replicas)
-    replicas: 3
+    # Number of instances (informational, must match SQLServer.spec.instance.count)
+    instanceCount: 3
     
     # Primary replica configuration (reference, actual config is in T-SQL)
     primaryConfig:

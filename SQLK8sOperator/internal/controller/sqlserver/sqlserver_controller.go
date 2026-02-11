@@ -323,7 +323,7 @@ func (r *SQLServerReconciler) reconcileStatefulSet(ctx context.Context, sqlServe
 
 		// Use OnDelete strategy - we control pod deletion during updates
 		found.Spec.Template = sts.Spec.Template
-		found.Spec.Replicas = sts.Spec.Replicas
+		found.Spec.Replicas = sts.Spec.Replicas // K8s StatefulSet field
 
 		if err := r.Update(ctx, found); err != nil {
 			return ctrl.Result{}, err
@@ -336,9 +336,9 @@ func (r *SQLServerReconciler) reconcileStatefulSet(ctx context.Context, sqlServe
 
 // compareStatefulSetWith compares current and desired StatefulSets (Zalando pattern)
 func (r *SQLServerReconciler) compareStatefulSetWith(current, desired *appsv1.StatefulSet) (bool, string) {
-	// Check replicas
+	// Check instance count (K8s StatefulSet uses 'Replicas' field)
 	if *current.Spec.Replicas != *desired.Spec.Replicas {
-		return true, fmt.Sprintf("replicas changed from %d to %d", *current.Spec.Replicas, *desired.Spec.Replicas)
+		return true, fmt.Sprintf("instance count changed from %d to %d", *current.Spec.Replicas, *desired.Spec.Replicas)
 	}
 
 	// Check container image
@@ -368,9 +368,9 @@ func (r *SQLServerReconciler) compareStatefulSetWith(current, desired *appsv1.St
 // imageConfig is optional - if nil, uses hardcoded defaults
 func (r *SQLServerReconciler) buildStatefulSet(ctx context.Context, sqlServer *mssqlv1alpha1.SQLServer, imageConfig *mssqlv1alpha1.ImageConfiguration) *appsv1.StatefulSet {
 	labels := r.labelsForSQLServer(sqlServer)
-	replicas := sqlServer.Spec.Instance.Replicas
-	if replicas == 0 {
-		replicas = 1
+	instanceCount := sqlServer.Spec.Instance.Count
+	if instanceCount == 0 {
+		instanceCount = 1
 	}
 
 	// Use OnDelete update strategy for operator-controlled rolling updates
@@ -579,7 +579,7 @@ func (r *SQLServerReconciler) buildStatefulSet(ctx context.Context, sqlServer *m
 		},
 		Spec: appsv1.StatefulSetSpec{
 			ServiceName:          fmt.Sprintf("%s-headless", sqlServer.Name),
-			Replicas:             &replicas,
+			Replicas:             &instanceCount, // K8s StatefulSet 'Replicas' field
 			PodManagementPolicy:  appsv1.OrderedReadyPodManagement,
 			UpdateStrategy:       updateStrategy,
 			Selector:             &metav1.LabelSelector{MatchLabels: r.selectorLabelsForSQLServer(sqlServer)},

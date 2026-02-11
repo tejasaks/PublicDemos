@@ -54,7 +54,7 @@ fi
 # ============================================================================
 # Test 2: Deploy Multi-Replica SQL Server
 # ============================================================================
-log_step "Test 2: Deploy Multi-Replica SQL Server (${REPLICA_COUNT} replicas)"
+log_step "Test 2: Deploy Multi-Instance SQL Server (${REPLICA_COUNT} instances)"
 
 cat <<EOF | kubectl apply -n "${TEST_NAMESPACE}" -f -
 apiVersion: mssql.microsoft.com/v1alpha1
@@ -65,7 +65,7 @@ spec:
   version: "2022"
   edition: Developer
   instance:
-    replicas: ${REPLICA_COUNT}
+    count: ${REPLICA_COUNT}
     resources:
       limits:
         cpu: "1"
@@ -91,7 +91,7 @@ spec:
 EOF
 
 if resource_exists "sqlserver/${SQLSERVER_NAME}" "${TEST_NAMESPACE}"; then
-    log_success "SQLServer resource created with ${REPLICA_COUNT} replicas"
+    log_success "SQLServer resource created with ${REPLICA_COUNT} instances"
 else
     log_error "Failed to create SQLServer resource"
 fi
@@ -185,7 +185,7 @@ spec:
     name: ${SQLSERVER_NAME}
   availabilityGroup:
     name: TestAvailabilityGroup
-    replicas: ${REPLICA_COUNT}
+    instanceCount: ${REPLICA_COUNT}
     primaryConfig:
       availabilityMode: SynchronousCommit
       failoverMode: External
@@ -231,9 +231,9 @@ AG_AGNAME=$(kubectl get sqlserverag "${AG_NAME}" -n "${TEST_NAMESPACE}" \
     -o jsonpath='{.spec.availabilityGroup.name}')
 assert_equals "TestAvailabilityGroup" "${AG_AGNAME}" "AG name should match"
 
-AG_REPLICAS=$(kubectl get sqlserverag "${AG_NAME}" -n "${TEST_NAMESPACE}" \
-    -o jsonpath='{.spec.availabilityGroup.replicas}')
-assert_equals "${REPLICA_COUNT}" "${AG_REPLICAS}" "AG replicas should be ${REPLICA_COUNT}"
+AG_INSTANCE_COUNT=$(kubectl get sqlserverag "${AG_NAME}" -n "${TEST_NAMESPACE}" \
+    -o jsonpath='{.spec.availabilityGroup.instanceCount}')
+assert_equals "${REPLICA_COUNT}" "${AG_INSTANCE_COUNT}" "AG instanceCount should be ${REPLICA_COUNT}"
 
 FAILOVER_MODE=$(kubectl get sqlserverag "${AG_NAME}" -n "${TEST_NAMESPACE}" \
     -o jsonpath='{.spec.availabilityGroup.primaryConfig.failoverMode}')
@@ -332,9 +332,9 @@ log_step "Test 12: Scale Down AG"
 NEW_REPLICA_COUNT=$((REPLICA_COUNT - 1))
 
 kubectl patch sqlserver "${SQLSERVER_NAME}" -n "${TEST_NAMESPACE}" \
-    --type merge -p "{\"spec\":{\"instance\":{\"replicas\":${NEW_REPLICA_COUNT}}}}"
+    --type merge -p "{\"spec\":{\"instance\":{\"count\":${NEW_REPLICA_COUNT}}}}"
 
-log_info "Scaled down to ${NEW_REPLICA_COUNT} replicas"
+log_info "Scaled down to ${NEW_REPLICA_COUNT} instances"
 
 # Wait for scale down
 sleep 30
@@ -343,9 +343,9 @@ CURRENT_REPLICAS=$(kubectl get statefulset "${SQLSERVER_NAME}" -n "${TEST_NAMESP
     -o jsonpath='{.spec.replicas}')
 assert_equals "${NEW_REPLICA_COUNT}" "${CURRENT_REPLICAS}" "StatefulSet should have ${NEW_REPLICA_COUNT} replicas after scale down"
 
-# Also update AG replicas
+# Also update AG instanceCount
 kubectl patch sqlserverag "${AG_NAME}" -n "${TEST_NAMESPACE}" \
-    --type merge -p "{\"spec\":{\"availabilityGroup\":{\"replicas\":${NEW_REPLICA_COUNT}}}}" 2>/dev/null || true
+    --type merge -p "{\"spec\":{\"availabilityGroup\":{\"instanceCount\":${NEW_REPLICA_COUNT}}}}" 2>/dev/null || true
 
 # ============================================================================
 # Test 13: Scale Up AG
@@ -353,9 +353,9 @@ kubectl patch sqlserverag "${AG_NAME}" -n "${TEST_NAMESPACE}" \
 log_step "Test 13: Scale Up AG"
 
 kubectl patch sqlserver "${SQLSERVER_NAME}" -n "${TEST_NAMESPACE}" \
-    --type merge -p "{\"spec\":{\"instance\":{\"replicas\":${REPLICA_COUNT}}}}"
+    --type merge -p "{\"spec\":{\"instance\":{\"count\":${REPLICA_COUNT}}}}"
 
-log_info "Scaled up to ${REPLICA_COUNT} replicas"
+log_info "Scaled up to ${REPLICA_COUNT} instances"
 
 # Wait for scale up
 sleep 60

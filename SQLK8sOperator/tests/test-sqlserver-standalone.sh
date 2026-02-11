@@ -63,7 +63,7 @@ spec:
   version: "2022"
   edition: Developer
   instance:
-    replicas: 1
+    count: 1
     resources:
       limits:
         cpu: "2"

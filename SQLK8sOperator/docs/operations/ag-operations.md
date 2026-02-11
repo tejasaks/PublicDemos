@@ -44,15 +44,15 @@ kubectl get sqlserverag production-ag -n mssql \
 ### Check Synchronization
 
 ```bash
-# Get synchronized replica count
-kubectl get sqlserverag production-ag -n mssql -o jsonpath='{.status.synchronizedReplicas}'
+# Get synchronized instance count
+kubectl get sqlserverag production-ag -n mssql -o jsonpath='{.status.synchronizedInstances}'
 
-# View all replica statuses
-kubectl get sqlserverag production-ag -n mssql -o jsonpath='{.status.replicas}' | jq
+# View all instance statuses
+kubectl get sqlserverag production-ag -n mssql -o jsonpath='{.status.instances}' | jq
 
-# One-liner replica summary
+# One-liner instance summary
 kubectl get sqlserverag production-ag -n mssql \
-  -o jsonpath='Replicas: {range .status.replicas[*]}{.name}={.role} ({.synchronizationState}), {end}{"\n"}'
+  -o jsonpath='Instances: {range .status.instances[*]}{.name}={.role} ({.synchronizationState}), {end}{"\n"}'
 ```
 
 ### View AG Phase
@@ -426,7 +426,7 @@ The listener exists but no primary replica is available.
 
 3. Check for healthy secondaries:
    ```bash
-   kubectl get sqlserverag production-ag -n mssql -o jsonpath='{.status.replicas}' | jq
+   kubectl get sqlserverag production-ag -n mssql -o jsonpath='{.status.instances}' | jq
    ```
 
 ### Reconciliation Failing
@@ -455,7 +455,7 @@ The listener exists but no primary replica is available.
 |-----------|---------|
 | List AGs | `kubectl get sqlserverag -n mssql` |
 | Get primary | `kubectl get sqlserverag <ag> -n mssql -o jsonpath='{.status.primaryReplica}'` |
-| Get sync count | `kubectl get sqlserverag <ag> -n mssql -o jsonpath='{.status.synchronizedReplicas}'` |
+| Get sync count | `kubectl get sqlserverag <ag> -n mssql -o jsonpath='{.status.synchronizedInstances}'` |
 | Failover to replica | `kubectl annotate sqlserverag <ag> -n mssql mssql.microsoft.com/failover-to=<pod>` |
 | Get listener VIP | `kubectl get sqlserverag <ag> -n mssql -o jsonpath='{.status.listener.vip}'` |
 | Listener maintenance on | `kubectl annotate sqlserverag <ag> -n mssql mssql.microsoft.com/listener-maintenance=true` |

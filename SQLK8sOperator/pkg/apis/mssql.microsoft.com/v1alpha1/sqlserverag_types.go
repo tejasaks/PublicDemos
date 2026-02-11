@@ -116,26 +116,27 @@ type AvailabilityGroupConfig struct {
 	// +kubebuilder:validation:MaxLength=128
 	Name string `json:"name"`
 
-	// Replicas is the number of AG replicas (typically 2-5)
+	// InstanceCount is the number of SQL Server instances participating in the AG (typically 2-5)
+	// Note: These are independent instances, not replicas. Each has its own identity and storage.
 	// +kubebuilder:validation:Minimum=2
 	// +kubebuilder:validation:Maximum=9
 	// +kubebuilder:default=3
-	Replicas int32 `json:"replicas,omitempty"`
+	InstanceCount int32 `json:"instanceCount,omitempty"`
 
 	// HealthCheckCredentials defines the SQL login credentials for AG health monitoring
-	// This is the default for all replicas; individual replicas can override
+	// This is the default for all instances; individual instances can override
 	HealthCheckCredentials HealthCheckCredentialsSpec `json:"healthCheckCredentials"`
 
-	// ReplicaCredentials allows per-replica credential overrides
-	// Key is the replica index (0, 1, 2, etc.)
+	// InstanceCredentials allows per-instance credential overrides
+	// Key is the instance index (0, 1, 2, etc.)
 	// +optional
-	ReplicaCredentials map[string]HealthCheckCredentialsSpec `json:"replicaCredentials,omitempty"`
+	InstanceCredentials map[string]HealthCheckCredentialsSpec `json:"instanceCredentials,omitempty"`
 
-	// PrimaryConfig defines the primary replica configuration
-	PrimaryConfig ReplicaConfig `json:"primaryConfig"`
+	// PrimaryConfig defines the primary instance configuration
+	PrimaryConfig InstanceConfig `json:"primaryConfig"`
 
-	// SecondaryConfig defines the secondary replicas configuration
-	SecondaryConfig ReplicaConfig `json:"secondaryConfig"`
+	// SecondaryConfig defines the secondary instances configuration
+	SecondaryConfig InstanceConfig `json:"secondaryConfig"`
 
 	// SeedingMode defines how databases are seeded to secondaries
 	// +kubebuilder:validation:Enum=Automatic;Manual
@@ -170,8 +171,10 @@ type AvailabilityGroupConfig struct {
 	ExternalWriteLeaseValidity string `json:"externalWriteLeaseValidity,omitempty"`
 }
 
-// ReplicaConfig defines configuration for primary or secondary replicas
-type ReplicaConfig struct {
+// InstanceConfig defines configuration for primary or secondary instances in an AG
+// Note: SQL Server documentation refers to these as "availability replicas" internally,
+// but they are independent SQL Server instances, not identical copies.
+type InstanceConfig struct {
 	// AvailabilityMode defines the synchronization mode
 	// +kubebuilder:validation:Enum=SynchronousCommit;AsynchronousCommit
 	// +kubebuilder:default=SynchronousCommit
@@ -182,7 +185,7 @@ type ReplicaConfig struct {
 	// +kubebuilder:default=External
 	FailoverMode string `json:"failoverMode,omitempty"`
 
-	// ReadableSecondary defines read access to secondary replicas
+	// ReadableSecondary defines read access to secondary instances
 	// +kubebuilder:validation:Enum=No;ReadOnly;All
 	// +kubebuilder:default=ReadOnly
 	ReadableSecondary string `json:"readableSecondary,omitempty"`
@@ -285,16 +288,16 @@ type SQLServerAGStatus struct {
 	// PrimaryReplica is the name of the current primary replica pod
 	PrimaryReplica string `json:"primaryReplica,omitempty"`
 
-	// SynchronizedReplicas is the count of synchronized replicas
-	SynchronizedReplicas int32 `json:"synchronizedReplicas,omitempty"`
+	// SynchronizedInstances is the count of synchronized instances
+	SynchronizedInstances int32 `json:"synchronizedInstances,omitempty"`
 
 	// HealthyDatabases lists databases that are healthy in the AG
 	// +optional
 	HealthyDatabases []string `json:"healthyDatabases,omitempty"`
 
-	// Replicas contains status of each AG replica
+	// Instances contains status of each AG instance
 	// +optional
-	Replicas []AGReplicaStatus `json:"replicas,omitempty"`
+	Instances []AGInstanceStatus `json:"instances,omitempty"`
 
 	// Listener contains the status of the AG Listener Service
 	// +optional
@@ -352,9 +355,11 @@ type AGListenerStatus struct {
 	Message string `json:"message,omitempty"`
 }
 
-// AGReplicaStatus represents the status of an AG replica
-type AGReplicaStatus struct {
-	// Name is the replica name (pod name)
+// AGInstanceStatus represents the status of an AG instance
+// Note: SQL Server documentation refers to these as "availability replicas", but
+// they are independent SQL Server instances with unique identities.
+type AGInstanceStatus struct {
+	// Name is the instance name (pod name)
 	Name string `json:"name"`
 
 	// Role is the current role (PRIMARY, SECONDARY, RESOLVING)
@@ -385,10 +390,10 @@ type AGReplicaStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=mssqlag
 // +kubebuilder:printcolumn:name="AG-Name",type="string",JSONPath=".spec.availabilityGroup.name"
-// +kubebuilder:printcolumn:name="Replicas",type="integer",JSONPath=".spec.availabilityGroup.replicas"
+// +kubebuilder:printcolumn:name="Instances",type="integer",JSONPath=".spec.availabilityGroup.instanceCount"
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Primary",type="string",JSONPath=".status.primaryReplica"
-// +kubebuilder:printcolumn:name="Synced",type="integer",JSONPath=".status.synchronizedReplicas"
+// +kubebuilder:printcolumn:name="Synced",type="integer",JSONPath=".status.synchronizedInstances"
 // +kubebuilder:printcolumn:name="Listener",type="string",JSONPath=".status.listener.phase",priority=1
 // +kubebuilder:printcolumn:name="VIP",type="string",JSONPath=".status.listener.vip",priority=1
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
@@ -416,11 +421,11 @@ func init() {
 }
 
 // CalculateRequiredSynchronizedSecondaries returns the recommended value
-// based on the number of sync-commit replicas (ported from mssql-server-ha)
-func CalculateRequiredSynchronizedSecondaries(numReplicas int32) int32 {
-	// Formula: (n-1)/2 where n is the number of sync-commit replicas
-	if numReplicas <= 1 {
+// based on the number of sync-commit instances (ported from mssql-server-ha)
+func CalculateRequiredSynchronizedSecondaries(instanceCount int32) int32 {
+	// Formula: (n-1)/2 where n is the number of sync-commit instances
+	if instanceCount <= 1 {
 		return 0
 	}
-	return (numReplicas - 1) / 2
+	return (instanceCount - 1) / 2
 }

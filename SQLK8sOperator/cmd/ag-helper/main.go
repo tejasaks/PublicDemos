@@ -102,7 +102,7 @@ const (
 	Disconnected ConnectedState = "DISCONNECTED"
 )
 
-// AGState represents the complete state of the AG from this replica's perspective
+// AGState represents the complete state of the AG from this instance's perspective
 type AGState struct {
 	AGName           string          `json:"agName"`
 	LocalReplicaName string          `json:"localReplicaName"`
@@ -110,15 +110,17 @@ type AGState struct {
 	SyncState        SyncState       `json:"syncState"`
 	IsLocalPrimary   bool            `json:"isLocalPrimary"`
 	SequenceNumber   int64           `json:"sequenceNumber"`
-	Replicas         []ReplicaState  `json:"replicas"`
+	Instances        []InstanceState `json:"instances"`
 	Databases        []DatabaseState `json:"databases"`
 	LastUpdated      time.Time       `json:"lastUpdated"`
 	Health           string          `json:"health"`
 	mu               sync.RWMutex
 }
 
-// ReplicaState represents the state of an AG replica
-type ReplicaState struct {
+// InstanceState represents the state of a SQL Server instance in an AG
+// Note: SQL Server documentation refers to these as "availability replicas", hence
+// the 'ReplicaName' field which maps to SQL Server's replica_server_name column.
+type InstanceState struct {
 	ReplicaName          string         `json:"replicaName"`
 	Role                 AGRole         `json:"role"`
 	AvailabilityMode     string         `json:"availabilityMode"`
@@ -222,12 +224,12 @@ func (h *AGHelper) GetAGStateByName(ctx context.Context, agName string) (*AGStat
 	}
 	state.SequenceNumber = seqNum
 
-	// Get all replicas for this AG
-	replicas, err := h.getReplicaStatesForAG(ctx, agName)
+	// Get all instances for this AG
+	instances, err := h.getInstanceStatesForAG(ctx, agName)
 	if err != nil {
-		klog.V(4).Infof("Failed to get replica states for AG %s: %v", agName, err)
+		klog.V(4).Infof("Failed to get instance states for AG %s: %v", agName, err)
 	}
-	state.Replicas = replicas
+	state.Instances = instances
 
 	// Get database states for this AG
 	databases, err := h.getDatabaseStatesForAG(ctx, agName)
@@ -239,11 +241,11 @@ func (h *AGHelper) GetAGStateByName(ctx context.Context, agName string) (*AGStat
 	// Determine overall health
 	state.Health = h.determineHealth(state)
 
-	// Find local replica name
-	for _, r := range state.Replicas {
-		if r.IsLocal {
-			state.LocalReplicaName = r.ReplicaName
-			state.SyncState = r.SynchronizationState
+	// Find local instance name
+	for _, inst := range state.Instances {
+		if inst.IsLocal {
+			state.LocalReplicaName = inst.ReplicaName
+			state.SyncState = inst.SynchronizationState
 			break
 		}
 	}
@@ -295,8 +297,8 @@ func (h *AGHelper) getSequenceNumberForAG(ctx context.Context, agName string) (i
 	return 0, nil
 }
 
-// getReplicaStatesForAG retrieves states of all replicas for a specific AG
-func (h *AGHelper) getReplicaStatesForAG(ctx context.Context, agName string) ([]ReplicaState, error) {
+// getInstanceStatesForAG retrieves states of all instances for a specific AG
+func (h *AGHelper) getInstanceStatesForAG(ctx context.Context, agName string) ([]InstanceState, error) {
 	query := `
 		SELECT 
 			ar.replica_server_name,
@@ -321,39 +323,39 @@ func (h *AGHelper) getReplicaStatesForAG(ctx context.Context, agName string) ([]
 	}
 	defer rows.Close()
 
-	var replicas []ReplicaState
+	var instances []InstanceState
 	for rows.Next() {
-		var r ReplicaState
+		var inst InstanceState
 		var syncHealth, connState string
 		err := rows.Scan(
-			&r.ReplicaName,
-			&r.Role,
-			&r.AvailabilityMode,
-			&r.FailoverMode,
+			&inst.ReplicaName,
+			&inst.Role,
+			&inst.AvailabilityMode,
+			&inst.FailoverMode,
 			&syncHealth,
 			&connState,
-			&r.IsLocal,
-			&r.SequenceNumber,
+			&inst.IsLocal,
+			&inst.SequenceNumber,
 		)
 		if err != nil {
-			klog.Warningf("Failed to scan replica row: %v", err)
+			klog.Warningf("Failed to scan instance row: %v", err)
 			continue
 		}
 
 		switch syncHealth {
 		case "HEALTHY":
-			r.SynchronizationState = StateSynchronized
+			inst.SynchronizationState = StateSynchronized
 		case "PARTIALLY_HEALTHY":
-			r.SynchronizationState = StateSynchronizing
+			inst.SynchronizationState = StateSynchronizing
 		default:
-			r.SynchronizationState = StateNotSynchronizing
+			inst.SynchronizationState = StateNotSynchronizing
 		}
 
-		r.ConnectedState = ConnectedState(connState)
-		replicas = append(replicas, r)
+		inst.ConnectedState = ConnectedState(connState)
+		instances = append(instances, inst)
 	}
 
-	return replicas, nil
+	return instances, nil
 }
 
 // getDatabaseStatesForAG retrieves states of all databases for a specific AG
@@ -475,12 +477,12 @@ func (h *AGHelper) GetAGState(ctx context.Context) (*AGState, error) {
 	}
 	state.SequenceNumber = seqNum
 
-	// Get all replicas
-	replicas, err := h.getReplicaStates(ctx)
+	// Get all instances
+	instances, err := h.getInstanceStates(ctx)
 	if err != nil {
-		klog.Warningf("Failed to get replica states: %v", err)
+		klog.Warningf("Failed to get instance states: %v", err)
 	}
-	state.Replicas = replicas
+	state.Instances = instances
 
 	// Get database states
 	databases, err := h.getDatabaseStates(ctx)
@@ -492,11 +494,11 @@ func (h *AGHelper) GetAGState(ctx context.Context) (*AGState, error) {
 	// Determine overall health
 	state.Health = h.determineHealth(state)
 
-	// Find local replica name
-	for _, r := range state.Replicas {
-		if r.IsLocal {
-			state.LocalReplicaName = r.ReplicaName
-			state.SyncState = r.SynchronizationState
+	// Find local instance name
+	for _, inst := range state.Instances {
+		if inst.IsLocal {
+			state.LocalReplicaName = inst.ReplicaName
+			state.SyncState = inst.SynchronizationState
 			break
 		}
 	}
@@ -504,8 +506,8 @@ func (h *AGHelper) GetAGState(ctx context.Context) (*AGState, error) {
 	return state, nil
 }
 
-// getReplicaStates retrieves states of all replicas
-func (h *AGHelper) getReplicaStates(ctx context.Context) ([]ReplicaState, error) {
+// getInstanceStates retrieves states of all instances
+func (h *AGHelper) getInstanceStates(ctx context.Context) ([]InstanceState, error) {
 	query := `
 		SELECT 
 			ar.replica_server_name,
@@ -530,40 +532,40 @@ func (h *AGHelper) getReplicaStates(ctx context.Context) ([]ReplicaState, error)
 	}
 	defer rows.Close()
 
-	var replicas []ReplicaState
+	var instances []InstanceState
 	for rows.Next() {
-		var r ReplicaState
+		var inst InstanceState
 		var syncHealth, connState string
 		err := rows.Scan(
-			&r.ReplicaName,
-			&r.Role,
-			&r.AvailabilityMode,
-			&r.FailoverMode,
+			&inst.ReplicaName,
+			&inst.Role,
+			&inst.AvailabilityMode,
+			&inst.FailoverMode,
 			&syncHealth,
 			&connState,
-			&r.IsLocal,
-			&r.SequenceNumber,
+			&inst.IsLocal,
+			&inst.SequenceNumber,
 		)
 		if err != nil {
-			klog.Warningf("Failed to scan replica row: %v", err)
+			klog.Warningf("Failed to scan instance row: %v", err)
 			continue
 		}
 
 		// Map sync health to sync state
 		switch syncHealth {
 		case "HEALTHY":
-			r.SynchronizationState = StateSynchronized
+			inst.SynchronizationState = StateSynchronized
 		case "PARTIALLY_HEALTHY":
-			r.SynchronizationState = StateSynchronizing
+			inst.SynchronizationState = StateSynchronizing
 		default:
-			r.SynchronizationState = StateNotSynchronizing
+			inst.SynchronizationState = StateNotSynchronizing
 		}
 
-		r.ConnectedState = ConnectedState(connState)
-		replicas = append(replicas, r)
+		inst.ConnectedState = ConnectedState(connState)
+		instances = append(instances, inst)
 	}
 
-	return replicas, nil
+	return instances, nil
 }
 
 // getDatabaseStates retrieves states of all databases in the AG
@@ -622,15 +624,15 @@ func (h *AGHelper) determineHealth(state *AGState) string {
 	// This allows the sidecar to run before AG is configured
 	if state.Role == RoleNotAvailable {
 		// Check if AG actually exists in sys.availability_groups
-		if len(state.Replicas) == 0 {
+		if len(state.Instances) == 0 {
 			return "Waiting" // AG not configured yet - this is OK during initial setup
 		}
-		return "Critical" // AG exists but this replica can't see it - real problem
+		return "Critical" // AG exists but this instance can't see it - real problem
 	}
 
 	syncedCount := 0
-	for _, r := range state.Replicas {
-		if r.SynchronizationState == StateSynchronized {
+	for _, inst := range state.Instances {
+		if inst.SynchronizationState == StateSynchronized {
 			syncedCount++
 		}
 	}
@@ -642,7 +644,7 @@ func (h *AGHelper) determineHealth(state *AGState) string {
 		}
 		return "Critical"
 	}
-	if syncedCount < len(state.Replicas) {
+	if syncedCount < len(state.Instances) {
 		return "Warning"
 	}
 	return "Healthy"

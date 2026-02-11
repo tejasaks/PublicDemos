@@ -122,7 +122,7 @@ func (r *SQLServerAGReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 │  6. Update Status                                               │
 │     └─ Phase: Pending → Creating → Running → Failed            │
 │     └─ Conditions: Ready, Available, Progressing               │
-│     └─ ReadyReplicas, CurrentReplicas                          │
+│     └─ ReadyInstances, CurrentInstances                          │
 │                                                                 │
 │  7. Return Result                                               │
 │     └─ Success: return ctrl.Result{}, nil                      │
@@ -207,8 +207,8 @@ type SQLServerStatus struct {
     Conditions []metav1.Condition `json:"conditions,omitempty"`
     
     // Replica counts
-    ReadyReplicas   int32 `json:"readyReplicas"`
-    CurrentReplicas int32 `json:"currentReplicas"`
+    ReadyInstances   int32 `json:"readyInstances"`
+    CurrentInstances int32 `json:"currentInstances"`
     
     // Version tracking
     CurrentVersion string `json:"currentVersion,omitempty"`

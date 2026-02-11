@@ -112,7 +112,7 @@ spec:
   
   # Instance configuration
   instance:
-    replicas: 1-9
+    count: 1-9
     image: string (optional, uses default if omitted)
     imagePullPolicy: Always | Never | IfNotPresent
     imagePullSecrets: []
@@ -168,8 +168,8 @@ status:
       reason: string
       message: string
       lastTransitionTime: timestamp
-  readyReplicas: int
-  currentReplicas: int
+  readyInstances: int
+  currentInstances: int
   currentVersion: string
   targetVersion: string
 ```
@@ -190,7 +190,7 @@ spec:
   # AG configuration
   availabilityGroup:
     name: string (SQL identifier, max 128 chars)
-    replicas: 2-9
+    instanceCount: 2-9
     primaryConfig:
       availabilityMode: SynchronousCommit | AsynchronousCommit
       failoverMode: External
@@ -268,14 +268,14 @@ spec:
 # Chosen: Nested (better organization)
 spec:
   instance:
-    replicas: 3
+    count: 3
     storage:
       data:
         size: 10Gi
 
 # Alternative: Flat (rejected - harder to read)
 spec:
-  instanceReplicas: 3
+  instanceCount: 3
   instanceStorageDataSize: 10Gi
 ```
 
@@ -359,8 +359,8 @@ func (v *SQLServerValidator) validate(sqlserver *SQLServer) *ValidationResult {
     result.Merge(validation.ValidatePasswordComplexity(password))
     
     // Business logic
-    if sqlserver.Spec.Instance.Replicas > 1 && !sqlserver.Spec.Instance.Config.HADREnabled {
-        result.AddError("HADR must be enabled for replicas > 1")
+    if sqlserver.Spec.Instance.Count > 1 && !sqlserver.Spec.Instance.Config.HADREnabled {
+        result.AddError("HADR must be enabled for instances > 1")
     }
 }
 ```

@@ -2,7 +2,7 @@
 
 [← Back to Samples](../README.md) | [Step 1: Deploy Replicas](ag-step1-replicas.yaml) | [Step 3: AG Config](ag-step3-ag-config.yaml)
 
-This guide walks through the T-SQL commands to create an Availability Group after deploying SQL Server replicas.
+This guide walks through the T-SQL commands to create an Availability Group after deploying SQL Server instances.
 
 ## Prerequisites
 

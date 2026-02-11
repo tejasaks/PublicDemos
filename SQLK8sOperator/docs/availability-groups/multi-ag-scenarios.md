@@ -81,7 +81,7 @@ spec:
   version: \"2025\"
   edition: Enterprise  # Enterprise required for multiple AGs
   instance:
-    replicas: 3
+    count: 3
     config:
       hadrEnabled: true
   credentials:
@@ -104,7 +104,7 @@ spec:
     name: multiag
   availabilityGroup:
     name: ProductionAG
-    replicas: 3
+    instanceCount: 3
     primaryConfig:
       availabilityMode: SynchronousCommit
       failoverMode: External
@@ -137,7 +137,7 @@ spec:
     name: multiag  # Same SQL Server!
   availabilityGroup:
     name: AnalyticsAG
-    replicas: 3
+    instanceCount: 3
     primaryConfig:
       availabilityMode: AsynchronousCommit  # Async for analytics
       failoverMode: Manual

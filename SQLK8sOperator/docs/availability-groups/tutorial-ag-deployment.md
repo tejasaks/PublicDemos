@@ -76,7 +76,7 @@ kubectl apply -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQL
 
 This creates:
 - `mssql` namespace
-- SQL Server with 3 replicas (hadrEnabled=true)
+- SQL Server with 3 instances (hadrEnabled=true)
 - SA password secret
 - AG Helper credentials secret
 
@@ -122,7 +122,7 @@ sql-ag-2   LoadBalancer   10.96.100.13    <pending>       1433:31436/TCP   3m
 
 ## Step 3: Configure the Availability Group (T-SQL)
 
-With all 3 replicas running, configure the Availability Group using T-SQL. This step creates certificates, endpoints, and the AG itself inside SQL Server.
+With all 3 instances running, configure the Availability Group using T-SQL. This step creates certificates, endpoints, and the AG itself inside SQL Server.
 
 > **Complete T-SQL Reference:** For detailed explanations of each command, see [ag-step2-setup-ag.md](../../samples/ag-step2-setup-ag.md).
 
@@ -573,7 +573,7 @@ kubectl describe sqlserverag production-ag -n mssql
 
 Look for:
 - `Status.Primary Replica: sql-ag-0`
-- `Status.Synchronized Replicas: 3`
+- `Status.Synchronized Instances: 3`
 - `Status.Listener.Phase: Ready`
 - `Status.Listener.VIP: 10.96.100.50`
 

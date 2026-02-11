@@ -36,7 +36,7 @@ spec:
   
   availabilityGroup:
     name: ProductionAG  # Must match T-SQL AG name
-    replicas: 3
+    instanceCount: 3
     
     primaryConfig:
       availabilityMode: SynchronousCommit
@@ -104,7 +104,7 @@ spec:
   
   availabilityGroup:
     name: ReportingAG  # Must match T-SQL AG name
-    replicas: 3
+    instanceCount: 3
     
     primaryConfig:
       availabilityMode: SynchronousCommit
@@ -168,7 +168,7 @@ spec:
   
   availabilityGroup:
     name: DisasterRecoveryAG  # Must match T-SQL AG name
-    replicas: 2  # Primary + 1 DR replica
+    instanceCount: 2  # Primary + 1 DR instance
     
     primaryConfig:
       availabilityMode: SynchronousCommit

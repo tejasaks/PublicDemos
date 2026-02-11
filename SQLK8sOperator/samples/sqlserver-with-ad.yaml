@@ -23,7 +23,7 @@ spec:
   edition: Enterprise  # AD auth works with all editions
   
   instance:
-    replicas: 1
+    count: 1
     
     resources:
       limits:

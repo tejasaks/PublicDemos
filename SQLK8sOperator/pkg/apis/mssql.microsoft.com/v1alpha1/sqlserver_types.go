@@ -61,11 +61,13 @@ type SQLServerSpec struct {
 
 // InstanceSpec defines the SQL Server instance configuration
 type InstanceSpec struct {
-	// Replicas is the number of SQL Server instances (1 for standalone, 2+ for AG)
+	// Count is the number of SQL Server instances to deploy (1 for standalone, 2+ for AG)
+	// Note: These are independent instances, not identical replicas. For AGs, each instance
+	// has its own identity, storage, and can serve different roles (primary/secondary).
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=9
 	// +kubebuilder:default=1
-	Replicas int32 `json:"replicas,omitempty"`
+	Count int32 `json:"count,omitempty"`
 
 	// Image is the SQL Server container image
 	// +optional

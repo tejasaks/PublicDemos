@@ -218,7 +218,7 @@ ApplicationIntent=ReadOnly;
 - ❌ Development/testing (overhead)
 - ❌ Single-region, non-critical apps
 - ❌ Very small databases (simpler backup/restore)
-- ❌ Limited resources (3 replicas needed)
+- ❌ Limited resources (3 instances needed)
 
 ## Next Steps
 

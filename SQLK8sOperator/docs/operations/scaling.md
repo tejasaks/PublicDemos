@@ -7,7 +7,7 @@ Guide to scaling SQL Server deployments horizontally and vertically.
 ## Table of Contents
 
 - [Scaling Types](#scaling-types)
-- [Horizontal Scaling (Replicas)](#horizontal-scaling-replicas)
+- [Horizontal Scaling (Instances)](#horizontal-scaling-instances)
 - [Vertical Scaling (Resources)](#vertical-scaling-resources)
 - [Storage Scaling](#storage-scaling)
 - [Read Scale-Out](#read-scale-out)
@@ -17,15 +17,15 @@ Guide to scaling SQL Server deployments horizontally and vertically.
 
 | Type | What Changes | Use Case |
 |------|--------------|----------|
-| Horizontal | Number of replicas | HA, read scale-out |
+| Horizontal | Number of instances | HA, read scale-out |
 | Vertical | CPU, memory per pod | Performance |
 | Storage | Disk size | Data growth |
 
-## Horizontal Scaling (Replicas)
+## Horizontal Scaling (Instances)
 
-### Adding Replicas
+### Adding Instances
 
-Increase replica count for HA or read scale-out.
+Increase instance count for HA or read scale-out.
 
 **Step 1: Edit your SQLServer manifest**
 
@@ -33,7 +33,7 @@ Increase replica count for HA or read scale-out.
 nano sqlserver-prod.yaml
 ```
 
-Update the replica count:
+Update the instance count:
 
 ```yaml
 apiVersion: mssql.microsoft.com/v1alpha1
@@ -42,7 +42,7 @@ metadata:
   name: sql-prod
 spec:
   instance:
-    replicas: 5  # Increased from 3
+    count: 5  # Increased from 3
 ```
 
 **Step 2: Apply the change**
@@ -80,9 +80,9 @@ sql-prod-4   0/1     Pending   0          5s
 1. StatefulSet creates new pods (sql-prod-3, sql-prod-4)
 2. PVCs created for new pods
 3. SQL Server initialized on new pods
-4. If AG exists, new replicas must be joined manually
+4. If AG exists, new instances must be joined manually
 
-### Join New Replicas to AG
+### Join New Instances to AG
 
 If you have an Availability Group, you must manually join new replicas.
 
@@ -128,13 +128,13 @@ Command(s) completed successfully.
 kubectl exec -it sql-prod-0 -n mssql -c ag-helper -- curl -s localhost:8080/state | jq
 ```
 
-### Removing Replicas
+### Removing Instances
 
-Reduce replica count by first removing replicas from the AG.
+Reduce instance count by first removing instances from the AG.
 
-**Step 1: Remove replica from AG (if applicable)**
+**Step 1: Remove instance from AG (if applicable)**
 
-> ⚠️ **Warning**: Remove replicas from AG first before scaling down.
+> ⚠️ **Warning**: Remove instances from AG first before scaling down.
 
 ```bash
 kubectl exec -it sql-prod-0 -n mssql -- \
@@ -147,7 +147,7 @@ kubectl exec -it sql-prod-0 -n mssql -- \
 Command(s) completed successfully.
 ```
 
-**Step 2: Update the manifest with reduced replica count**
+**Step 2: Update the manifest with reduced instance count**
 
 ```bash
 nano sqlserver-prod.yaml
@@ -156,7 +156,7 @@ nano sqlserver-prod.yaml
 ```yaml
 spec:
   instance:
-    replicas: 3  # Reduced from 5
+    count: 3  # Reduced from 5
 ```
 
 **Step 3: Apply the change**
@@ -188,7 +188,7 @@ kubectl get pods -n mssql
 |----------|-----|-----|-------|
 | Standalone | 1 | 1 | No HA |
 | With AG | 3 | 9 | SQL Server AG limit |
-| Read-only | 0 | ∞ | Snapshot replicas |
+| Read-only | 0 | ∞ | Snapshot instances |
 
 ## Vertical Scaling (Resources)
 
@@ -460,17 +460,17 @@ Request 3 → sql-prod-1
 Request 4 → sql-prod-2
 ```
 
-### Dedicated Read Replicas
+### Dedicated Read Instances
 
-Add replicas specifically for read workloads:
+Add instances specifically for read workloads:
 
 ```yaml
 spec:
   instance:
-    replicas: 5  # 1 primary + 2 sync + 2 async read
+    count: 5  # 1 primary + 2 sync + 2 async read
 ```
 
-Configure async replicas for read-only:
+Configure async instances for read-only:
 
 ```sql
 -- On primary

@@ -210,8 +210,8 @@ func (r *SQLServerAGReconciler) updateAGStatus(ctx context.Context, ag *mssqlv1a
 		return err
 	}
 
-	// Build replica status
-	replicas := make([]mssqlv1alpha1.AGReplicaStatus, 0, len(podList.Items))
+	// Build instance status
+	instances := make([]mssqlv1alpha1.AGInstanceStatus, 0, len(podList.Items))
 	var primaryReplica string
 	synchronizedCount := int32(0)
 
@@ -244,7 +244,7 @@ func (r *SQLServerAGReconciler) updateAGStatus(ctx context.Context, ag *mssqlv1a
 			synchronizedCount++
 		}
 
-		replicas = append(replicas, mssqlv1alpha1.AGReplicaStatus{
+		instances = append(instances, mssqlv1alpha1.AGInstanceStatus{
 			Name:                 pod.Name,
 			Role:                 role,
 			SynchronizationState: syncState,
@@ -259,15 +259,15 @@ func (r *SQLServerAGReconciler) updateAGStatus(ctx context.Context, ag *mssqlv1a
 	if synchronizedCount >= 1 && primaryReplica != "" {
 		phase = "Synchronized"
 	}
-	if synchronizedCount == ag.Spec.AvailabilityGroup.Replicas && primaryReplica != "" {
+	if synchronizedCount == ag.Spec.AvailabilityGroup.InstanceCount && primaryReplica != "" {
 		phase = "Synchronized"
 	}
 
 	// Update status
 	ag.Status.Phase = phase
 	ag.Status.PrimaryReplica = primaryReplica
-	ag.Status.SynchronizedReplicas = synchronizedCount
-	ag.Status.Replicas = replicas
+	ag.Status.SynchronizedInstances = synchronizedCount
+	ag.Status.Instances = instances
 	ag.Status.ObservedGeneration = ag.Generation
 
 	// Set Ready condition
@@ -281,7 +281,7 @@ func (r *SQLServerAGReconciler) updateAGStatus(ctx context.Context, ag *mssqlv1a
 	if phase == "Synchronized" {
 		condition.Status = metav1.ConditionTrue
 		condition.Reason = "Synchronized"
-		condition.Message = fmt.Sprintf("AG is synchronized with %d replicas", synchronizedCount)
+		condition.Message = fmt.Sprintf("AG is synchronized with %d instances", synchronizedCount)
 	}
 	meta.SetStatusCondition(&ag.Status.Conditions, condition)
 
@@ -364,13 +364,13 @@ func (r *SQLServerAGReconciler) checkAndHandleManualFailover(ctx context.Context
 	r.Recorder.Event(ag, corev1.EventTypeNormal, "ManualFailoverRequested",
 		fmt.Sprintf("Manual failover requested to replica: %s", targetReplica))
 
-	// Validate target replica exists
+	// Validate target instance exists
 	validTarget := false
-	for _, replica := range ag.Status.Replicas {
-		if replica.Name == targetReplica {
+	for _, instance := range ag.Status.Instances {
+		if instance.Name == targetReplica {
 			validTarget = true
-			if replica.Role == "PRIMARY" {
-				logger.Info("Target replica is already primary, clearing annotations")
+			if instance.Role == "PRIMARY" {
+				logger.Info("Target instance is already primary, clearing annotations")
 				delete(ag.Annotations, AnnotationFailoverTarget)
 				delete(ag.Annotations, AnnotationFailoverRequested)
 				delete(ag.Annotations, AnnotationFailoverStatus)
@@ -477,7 +477,7 @@ func (r *SQLServerAGReconciler) checkAndHandleFailover(ctx context.Context, ag *
 	}
 
 	if len(candidates) == 0 {
-		logger.Info("No healthy replicas available for failover evaluation")
+		logger.Info("No healthy instances available for failover evaluation")
 		delete(r.noPrimaryDetected, agKey)
 		return nil, nil
 	}

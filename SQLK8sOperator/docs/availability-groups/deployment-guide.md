@@ -85,7 +85,7 @@ kubectl apply -f samples/ag-step1-replicas.yaml
 
 This creates:
 - `mssql` namespace
-- SQLServer CR with 3 replicas (`sql-ag-0`, `sql-ag-1`, `sql-ag-2`)
+- SQLServer CR with 3 instances (`sql-ag-0`, `sql-ag-1`, `sql-ag-2`)
 - SA password secret
 - AG Helper credentials secret (for use in Step 3)
 
@@ -119,7 +119,7 @@ spec:
   version: "2025"
   edition: Developer
   instance:
-    replicas: 3
+    count: 3
     resources:
       limits:
         cpu: "4"

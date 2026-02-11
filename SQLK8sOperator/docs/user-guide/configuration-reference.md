@@ -32,7 +32,7 @@ spec:
   
   # Instance configuration
   instance:
-    replicas: 1-9                    # Default: 1
+    count: 1-9                    # Default: 1
     image: string                    # Optional, uses default based on version
     imagePullPolicy: Always | Never | IfNotPresent  # Default: IfNotPresent
     imagePullSecrets:                # Optional
@@ -149,8 +149,8 @@ status:
       reason: string
       message: string
       lastTransitionTime: timestamp
-  readyReplicas: int
-  currentReplicas: int
+  readyInstances: int
+  currentInstances: int
   currentVersion: string
   targetVersion: string
 ```
@@ -176,7 +176,7 @@ spec:
   # Availability Group configuration
   availabilityGroup:
     name: string                     # AG name in SQL Server (max 128 chars)
-    replicas: 2-9                    # Default: 3
+    instanceCount: 2-9                    # Default: 3
     
     primaryConfig:
       availabilityMode: SynchronousCommit | AsynchronousCommit
@@ -334,7 +334,7 @@ spec:
   version: "2025"
   edition: Standard
   instance:
-    replicas: 1
+    count: 1
     resources:
       limits:
         cpu: "4"

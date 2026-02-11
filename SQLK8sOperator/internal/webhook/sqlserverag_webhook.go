@@ -95,13 +95,13 @@ func (v *SQLServerAGValidator) validate(ctx context.Context, ag *mssqlv1alpha1.S
 		}
 	}
 
-	// 4. Validate replica count
-	replicas := ag.Spec.AvailabilityGroup.Replicas
-	if replicas < 2 {
-		result.AddError("Availability Group requires at least 2 replicas (has %d)", replicas)
+	// 4. Validate instance count
+	instanceCount := ag.Spec.AvailabilityGroup.InstanceCount
+	if instanceCount < 2 {
+		result.AddError("Availability Group requires at least 2 instances (has %d)", instanceCount)
 	}
-	if replicas > 9 {
-		result.AddError("Availability Group supports maximum 9 replicas (has %d)", replicas)
+	if instanceCount > 9 {
+		result.AddError("Availability Group supports maximum 9 instances (has %d)", instanceCount)
 	}
 
 	// 5. Validate endpoint port
@@ -240,37 +240,37 @@ func (v *SQLServerAGValidator) validateHealthCheckCredentials(ctx context.Contex
 		}
 	}
 
-	// Validate replicaCredentials if provided
-	for replicaIndex, replicaCreds := range ag.Spec.AvailabilityGroup.ReplicaCredentials {
-		prefix := "replicaCredentials[" + replicaIndex + "]"
+	// Validate instanceCredentials if provided
+	for instanceIndex, instanceCreds := range ag.Spec.AvailabilityGroup.InstanceCredentials {
+		prefix := "instanceCredentials[" + instanceIndex + "]"
 
-		replicaHasSecretRef := replicaCreds.SecretRef != nil
-		replicaHasPlainText := replicaCreds.Username != "" || replicaCreds.Password != ""
+		instanceHasSecretRef := instanceCreds.SecretRef != nil
+		instanceHasPlainText := instanceCreds.Username != "" || instanceCreds.Password != ""
 
-		if replicaHasSecretRef && replicaHasPlainText {
+		if instanceHasSecretRef && instanceHasPlainText {
 			result.AddError("%s: specify either secretRef OR plain text, not both", prefix)
 		}
 
-		if replicaHasSecretRef {
-			if replicaCreds.SecretRef.UsernameSecret.Name == "" {
+		if instanceHasSecretRef {
+			if instanceCreds.SecretRef.UsernameSecret.Name == "" {
 				result.AddError("%s.secretRef.usernameSecret.name is required", prefix)
 			}
-			if replicaCreds.SecretRef.UsernameSecret.Key == "" {
+			if instanceCreds.SecretRef.UsernameSecret.Key == "" {
 				result.AddError("%s.secretRef.usernameSecret.key is required", prefix)
 			}
-			if replicaCreds.SecretRef.PasswordSecret.Name == "" {
+			if instanceCreds.SecretRef.PasswordSecret.Name == "" {
 				result.AddError("%s.secretRef.passwordSecret.name is required", prefix)
 			}
-			if replicaCreds.SecretRef.PasswordSecret.Key == "" {
+			if instanceCreds.SecretRef.PasswordSecret.Key == "" {
 				result.AddError("%s.secretRef.passwordSecret.key is required", prefix)
 			}
 		}
 
-		if replicaHasPlainText {
+		if instanceHasPlainText {
 			result.AddWarning("%s: using plain text credentials is NOT RECOMMENDED", prefix)
 
-			if replicaCreds.Username != "" {
-				usernameResult := validation.ValidateSQLIdentifier(replicaCreds.Username, prefix+".username")
+			if instanceCreds.Username != "" {
+				usernameResult := validation.ValidateSQLIdentifier(instanceCreds.Username, prefix+".username")
 				result.Merge(usernameResult)
 			}
 		}

@@ -19,7 +19,7 @@ spec:
   edition: Developer
   
   instance:
-    replicas: 1
+    count: 1
     
     # SQL Server 2025 image
     # The operator will use mcr.microsoft.com/mssql/server:2025-latest by default

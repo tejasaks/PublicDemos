@@ -222,7 +222,7 @@ spec:
   edition: Enterprise
   
   instance:
-    replicas: 3
+    count: 3
     config:
       hadrEnabled: true
       agentEnabled: true

@@ -2,7 +2,7 @@
 # SQL Server Kubernetes Operator - Combined Installation Manifest
 # =============================================================================
 # Version: v1.0.0
-# Generated: 2026-01-30T19:10:57Z
+# Generated: 2026-02-11T11:14:29Z
 #
 # This file contains all resources needed to install the SQL Server Kubernetes
 # Operator. It is auto-generated from the deploy/ directory.
@@ -234,8 +234,54 @@ spec:
                 type: object
               dockerImage:
                 default: mcr.microsoft.com/mssql/server:2022-latest
-                description: DockerImage is the default SQL Server image
+                description: 'DockerImage is the default SQL Server image (DEPRECATED:
+                  use images.sql2022 instead)'
                 type: string
+              images:
+                description: |-
+                  Images contains container image configuration for all components
+                  This is the recommended way to configure custom images for SQL Server,
+                  AG Helper, and SQL Exporter across the entire cluster
+                properties:
+                  agHelper:
+                    default: mssql-ag-helper:latest
+                    description: AGHelper is the container image for the AG Helper
+                      sidecar
+                    type: string
+                  defaultPullPolicy:
+                    default: IfNotPresent
+                    description: DefaultPullPolicy is the default image pull policy
+                      for all containers
+                    enum:
+                    - Always
+                    - IfNotPresent
+                    - Never
+                    type: string
+                  imagePullSecrets:
+                    description: |-
+                      ImagePullSecrets is a list of secret names for authenticating to private registries
+                      These secrets will be added to all pods created by the operator
+                    items:
+                      type: string
+                    type: array
+                  sql2019:
+                    default: mcr.microsoft.com/mssql/server:2019-latest
+                    description: SQL2019 is the container image for SQL Server 2019
+                    type: string
+                  sql2022:
+                    default: mcr.microsoft.com/mssql/server:2022-latest
+                    description: SQL2022 is the container image for SQL Server 2022
+                    type: string
+                  sql2025:
+                    default: mcr.microsoft.com/mssql/server:2025-latest
+                    description: SQL2025 is the container image for SQL Server 2025
+                    type: string
+                  sqlExporter:
+                    default: burningalchemist/sql_exporter:latest
+                    description: SQLExporter is the container image for the SQL Exporter
+                      (Prometheus metrics)
+                    type: string
+                type: object
               kubernetes:
                 description: Kubernetes contains Kubernetes-specific settings
                 properties:
@@ -361,7 +407,8 @@ spec:
                 type: string
               sidecarImage:
                 default: mssql-ag-helper:latest
-                description: SidecarImage is the default AG helper sidecar image
+                description: 'SidecarImage is the default AG helper sidecar image
+                  (DEPRECATED: use images.agHelper instead)'
                 type: string
               timeouts:
                 description: Timeouts contains various timeout configurations
@@ -538,8 +585,8 @@ spec:
     - jsonPath: .spec.availabilityGroup.name
       name: AG-Name
       type: string
-    - jsonPath: .spec.availabilityGroup.replicas
-      name: Replicas
+    - jsonPath: .spec.availabilityGroup.instanceCount
+      name: Instances
       type: integer
     - jsonPath: .status.phase
       name: Phase
@@ -547,9 +594,17 @@ spec:
     - jsonPath: .status.primaryReplica
       name: Primary
       type: string
-    - jsonPath: .status.synchronizedReplicas
+    - jsonPath: .status.synchronizedInstances
       name: Synced
       type: integer
+    - jsonPath: .status.listener.phase
+      name: Listener
+      priority: 1
+      type: string
+    - jsonPath: .status.listener.vip
+      name: VIP
+      priority: 1
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -583,10 +638,11 @@ spec:
                 description: AvailabilityGroup contains the AG configuration
                 properties:
                   automaticFailover:
-                    default: true
+                    default: false
                     description: |-
                       AutomaticFailover enables controller-driven automatic failover when primary is lost
-                      When enabled, the controller will detect primary failure and promote a secondary
+                      When false (default), the operator only monitors AG health; failover requires manual intervention
+                      When true, the controller will detect primary failure and promote a secondary automatically
                     type: boolean
                   clusterType:
                     default: External
@@ -631,7 +687,7 @@ spec:
                   healthCheckCredentials:
                     description: |-
                       HealthCheckCredentials defines the SQL login credentials for AG health monitoring
-                      This is the default for all replicas; individual replicas can override
+                      This is the default for all instances; individual instances can override
                     properties:
                       password:
                         description: |-
@@ -681,45 +737,16 @@ spec:
                           Use secretRef instead for production deployments
                         type: string
                     type: object
-                  name:
-                    description: Name is the name of the Availability Group
-                    maxLength: 128
-                    minLength: 1
-                    type: string
-                  primaryConfig:
-                    description: PrimaryConfig defines the primary replica configuration
-                    properties:
-                      availabilityMode:
-                        default: SynchronousCommit
-                        description: AvailabilityMode defines the synchronization
-                          mode
-                        enum:
-                        - SynchronousCommit
-                        - AsynchronousCommit
-                        type: string
-                      failoverMode:
-                        default: External
-                        description: FailoverMode is always External for Kubernetes-managed
-                          AG
-                        enum:
-                        - External
-                        type: string
-                      readableSecondary:
-                        default: ReadOnly
-                        description: ReadableSecondary defines read access to secondary
-                          replicas
-                        enum:
-                        - "No"
-                        - ReadOnly
-                        - All
-                        type: string
-                      sessionTimeout:
-                        default: 10
-                        description: SessionTimeout in seconds
-                        format: int32
-                        type: integer
-                    type: object
-                  replicaCredentials:
+                  instanceCount:
+                    default: 3
+                    description: |-
+                      InstanceCount is the number of SQL Server instances participating in the AG (typically 2-5)
+                      Note: These are independent instances, not replicas. Each has its own identity and storage.
+                    format: int32
+                    maximum: 9
+                    minimum: 2
+                    type: integer
+                  instanceCredentials:
                     additionalProperties:
                       description: |-
                         HealthCheckCredentialsSpec defines credentials for AG Helper health monitoring
@@ -775,19 +802,18 @@ spec:
                           type: string
                       type: object
                     description: |-
-                      ReplicaCredentials allows per-replica credential overrides
-                      Key is the replica index (0, 1, 2, etc.)
+                      InstanceCredentials allows per-instance credential overrides
+                      Key is the instance index (0, 1, 2, etc.)
                     type: object
-                  replicas:
-                    default: 3
-                    description: Replicas is the number of AG replicas (typically
-                      2-5)
-                    format: int32
-                    maximum: 9
-                    minimum: 2
-                    type: integer
-                  secondaryConfig:
-                    description: SecondaryConfig defines the secondary replicas configuration
+                  name:
+                    description: |-
+                      Name is the name of the Availability Group (required)
+                      Each SQLServerAG resource monitors exactly one AG
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                  primaryConfig:
+                    description: PrimaryConfig defines the primary instance configuration
                     properties:
                       availabilityMode:
                         default: SynchronousCommit
@@ -807,7 +833,40 @@ spec:
                       readableSecondary:
                         default: ReadOnly
                         description: ReadableSecondary defines read access to secondary
-                          replicas
+                          instances
+                        enum:
+                        - "No"
+                        - ReadOnly
+                        - All
+                        type: string
+                      sessionTimeout:
+                        default: 10
+                        description: SessionTimeout in seconds
+                        format: int32
+                        type: integer
+                    type: object
+                  secondaryConfig:
+                    description: SecondaryConfig defines the secondary instances configuration
+                    properties:
+                      availabilityMode:
+                        default: SynchronousCommit
+                        description: AvailabilityMode defines the synchronization
+                          mode
+                        enum:
+                        - SynchronousCommit
+                        - AsynchronousCommit
+                        type: string
+                      failoverMode:
+                        default: External
+                        description: FailoverMode is always External for Kubernetes-managed
+                          AG
+                        enum:
+                        - External
+                        type: string
+                      readableSecondary:
+                        default: ReadOnly
+                        description: ReadableSecondary defines read access to secondary
+                          instances
                         enum:
                         - "No"
                         - ReadOnly
@@ -837,54 +896,6 @@ spec:
                   for auditing and searchability
                 maxLength: 1024
                 type: string
-              endpoints:
-                description: Endpoints defines service endpoints for the AG
-                properties:
-                  primary:
-                    description: Primary endpoint configuration
-                    properties:
-                      annotations:
-                        additionalProperties:
-                          type: string
-                        description: Annotations for the service
-                        type: object
-                      port:
-                        default: 1433
-                        description: Port is the SQL Server port
-                        format: int32
-                        type: integer
-                      type:
-                        default: ClusterIP
-                        description: Type is the Kubernetes service type
-                        enum:
-                        - ClusterIP
-                        - NodePort
-                        - LoadBalancer
-                        type: string
-                    type: object
-                  secondary:
-                    description: Secondary endpoint configuration (for read-only routing)
-                    properties:
-                      annotations:
-                        additionalProperties:
-                          type: string
-                        description: Annotations for the service
-                        type: object
-                      port:
-                        default: 1433
-                        description: Port is the SQL Server port
-                        format: int32
-                        type: integer
-                      type:
-                        default: ClusterIP
-                        description: Type is the Kubernetes service type
-                        enum:
-                        - ClusterIP
-                        - NodePort
-                        - LoadBalancer
-                        type: string
-                    type: object
-                type: object
               failover:
                 description: Failover contains failover behavior configuration
                 properties:
@@ -913,6 +924,62 @@ spec:
                       required before committing on the primary (-1 for auto-calculate)
                     format: int32
                     type: integer
+                type: object
+              listener:
+                description: |-
+                  Listener configures the Kubernetes Service for AG listener access
+                  This creates a VIP (ClusterIP) that the operator manages to point to the primary replica
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Annotations to add to the listener Service
+                      Useful for cloud-provider specific configurations (e.g., internal load balancers)
+                    type: object
+                  clusterIP:
+                    description: |-
+                      ClusterIP allows specifying a static ClusterIP for the listener Service
+                      If not specified, Kubernetes assigns one automatically
+                      Useful when you need a predictable VIP for DNS or connection strings
+                    type: string
+                  loadBalancerIP:
+                    description: |-
+                      LoadBalancerIP allows specifying a static IP for LoadBalancer type services
+                      This is cloud-provider specific and may not be supported by all providers
+                    type: string
+                  name:
+                    description: |-
+                      Name is the name of the AG Listener (as configured in SQL Server via T-SQL)
+                      This should match the listener name used in CREATE AVAILABILITY GROUP LISTENER
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                  port:
+                    default: 1433
+                    description: |-
+                      Port is the TCP port the listener accepts connections on
+                      This is the port clients use to connect and must match the port in T-SQL listener config
+                      Default is 1433, but can be any valid port for security/multi-instance scenarios
+                    format: int32
+                    maximum: 65535
+                    minimum: 1
+                    type: integer
+                  serviceType:
+                    default: ClusterIP
+                    description: |-
+                      ServiceType specifies the type of Kubernetes Service to create
+                      ClusterIP: Internal cluster access only (default)
+                      LoadBalancer: External access via cloud load balancer
+                      NodePort: External access via node ports (not recommended for production)
+                    enum:
+                    - ClusterIP
+                    - LoadBalancer
+                    - NodePort
+                    type: string
+                required:
+                - name
                 type: object
               sidecar:
                 description: Sidecar contains configuration for the AG helper sidecar
@@ -1064,31 +1131,13 @@ spec:
                 items:
                   type: string
                 type: array
-              lastFailoverTime:
-                description: LastFailoverTime is when the last failover occurred
-                format: date-time
-                type: string
-              observedGeneration:
-                description: ObservedGeneration is the most recent generation observed
-                format: int64
-                type: integer
-              phase:
-                description: Phase represents the current AG lifecycle phase
-                enum:
-                - Pending
-                - Creating
-                - Synchronized
-                - Degraded
-                - Failed
-                type: string
-              primaryReplica:
-                description: PrimaryReplica is the name of the current primary replica
-                  pod
-                type: string
-              replicas:
-                description: Replicas contains status of each AG replica
+              instances:
+                description: Instances contains status of each AG instance
                 items:
-                  description: AGReplicaStatus represents the status of an AG replica
+                  description: |-
+                    AGInstanceStatus represents the status of an AG instance
+                    Note: SQL Server documentation refers to these as "availability replicas", but
+                    they are independent SQL Server instances with unique identities.
                   properties:
                     availabilityMode:
                       description: AvailabilityMode of this replica
@@ -1108,7 +1157,7 @@ spec:
                       description: IsLocal indicates if this is the local replica
                       type: boolean
                     name:
-                      description: Name is the replica name (pod name)
+                      description: Name is the instance name (pod name)
                       type: string
                     role:
                       description: Role is the current role (PRIMARY, SECONDARY, RESOLVING)
@@ -1131,8 +1180,81 @@ spec:
                   - role
                   type: object
                 type: array
-              synchronizedReplicas:
-                description: SynchronizedReplicas is the count of synchronized replicas
+              lastFailoverTime:
+                description: LastFailoverTime is when the last failover occurred
+                format: date-time
+                type: string
+              listener:
+                description: Listener contains the status of the AG Listener Service
+                properties:
+                  currentPrimary:
+                    description: CurrentPrimary is the pod currently receiving traffic
+                      via the listener
+                    type: string
+                  endpointCount:
+                    description: |-
+                      EndpointCount is the number of endpoints in the Endpoints object
+                      Should be 1 when listener is Ready (pointing to primary)
+                    format: int32
+                    type: integer
+                  externalIP:
+                    description: ExternalIP is the external IP when using LoadBalancer
+                      service type
+                    type: string
+                  lastCheckedTime:
+                    description: LastCheckedTime is when the listener was last verified
+                    format: date-time
+                    type: string
+                  lastTransitionTime:
+                    description: LastTransitionTime is when the phase last changed
+                    format: date-time
+                    type: string
+                  message:
+                    description: Message provides human-readable details about the
+                      current phase
+                    type: string
+                  phase:
+                    description: Phase represents the current listener lifecycle phase
+                    enum:
+                    - Pending
+                    - WaitingForListener
+                    - Ready
+                    - Degraded
+                    - Maintenance
+                    type: string
+                  port:
+                    description: Port is the listener port
+                    format: int32
+                    type: integer
+                  serviceName:
+                    description: ServiceName is the name of the Kubernetes Service
+                      created for the listener
+                    type: string
+                  vip:
+                    description: |-
+                      VIP is the ClusterIP assigned to the listener Service
+                      This is the IP that should be used in T-SQL: CREATE AVAILABILITY GROUP LISTENER
+                    type: string
+                type: object
+              observedGeneration:
+                description: ObservedGeneration is the most recent generation observed
+                format: int64
+                type: integer
+              phase:
+                description: Phase represents the current AG lifecycle phase
+                enum:
+                - Pending
+                - Creating
+                - Synchronized
+                - Degraded
+                - Failed
+                type: string
+              primaryReplica:
+                description: PrimaryReplica is the name of the current primary replica
+                  pod
+                type: string
+              synchronizedInstances:
+                description: SynchronizedInstances is the count of synchronized instances
                 format: int32
                 type: integer
             type: object
@@ -2260,6 +2382,16 @@ spec:
                           type: integer
                         type: array
                     type: object
+                  count:
+                    default: 1
+                    description: |-
+                      Count is the number of SQL Server instances to deploy (1 for standalone, 2+ for AG)
+                      Note: These are independent instances, not identical replicas. For AGs, each instance
+                      has its own identity, storage, and can serve different roles (primary/secondary).
+                    format: int32
+                    maximum: 9
+                    minimum: 1
+                    type: integer
                   image:
                     description: Image is the SQL Server container image
                     type: string
@@ -2294,14 +2426,6 @@ spec:
                   priorityClassName:
                     description: PriorityClassName for the pods
                     type: string
-                  replicas:
-                    default: 1
-                    description: Replicas is the number of SQL Server instances (1
-                      for standalone, 2+ for AG)
-                    format: int32
-                    maximum: 9
-                    minimum: 1
-                    type: integer
                   resources:
                     description: Resources defines CPU/memory resources for the SQL
                       Server container
@@ -3252,8 +3376,8 @@ webhooks:
 # spec:
 #   secretName: mssql-operator-webhook-tls
 #   dnsNames:
-#     - mssql-operator-webhook.mssql-operator.svc
-#     - mssql-operator-webhook.mssql-operator.svc.cluster.local
+#     - mssql-operator-webhook.mssql-system.svc
+#     - mssql-operator-webhook.mssql-system.svc.cluster.local
 #   issuerRef:
 #     name: mssql-operator-selfsigned-issuer
 #     kind: Issuer
@@ -3271,11 +3395,11 @@ webhooks:
 # Option 2: Manual TLS certificate secret
 # Generate with:
 #   openssl req -x509 -newkey rsa:4096 -keyout tls.key -out tls.crt -days 365 -nodes \
-#     -subj "/CN=mssql-operator-webhook.mssql-operator.svc" \
-#     -addext "subjectAltName=DNS:mssql-operator-webhook.mssql-operator.svc,DNS:mssql-operator-webhook.mssql-operator.svc.cluster.local"
+#     -subj "/CN=mssql-operator-webhook.mssql-system.svc" \
+#     -addext "subjectAltName=DNS:mssql-operator-webhook.mssql-system.svc,DNS:mssql-operator-webhook.mssql-system.svc.cluster.local"
 #
 # Then create secret:
-#   kubectl create secret tls mssql-operator-webhook-tls --cert=tls.crt --key=tls.key -n mssql-operator
+#   kubectl create secret tls mssql-operator-webhook-tls --cert=tls.crt --key=tls.key -n mssql-system
 #
 # And update the caBundle in ValidatingWebhookConfiguration with base64 of tls.crt:
 #   cat tls.crt | base64 | tr -d '\n'
@@ -3331,7 +3455,7 @@ spec:
           # For local development, use: mssql-operator:dev
           # For production, use: mcr.microsoft.com/mssql/operator:latest
           image: ghcr.io/tejasaks/mssql-operator:v1.0.0
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Never
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

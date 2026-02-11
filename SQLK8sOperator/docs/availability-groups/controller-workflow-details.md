@@ -699,7 +699,7 @@ When sql-ag-0 pod comes back online:
 2. AG Helper queries SQL Server → Sees AG exists, this replica is SECONDARY
 3. AG Helper reports: {role: "SECONDARY", health: "Synchronizing"}
 
-Controller sees 3 replicas again:
+Controller sees 3 instances again:
 - sql-ag-0: SECONDARY (was primary, now rejoined as secondary)
 - sql-ag-1: PRIMARY (current primary)
 - sql-ag-2: SECONDARY
@@ -713,7 +713,7 @@ After databases synchronize (few seconds to minutes depending on data):
 │ LSN: 12400  │    │ LSN: 12400  │    │ LSN: 12400  │
 └─────────────┘    └─────────────┘    └─────────────┘
 
-Full AG recovered with 3 synchronized replicas!
+Full AG recovered with 3 synchronized instances!
 ```
 
 ---

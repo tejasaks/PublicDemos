@@ -1,19 +1,19 @@
 # ============================================================================
-# STEP 1: Deploy SQL Server Replicas for Availability Group
+# STEP 1: Deploy SQL Server Instances for Availability Group
 # ============================================================================
 #
-# This manifest deploys SQL Server replicas configured for Availability Groups.
+# This manifest deploys SQL Server instances configured for Availability Groups.
 # The AG Helper sidecar will be deployed in Step 3 (ag-step3-ag-config.yaml).
 #
 # DEPLOYMENT ORDER:
-#   1. Apply this file (creates SQL replicas with hadrEnabled=true)
+#   1. Apply this file (creates SQL instances with hadrEnabled=true)
 #   2. Wait for all pods to be Running and Ready
 #   3. Execute T-SQL steps from ag-step2-setup-ag.md
 #   4. Apply ag-step3-ag-config.yaml (deploys AG Helper + K8s services)
 #
 # WHAT THIS CREATES:
 #   - mssql namespace
-#   - SQLServer CR with 3 replicas (hadrEnabled=true)
+#   - SQLServer CR with 3 instances (hadrEnabled=true)
 #   - SA password secret
 #   - AG Helper credentials secret (for use in Step 3)
 #
@@ -58,21 +58,21 @@ stringData:
   password: "AGHelper@Passw0rd!"  # CHANGE THIS! Must match T-SQL in Step 2
 
 ---
-# SQL Server with 3 replicas for AG
+# SQL Server with 3 instances for AG
 apiVersion: mssql.microsoft.com/v1alpha1
 kind: SQLServer
 metadata:
   name: sql-ag
   namespace: mssql
 spec:
-  description: "SQL Server AG cluster - Step 1: Replicas only"
+  description: "SQL Server AG cluster - Step 1: Instances only"
   
   version: "2025"
   edition: Developer  # Use Enterprise for production
   
   instance:
-    # 3 replicas for the AG
-    replicas: 3
+    # 3 instances for the AG
+    count: 3
     
     resources:
       limits:
