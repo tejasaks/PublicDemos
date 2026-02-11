@@ -3287,6 +3287,10 @@ spec:
 # -----------------------------------------------------------------------------
 # Validating Webhook Configuration for MSSQL Operator
 # Provides admission control for SQLServer and SQLServerAG resources
+#
+# TLS certificates are generated automatically by the operator at startup.
+# The operator creates a self-signed CA and server certificate, writes them
+# to an emptyDir volume, and patches the caBundle field below with the CA cert.
 ---
 apiVersion: v1
 kind: Service
@@ -3324,7 +3328,7 @@ webhooks:
         name: mssql-operator-webhook
         namespace: mssql-system
         path: /validate-mssql-microsoft-com-v1alpha1-sqlserver
-      # CA bundle will be injected by cert-manager or manually
+      # caBundle is automatically patched by the operator at startup
       caBundle: ""
     rules:
       - apiGroups: ["mssql.microsoft.com"]
@@ -3350,6 +3354,7 @@ webhooks:
         name: mssql-operator-webhook
         namespace: mssql-system
         path: /validate-mssql-microsoft-com-v1alpha1-sqlserverag
+      # caBundle is automatically patched by the operator at startup
       caBundle: ""
     rules:
       - apiGroups: ["mssql.microsoft.com"]
@@ -3363,60 +3368,11 @@ webhooks:
           operator: NotIn
           values: ["kube-system", "kube-public", "kube-node-lease"]
 
----
-# Certificate for webhook TLS
-# Option 1: Use cert-manager (recommended for production)
-# Uncomment the following if cert-manager is installed
-#
-# apiVersion: cert-manager.io/v1
-# kind: Certificate
-# metadata:
-#   name: mssql-operator-webhook-cert
-#   namespace: mssql-system
-# spec:
-#   secretName: mssql-operator-webhook-tls
-#   dnsNames:
-#     - mssql-operator-webhook.mssql-system.svc
-#     - mssql-operator-webhook.mssql-system.svc.cluster.local
-#   issuerRef:
-#     name: mssql-operator-selfsigned-issuer
-#     kind: Issuer
-#
-# ---
-# apiVersion: cert-manager.io/v1
-# kind: Issuer
-# metadata:
-#   name: mssql-operator-selfsigned-issuer
-#   namespace: mssql-system
-# spec:
-#   selfSigned: {}
-
----
-# Option 2: Manual TLS certificate secret
-# Generate with:
-#   openssl req -x509 -newkey rsa:4096 -keyout tls.key -out tls.crt -days 365 -nodes \
-#     -subj "/CN=mssql-operator-webhook.mssql-system.svc" \
-#     -addext "subjectAltName=DNS:mssql-operator-webhook.mssql-system.svc,DNS:mssql-operator-webhook.mssql-system.svc.cluster.local"
-#
-# Then create secret:
-#   kubectl create secret tls mssql-operator-webhook-tls --cert=tls.crt --key=tls.key -n mssql-system
-#
-# And update the caBundle in ValidatingWebhookConfiguration with base64 of tls.crt:
-#   cat tls.crt | base64 | tr -d '\n'
-
-apiVersion: v1
-kind: Secret
-metadata:
-  name: mssql-operator-webhook-tls
-  namespace: mssql-system
-  labels:
-    app: mssql-operator
-type: kubernetes.io/tls
-data:
-  # Placeholder - replace with actual certificate data
-  # tls.crt and tls.key should be base64 encoded
-  tls.crt: ""
-  tls.key: ""
+# Note: TLS certificates for the webhook are generated automatically by the operator
+# at startup using self-signed certificates. No cert-manager or manual certificate
+# setup is required. The operator generates a CA + server cert, writes them to an
+# emptyDir volume at /tmp/webhook-certs, and patches the ValidatingWebhookConfiguration
+# caBundle field above.
 
 # -----------------------------------------------------------------------------
 # Operator Deployment
@@ -3467,6 +3423,8 @@ spec:
               name: metrics
             - containerPort: 8081
               name: health
+            - containerPort: 9443
+              name: webhook
           livenessProbe:
             httpGet:
               path: /healthz
@@ -3501,6 +3459,12 @@ spec:
             # SQL Exporter image configuration
             - name: SQL_EXPORTER_IMAGE
               value: "burningalchemist/sql_exporter:latest"
+          volumeMounts:
+            - name: webhook-certs
+              mountPath: /tmp/webhook-certs
+      volumes:
+        - name: webhook-certs
+          emptyDir: {}
       terminationGracePeriodSeconds: 10
 
 

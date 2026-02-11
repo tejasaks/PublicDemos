@@ -43,6 +43,8 @@ spec:
               name: metrics
             - containerPort: 8081
               name: health
+            - containerPort: 9443
+              name: webhook
           livenessProbe:
             httpGet:
               path: /healthz
@@ -62,6 +64,9 @@ spec:
             requests:
               cpu: 100m
               memory: 128Mi
+          volumeMounts:
+            - name: webhook-certs
+              mountPath: /tmp/webhook-certs
           env:
             - name: OPERATOR_NAMESPACE
               valueFrom:
@@ -77,4 +82,7 @@ spec:
             # SQL Exporter image configuration
             - name: SQL_EXPORTER_IMAGE
               value: "burningalchemist/sql_exporter:latest"
+      volumes:
+        - name: webhook-certs
+          emptyDir: {}
       terminationGracePeriodSeconds: 10

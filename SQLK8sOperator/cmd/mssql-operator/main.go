@@ -8,6 +8,7 @@ See LICENSE file in the project root for full license information.
 package main
 
 import (
+	"context"
 	"flag"
 	"os"
 	"time"
@@ -19,12 +20,17 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	crwebhook "sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	sqlservercontroller "github.com/microsoft/mssql-operator/internal/controller/sqlserver"
 	agcontroller "github.com/microsoft/mssql-operator/internal/controller/sqlserverag"
+	webhookhandlers "github.com/microsoft/mssql-operator/internal/webhook"
+	webhookcerts "github.com/microsoft/mssql-operator/internal/webhook/certs"
 	mssqlv1alpha1 "github.com/microsoft/mssql-operator/pkg/apis/mssql.microsoft.com/v1alpha1"
 )
 
@@ -66,7 +72,56 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	// Determine operator namespace (for webhook cert DNS names)
+	operatorNamespace := os.Getenv("OPERATOR_NAMESPACE")
+	if operatorNamespace == "" {
+		operatorNamespace = "mssql-system"
+	}
+
+	// --- Webhook TLS Setup ---
+	webhookCertDir := "/tmp/webhook-certs"
+	webhookServiceName := "mssql-operator-webhook"
+	webhookConfigName := "mssql-operator-validating-webhook"
+
+	setupLog.Info("generating webhook TLS certificates",
+		"serviceName", webhookServiceName,
+		"namespace", operatorNamespace,
+		"certDir", webhookCertDir,
+	)
+
+	certs, err := webhookcerts.GenerateSelfSignedCerts(webhookServiceName, operatorNamespace)
+	if err != nil {
+		setupLog.Error(err, "unable to generate webhook TLS certificates")
+		os.Exit(1)
+	}
+
+	if err := webhookcerts.WriteCertsToDir(certs, webhookCertDir); err != nil {
+		setupLog.Error(err, "unable to write webhook TLS certificates")
+		os.Exit(1)
+	}
+	setupLog.Info("webhook TLS certificates generated successfully")
+
+	// Patch the ValidatingWebhookConfiguration with the CA bundle
+	cfg := ctrl.GetConfigOrDie()
+
+	directClient, err := client.New(cfg, client.Options{Scheme: scheme})
+	if err != nil {
+		setupLog.Error(err, "unable to create client for webhook CA bundle patching")
+		os.Exit(1)
+	}
+
+	if err := webhookcerts.PatchWebhookCABundle(context.Background(), directClient,
+		webhookConfigName, certs.CACert); err != nil {
+		// Don't exit - the webhook config might not be deployed yet
+		setupLog.Info("could not patch webhook CA bundle (webhook config may not be deployed yet)",
+			"error", err.Error())
+	} else {
+		setupLog.Info("webhook CA bundle patched successfully",
+			"webhookConfig", webhookConfigName)
+	}
+
+	// --- Manager Setup ---
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme: scheme,
 		Metrics: metricsserver.Options{
 			BindAddress: metricsAddr,
@@ -78,6 +133,11 @@ func main() {
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe.
 		LeaderElectionReleaseOnCancel: true,
+		// Webhook server serves admission webhooks on port 9443 with self-signed TLS certs
+		WebhookServer: crwebhook.NewServer(crwebhook.Options{
+			Port:    9443,
+			CertDir: webhookCertDir,
+		}),
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to create manager")
@@ -105,6 +165,29 @@ func main() {
 	}
 
 	// +kubebuilder:scaffold:builder
+
+	// --- Webhook Handler Registration ---
+	// Create a decoder for the admission webhooks
+	decoder := admission.NewDecoder(scheme)
+
+	sqlServerValidator := webhookhandlers.NewSQLServerValidator(mgr.GetClient(), nil)
+	if err := sqlServerValidator.InjectDecoder(decoder); err != nil {
+		setupLog.Error(err, "unable to inject decoder into SQLServer webhook")
+		os.Exit(1)
+	}
+
+	agValidator := webhookhandlers.NewSQLServerAGValidator(mgr.GetClient(), nil)
+	if err := agValidator.InjectDecoder(decoder); err != nil {
+		setupLog.Error(err, "unable to inject decoder into SQLServerAG webhook")
+		os.Exit(1)
+	}
+
+	hookServer := mgr.GetWebhookServer()
+	hookServer.Register("/validate-mssql-microsoft-com-v1alpha1-sqlserver",
+		&admission.Webhook{Handler: sqlServerValidator})
+	hookServer.Register("/validate-mssql-microsoft-com-v1alpha1-sqlserverag",
+		&admission.Webhook{Handler: agValidator})
+	setupLog.Info("webhook handlers registered")
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
