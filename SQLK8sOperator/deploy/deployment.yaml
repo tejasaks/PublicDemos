@@ -74,6 +74,20 @@ spec:
                   fieldPath: metadata.namespace
             - name: OPERATOR_NAME
               value: "mssql-operator"
+            # --- Webhook TLS Certificate Mode ---
+            # Controls how webhook TLS certificates are provisioned:
+            #   "self-signed" (default) - auto-generate at startup (no secret needed)
+            #   "manual"                - load from WEBHOOK_TLS_SECRET_NAME secret
+            #   "cert-manager"          - load from cert-manager-managed secret
+            - name: WEBHOOK_CERT_MODE
+              value: "self-signed"
+            # Name of the TLS secret for "manual" or "cert-manager" modes.
+            # For "manual": create with kubectl create secret tls ... --cert=tls.crt --key=tls.key
+            # Optionally include ca.crt for automatic caBundle patching.
+            # For "cert-manager": cert-manager populates this secret automatically.
+            # Ignored when WEBHOOK_CERT_MODE=self-signed.
+            # - name: WEBHOOK_TLS_SECRET_NAME
+            #   value: "mssql-operator-webhook-tls"
             # AG Helper sidecar image configuration
             - name: AG_HELPER_IMAGE
               value: "mssql-ag-helper:dev"

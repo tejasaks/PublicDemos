@@ -94,6 +94,10 @@ kubectl get pods -n mssql-system
 # mssql-operator-xxxxxxxxx-xxxxx   1/1     Running   0          30s
 ```
 
+### Webhook TLS Certificates
+
+The operator automatically generates self-signed TLS certificates for its admission webhooks at startup — no configuration required. For production environments that require enterprise-managed or cert-manager-issued certificates, see [Webhook Certificate Management](user-guide/validation-security.md#webhook-certificate-management).
+
 ### Configure Container Images (Optional)
 
 By default, the operator pulls SQL Server images from Microsoft Container Registry (MCR), which requires no authentication. For private registry or air-gapped deployments, see [Private Registry Deployment](user-guide/deployment-scenarios.md#private-registry-deployment).

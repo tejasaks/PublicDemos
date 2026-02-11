@@ -9,6 +9,7 @@ Complete reference for all configuration options in the MSSQL Kubernetes Operato
 - [SQLServer CRD](#sqlserver-crd)
 - [SQLServerAG CRD](#sqlserverag-crd)
 - [OperatorConfiguration CRD](#operatorconfiguration-crd)
+- [Operator Environment Variables](#operator-environment-variables)
 
 ## SQLServer CRD
 
@@ -301,6 +302,20 @@ spec:
       - acr-auth-secret
     defaultPullPolicy: Always
 ```
+
+## Operator Environment Variables
+
+The operator Deployment accepts the following environment variables to control behavior that is not part of the CRD specs.
+
+### Webhook Certificate Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WEBHOOK_CERT_MODE` | `self-signed` | How webhook TLS certificates are provisioned. Values: `self-signed`, `manual`, `cert-manager` |
+| `WEBHOOK_TLS_SECRET_NAME` | `mssql-operator-webhook-tls` | Name of the Kubernetes TLS secret used in `manual` and `cert-manager` modes |
+| `OPERATOR_NAMESPACE` | `mssql-system` | Namespace where the operator is deployed (used for secret lookups and webhook patching) |
+
+See [Webhook Certificate Management](validation-security.md#webhook-certificate-management) for detailed setup instructions for each mode.
 
 ## Common Patterns
 

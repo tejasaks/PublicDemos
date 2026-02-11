@@ -1,9 +1,27 @@
 # Validating Webhook Configuration for MSSQL Operator
 # Provides admission control for SQLServer and SQLServerAG resources
 #
-# TLS certificates are generated automatically by the operator at startup.
-# The operator creates a self-signed CA and server certificate, writes them
-# to an emptyDir volume, and patches the caBundle field below with the CA cert.
+# TLS Certificate Modes (set WEBHOOK_CERT_MODE env var in the Deployment):
+#
+#   "self-signed" (default):
+#     Generates a self-signed CA + server certificate at operator startup.
+#     The caBundle below is patched automatically. No external setup required.
+#
+#   "manual":
+#     Load certs from a pre-created TLS secret (WEBHOOK_TLS_SECRET_NAME).
+#     Create it with:
+#       kubectl create secret tls mssql-operator-webhook-tls \
+#         --cert=tls.crt --key=tls.key -n mssql-system
+#     Optionally add ca.crt for automatic caBundle patching:
+#       kubectl create secret generic mssql-operator-webhook-tls \
+#         --from-file=tls.crt --from-file=tls.key --from-file=ca.crt -n mssql-system
+#     To rotate: update the secret and restart the operator pod.
+#
+#   "cert-manager":
+#     Relies on cert-manager to populate the TLS secret and inject caBundle
+#     via the cert-manager.io/inject-ca-from annotation below. Uncomment
+#     the annotation and configure a Certificate + Issuer resource.
+#
 ---
 apiVersion: v1
 kind: Service
@@ -28,6 +46,9 @@ metadata:
   name: mssql-operator-validating-webhook
   labels:
     app: mssql-operator
+  # Uncomment for cert-manager mode to let cert-manager inject caBundle:
+  # annotations:
+  #   cert-manager.io/inject-ca-from: mssql-system/mssql-operator-webhook-cert
 webhooks:
   - name: validate.sqlserver.mssql.microsoft.com
     admissionReviewVersions: ["v1", "v1beta1"]
@@ -81,8 +102,28 @@ webhooks:
           operator: NotIn
           values: ["kube-system", "kube-public", "kube-node-lease"]
 
-# Note: TLS certificates for the webhook are generated automatically by the operator
-# at startup using self-signed certificates. No cert-manager or manual certificate
-# setup is required. The operator generates a CA + server cert, writes them to an
-# emptyDir volume at /tmp/webhook-certs, and patches the ValidatingWebhookConfiguration
-# caBundle field above.
+# For cert-manager mode, uncomment and configure the Certificate + Issuer:
+#
+# ---
+# apiVersion: cert-manager.io/v1
+# kind: Certificate
+# metadata:
+#   name: mssql-operator-webhook-cert
+#   namespace: mssql-system
+# spec:
+#   secretName: mssql-operator-webhook-tls
+#   dnsNames:
+#     - mssql-operator-webhook.mssql-system.svc
+#     - mssql-operator-webhook.mssql-system.svc.cluster.local
+#   issuerRef:
+#     name: mssql-operator-selfsigned-issuer
+#     kind: Issuer
+#
+# ---
+# apiVersion: cert-manager.io/v1
+# kind: Issuer
+# metadata:
+#   name: mssql-operator-selfsigned-issuer
+#   namespace: mssql-system
+# spec:
+#   selfSigned: {}

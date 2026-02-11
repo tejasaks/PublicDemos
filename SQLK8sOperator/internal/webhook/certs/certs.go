@@ -5,10 +5,21 @@ Licensed under the MIT License.
 See LICENSE file in the project root for full license information.
 */
 
-// Package certs provides self-signed TLS certificate generation for the
-// operator's admission webhook server. Certificates are generated at startup
-// and the CA bundle is patched into the ValidatingWebhookConfiguration so the
-// Kubernetes API server trusts the webhook endpoint.
+// Package certs provides TLS certificate management for the operator's admission
+// webhook server. It supports three certificate modes:
+//
+//   - self-signed (default): Generates a self-signed CA + server certificate at
+//     startup and patches the ValidatingWebhookConfiguration caBundle automatically.
+//
+//   - manual: Uses certificates from a pre-created Kubernetes TLS secret
+//     (e.g. "mssql-operator-webhook-tls"). If the secret contains a "ca.crt" key,
+//     the operator patches the caBundle automatically. Enterprises can rotate certs
+//     by updating the secret and restarting the operator (or using cert-manager).
+//
+//   - cert-manager: Like manual, but relies on cert-manager to populate the TLS
+//     secret and inject the CA bundle via the cert-manager.io/inject-ca-from
+//     annotation on the ValidatingWebhookConfiguration. The operator does not
+//     patch caBundle in this mode.
 package certs
 
 import (
@@ -26,9 +37,43 @@ import (
 	"time"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// CertMode defines how the webhook TLS certificates are provisioned.
+type CertMode string
+
+const (
+	// CertModeSelfSigned generates a self-signed CA + server cert at startup.
+	// The caBundle is patched into the ValidatingWebhookConfiguration automatically.
+	// This is the default mode suitable for development and quick-start scenarios.
+	CertModeSelfSigned CertMode = "self-signed"
+
+	// CertModeManual uses certificates from a pre-created Kubernetes TLS secret.
+	// The secret must contain "tls.crt" and "tls.key". If "ca.crt" is present,
+	// it will be used to patch the caBundle in the ValidatingWebhookConfiguration.
+	// Enterprises can rotate certs by updating the secret and restarting the operator.
+	CertModeManual CertMode = "manual"
+
+	// CertModeCertManager uses certificates provisioned by cert-manager.
+	// The TLS secret is created/rotated by cert-manager, and the caBundle is
+	// injected via the cert-manager.io/inject-ca-from annotation. The operator
+	// does not patch caBundle in this mode.
+	CertModeCertManager CertMode = "cert-manager"
+)
+
+// ParseCertMode parses a string into a CertMode, returning CertModeSelfSigned
+// for empty or unrecognized values.
+func ParseCertMode(s string) CertMode {
+	switch CertMode(s) {
+	case CertModeSelfSigned, CertModeManual, CertModeCertManager:
+		return CertMode(s)
+	default:
+		return CertModeSelfSigned
+	}
+}
 
 // CertificateArtifacts holds the generated TLS certificate artifacts.
 type CertificateArtifacts struct {
@@ -143,8 +188,9 @@ func WriteCertsToDir(artifacts *CertificateArtifacts, dir string) error {
 }
 
 // PatchWebhookCABundle patches the named ValidatingWebhookConfiguration with the
-// CA certificate bundle so the Kubernetes API server trusts the webhook's self-signed
-// certificate. This must be called after the webhook configuration is deployed.
+// CA certificate bundle so the Kubernetes API server trusts the webhook's TLS
+// certificate. This is called automatically in self-signed mode and in manual mode
+// (when ca.crt is present in the secret). It is not called in cert-manager mode.
 func PatchWebhookCABundle(ctx context.Context, c client.Client, webhookConfigName string, caCert []byte) error {
 	webhookConfig := &admissionregistrationv1.ValidatingWebhookConfiguration{}
 	if err := c.Get(ctx, types.NamespacedName{Name: webhookConfigName}, webhookConfig); err != nil {
@@ -161,4 +207,35 @@ func PatchWebhookCABundle(ctx context.Context, c client.Client, webhookConfigNam
 	}
 
 	return nil
+}
+
+// LoadCertsFromSecret reads TLS certificates from an existing Kubernetes secret.
+// The secret must contain "tls.crt" and "tls.key" entries. If "ca.crt" is also
+// present, it is returned as the CACert so the operator can patch the webhook
+// caBundle. This supports enterprise cert rotation: update the secret, then
+// restart the operator (or let controller-runtime's cert watcher detect changes).
+func LoadCertsFromSecret(ctx context.Context, c client.Client, secretName, namespace string) (*CertificateArtifacts, error) {
+	secret := &corev1.Secret{}
+	if err := c.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, secret); err != nil {
+		return nil, fmt.Errorf("getting TLS secret %q in namespace %q: %w", secretName, namespace, err)
+	}
+
+	serverCert, hasCert := secret.Data["tls.crt"]
+	serverKey, hasKey := secret.Data["tls.key"]
+
+	if !hasCert || len(serverCert) == 0 {
+		return nil, fmt.Errorf("TLS secret %q is missing or has empty 'tls.crt'", secretName)
+	}
+	if !hasKey || len(serverKey) == 0 {
+		return nil, fmt.Errorf("TLS secret %q is missing or has empty 'tls.key'", secretName)
+	}
+
+	// ca.crt is optional — if present, operator will use it to patch caBundle
+	caCert := secret.Data["ca.crt"]
+
+	return &CertificateArtifacts{
+		CACert:     caCert,
+		ServerCert: serverCert,
+		ServerKey:  serverKey,
+	}, nil
 }

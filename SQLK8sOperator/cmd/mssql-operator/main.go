@@ -79,45 +79,133 @@ func main() {
 	}
 
 	// --- Webhook TLS Setup ---
+	// WEBHOOK_CERT_MODE controls how TLS certificates are provisioned:
+	//   "self-signed" (default) - auto-generate CA + server cert at startup
+	//   "manual"                - use certs from a pre-created TLS secret
+	//   "cert-manager"          - use certs from a cert-manager-managed secret
+	//
+	// For "manual" and "cert-manager" modes:
+	//   WEBHOOK_TLS_SECRET_NAME (default: "mssql-operator-webhook-tls")
+	//
+	// For "manual" mode: if the secret contains "ca.crt", the operator patches
+	//   the caBundle automatically. Otherwise, manage caBundle externally.
+	//
+	// For "cert-manager" mode: caBundle is managed by cert-manager via the
+	//   cert-manager.io/inject-ca-from annotation on the webhook config.
+
 	webhookCertDir := "/tmp/webhook-certs"
 	webhookServiceName := "mssql-operator-webhook"
 	webhookConfigName := "mssql-operator-validating-webhook"
+	webhookTLSSecretName := os.Getenv("WEBHOOK_TLS_SECRET_NAME")
+	if webhookTLSSecretName == "" {
+		webhookTLSSecretName = "mssql-operator-webhook-tls"
+	}
 
-	setupLog.Info("generating webhook TLS certificates",
-		"serviceName", webhookServiceName,
+	certMode := webhookcerts.ParseCertMode(os.Getenv("WEBHOOK_CERT_MODE"))
+	setupLog.Info("webhook TLS certificate mode",
+		"mode", string(certMode),
 		"namespace", operatorNamespace,
-		"certDir", webhookCertDir,
 	)
 
-	certs, err := webhookcerts.GenerateSelfSignedCerts(webhookServiceName, operatorNamespace)
-	if err != nil {
-		setupLog.Error(err, "unable to generate webhook TLS certificates")
-		os.Exit(1)
-	}
-
-	if err := webhookcerts.WriteCertsToDir(certs, webhookCertDir); err != nil {
-		setupLog.Error(err, "unable to write webhook TLS certificates")
-		os.Exit(1)
-	}
-	setupLog.Info("webhook TLS certificates generated successfully")
-
-	// Patch the ValidatingWebhookConfiguration with the CA bundle
 	cfg := ctrl.GetConfigOrDie()
 
 	directClient, err := client.New(cfg, client.Options{Scheme: scheme})
 	if err != nil {
-		setupLog.Error(err, "unable to create client for webhook CA bundle patching")
+		setupLog.Error(err, "unable to create client for webhook setup")
 		os.Exit(1)
 	}
 
-	if err := webhookcerts.PatchWebhookCABundle(context.Background(), directClient,
-		webhookConfigName, certs.CACert); err != nil {
-		// Don't exit - the webhook config might not be deployed yet
-		setupLog.Info("could not patch webhook CA bundle (webhook config may not be deployed yet)",
-			"error", err.Error())
-	} else {
-		setupLog.Info("webhook CA bundle patched successfully",
-			"webhookConfig", webhookConfigName)
+	switch certMode {
+	case webhookcerts.CertModeSelfSigned:
+		// Generate self-signed CA + server certificate
+		setupLog.Info("generating self-signed webhook TLS certificates",
+			"serviceName", webhookServiceName,
+			"certDir", webhookCertDir,
+		)
+
+		certs, err := webhookcerts.GenerateSelfSignedCerts(webhookServiceName, operatorNamespace)
+		if err != nil {
+			setupLog.Error(err, "unable to generate webhook TLS certificates")
+			os.Exit(1)
+		}
+
+		if err := webhookcerts.WriteCertsToDir(certs, webhookCertDir); err != nil {
+			setupLog.Error(err, "unable to write webhook TLS certificates")
+			os.Exit(1)
+		}
+		setupLog.Info("self-signed webhook TLS certificates generated successfully")
+
+		// Patch the ValidatingWebhookConfiguration with the CA bundle
+		if err := webhookcerts.PatchWebhookCABundle(context.Background(), directClient,
+			webhookConfigName, certs.CACert); err != nil {
+			setupLog.Info("could not patch webhook CA bundle (webhook config may not be deployed yet)",
+				"error", err.Error())
+		} else {
+			setupLog.Info("webhook CA bundle patched successfully",
+				"webhookConfig", webhookConfigName)
+		}
+
+	case webhookcerts.CertModeManual:
+		// Load certificates from a pre-created Kubernetes TLS secret
+		setupLog.Info("loading webhook TLS certificates from secret",
+			"secret", webhookTLSSecretName,
+			"namespace", operatorNamespace,
+		)
+
+		certs, err := webhookcerts.LoadCertsFromSecret(context.Background(), directClient,
+			webhookTLSSecretName, operatorNamespace)
+		if err != nil {
+			setupLog.Error(err, "unable to load webhook TLS certificates from secret",
+				"secret", webhookTLSSecretName)
+			os.Exit(1)
+		}
+
+		if err := webhookcerts.WriteCertsToDir(certs, webhookCertDir); err != nil {
+			setupLog.Error(err, "unable to write webhook TLS certificates")
+			os.Exit(1)
+		}
+		setupLog.Info("webhook TLS certificates loaded from secret successfully")
+
+		// If the secret contains ca.crt, patch the caBundle automatically
+		if len(certs.CACert) > 0 {
+			if err := webhookcerts.PatchWebhookCABundle(context.Background(), directClient,
+				webhookConfigName, certs.CACert); err != nil {
+				setupLog.Info("could not patch webhook CA bundle",
+					"error", err.Error())
+			} else {
+				setupLog.Info("webhook CA bundle patched from ca.crt in secret",
+					"webhookConfig", webhookConfigName)
+			}
+		} else {
+			setupLog.Info("no ca.crt found in TLS secret; caBundle must be managed externally",
+				"secret", webhookTLSSecretName)
+		}
+
+	case webhookcerts.CertModeCertManager:
+		// Load certificates from the cert-manager-managed TLS secret
+		setupLog.Info("loading webhook TLS certificates from cert-manager secret",
+			"secret", webhookTLSSecretName,
+			"namespace", operatorNamespace,
+		)
+
+		certs, err := webhookcerts.LoadCertsFromSecret(context.Background(), directClient,
+			webhookTLSSecretName, operatorNamespace)
+		if err != nil {
+			setupLog.Error(err, "unable to load webhook TLS certificates from cert-manager secret",
+				"secret", webhookTLSSecretName)
+			os.Exit(1)
+		}
+
+		if err := webhookcerts.WriteCertsToDir(certs, webhookCertDir); err != nil {
+			setupLog.Error(err, "unable to write webhook TLS certificates")
+			os.Exit(1)
+		}
+		setupLog.Info("webhook TLS certificates loaded from cert-manager secret successfully")
+
+		// In cert-manager mode, caBundle is injected via the
+		// cert-manager.io/inject-ca-from annotation on the
+		// ValidatingWebhookConfiguration — no patching needed here.
+		setupLog.Info("caBundle managed by cert-manager annotation (no operator patching)")
 	}
 
 	// --- Manager Setup ---

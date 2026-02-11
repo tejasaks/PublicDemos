@@ -15,6 +15,7 @@ This document describes the input validation rules and security measures enforce
 - [Memory Validation](#memory-validation)
 - [Port Validation](#port-validation)
 - [Security Validations](#security-validations)
+- [Webhook Certificate Management](#webhook-certificate-management)
 - [Validation Configuration](#validation-configuration)
 
 ## Validation Layers
@@ -357,6 +358,204 @@ The AG Helper sidecar includes runtime protections:
 1. **SQL Identifier Sanitization**: AG and database names are sanitized using QUOTENAME-style escaping
 2. **Input Truncation**: Long inputs are truncated before logging
 3. **Read-Only Operations**: Most operations are read-only queries
+
+## Webhook Certificate Management
+
+The operator uses [Kubernetes admission webhooks](https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/) to validate `SQLServer` and `SQLServerAG` resources before they are persisted. The Kubernetes API server communicates with the webhook server over TLS, so the operator must present a valid TLS certificate.
+
+The operator supports three certificate modes, controlled by the `WEBHOOK_CERT_MODE` environment variable on the operator Deployment.
+
+### Certificate Modes Overview
+
+| Mode | Value | Description | Suitable For |
+|------|-------|-------------|--------------|
+| **Self-Signed** | `self-signed` | Auto-generates CA + server cert at startup *(default)* | Dev/test, quick start |
+| **Manual** | `manual` | Loads certs from a pre-created Kubernetes TLS secret | Enterprise / air-gapped |
+| **cert-manager** | `cert-manager` | Uses [cert-manager](https://cert-manager.io/) to issue and rotate certs | Production with cert-manager |
+
+### Mode 1: Self-Signed (Default)
+
+This is the zero-configuration default. At startup the operator:
+
+1. Generates an ECDSA P-256 CA certificate and a server certificate signed by that CA
+2. Writes `tls.crt` and `tls.key` to an in-memory `emptyDir` volume (`/tmp/webhook-certs`)
+3. Patches the `caBundle` field on the `ValidatingWebhookConfiguration` so the API server trusts the self-signed CA
+
+No user action is required. Certificates are regenerated every time the operator pod restarts.
+
+```yaml
+# deploy/deployment.yaml — self-signed mode (default, no changes needed)
+env:
+  - name: WEBHOOK_CERT_MODE
+    value: "self-signed"
+```
+
+> **Note:** Self-signed certificates are suitable for development and testing. For production environments, use **manual** or **cert-manager** mode.
+
+### Mode 2: Manual (Enterprise Certificates)
+
+Use manual mode when your organization provisions TLS certificates through an internal PKI, HashiCorp Vault, or any process outside of cert-manager.
+
+#### Step 1: Create the TLS Secret
+
+Create a Kubernetes TLS secret in the operator namespace containing your certificate and private key. Optionally include the CA certificate — if present, the operator will automatically patch the `caBundle`.
+
+```bash
+kubectl create secret tls mssql-operator-webhook-tls \
+  --cert=path/to/tls.crt \
+  --key=path/to/tls.key \
+  -n mssql-system
+```
+
+To include the CA certificate for automatic `caBundle` patching:
+
+```bash
+kubectl create secret generic mssql-operator-webhook-tls \
+  --from-file=tls.crt=path/to/tls.crt \
+  --from-file=tls.key=path/to/tls.key \
+  --from-file=ca.crt=path/to/ca.crt \
+  -n mssql-system
+```
+
+> **Certificate requirements:**
+> - The server certificate SAN (Subject Alternative Name) must include the webhook service DNS name:
+>   `mssql-operator-webhook.mssql-system.svc`
+> - The secret keys must be named `tls.crt`, `tls.key`, and optionally `ca.crt`
+
+#### Step 2: Configure the Operator
+
+Set the following environment variables in the operator Deployment:
+
+```yaml
+env:
+  - name: WEBHOOK_CERT_MODE
+    value: "manual"
+  - name: WEBHOOK_TLS_SECRET_NAME
+    value: "mssql-operator-webhook-tls"   # default value
+```
+
+#### Step 3: Set caBundle (if no ca.crt in secret)
+
+If you do not include `ca.crt` in the secret, you must manually set the `caBundle` field on the `ValidatingWebhookConfiguration`:
+
+```bash
+# Base64-encode your CA certificate
+CA_BUNDLE=$(cat path/to/ca.crt | base64 | tr -d '\n')
+
+# Patch the webhook configuration
+kubectl patch validatingwebhookconfiguration mssql-operator-validating-webhook \
+  --type='json' \
+  -p="[
+    {\"op\": \"replace\", \"path\": \"/webhooks/0/clientConfig/caBundle\", \"value\": \"${CA_BUNDLE}\"},
+    {\"op\": \"replace\", \"path\": \"/webhooks/1/clientConfig/caBundle\", \"value\": \"${CA_BUNDLE}\"}
+  ]"
+```
+
+#### Certificate Rotation (Manual Mode)
+
+To rotate certificates in manual mode:
+
+1. Update the TLS secret with new certificate and key:
+   ```bash
+   kubectl create secret tls mssql-operator-webhook-tls \
+     --cert=path/to/new-tls.crt \
+     --key=path/to/new-tls.key \
+     -n mssql-system \
+     --dry-run=client -o yaml | kubectl apply -f -
+   ```
+
+2. Restart the operator to pick up the new certificates:
+   ```bash
+   kubectl rollout restart deployment/mssql-operator -n mssql-system
+   ```
+
+3. If the CA changed, update the `caBundle` (or include `ca.crt` in the secret for automatic patching).
+
+### Mode 3: cert-manager
+
+Use cert-manager mode when you have [cert-manager](https://cert-manager.io/) installed in your cluster. cert-manager will issue certificates, populate the TLS secret, and inject the CA bundle automatically.
+
+#### Step 1: Install cert-manager
+
+```bash
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
+```
+
+#### Step 2: Create Issuer and Certificate Resources
+
+```yaml
+# Self-signed issuer for webhook certificates
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: mssql-operator-selfsigned
+  namespace: mssql-system
+spec:
+  selfSigned: {}
+---
+# Certificate for the webhook server
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mssql-operator-webhook-cert
+  namespace: mssql-system
+spec:
+  secretName: mssql-operator-webhook-tls
+  issuerRef:
+    name: mssql-operator-selfsigned
+    kind: Issuer
+  dnsNames:
+    - mssql-operator-webhook.mssql-system.svc
+    - mssql-operator-webhook.mssql-system.svc.cluster.local
+  duration: 8760h    # 1 year
+  renewBefore: 720h  # 30 days before expiry
+```
+
+#### Step 3: Annotate the ValidatingWebhookConfiguration
+
+Add the cert-manager CA injection annotation so cert-manager automatically sets the `caBundle`:
+
+```yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: mssql-operator-validating-webhook
+  annotations:
+    cert-manager.io/inject-ca-from: mssql-system/mssql-operator-webhook-cert
+```
+
+#### Step 4: Configure the Operator
+
+```yaml
+env:
+  - name: WEBHOOK_CERT_MODE
+    value: "cert-manager"
+  - name: WEBHOOK_TLS_SECRET_NAME
+    value: "mssql-operator-webhook-tls"
+```
+
+In cert-manager mode the operator:
+- Loads certificates from the TLS secret (created by cert-manager)
+- Does **not** patch `caBundle` — cert-manager handles this via the annotation
+- Certificate rotation is fully automatic (cert-manager renews before expiry)
+
+### Environment Variables Reference
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WEBHOOK_CERT_MODE` | `self-signed` | Certificate mode: `self-signed`, `manual`, or `cert-manager` |
+| `WEBHOOK_TLS_SECRET_NAME` | `mssql-operator-webhook-tls` | Name of the TLS secret (used in `manual` and `cert-manager` modes) |
+| `OPERATOR_NAMESPACE` | `mssql-system` | Namespace where the operator is deployed |
+
+### Troubleshooting Webhook TLS
+
+| Symptom | Likely Cause | Solution |
+|---------|-------------|----------|
+| `connection refused` on apply | Webhook server not running or port 9443 not exposed | Check operator pod logs; verify containerPort 9443 in Deployment |
+| `x509: certificate signed by unknown authority` | `caBundle` not set or mismatched | Re-check caBundle on ValidatingWebhookConfiguration matches the CA |
+| `tls: bad certificate` | Certificate SAN doesn't match service DNS | Regenerate cert with SAN: `mssql-operator-webhook.mssql-system.svc` |
+| `secret "..." not found` | TLS secret missing in manual/cert-manager mode | Create the secret or check cert-manager Certificate status |
+| Webhook works initially, then fails | Certificate expired | Use cert-manager for auto-renewal, or rotate manually |
 
 ## Validation Configuration
 
