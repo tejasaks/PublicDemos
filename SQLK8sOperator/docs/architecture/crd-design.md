@@ -335,7 +335,7 @@ Edition string `json:"edition,omitempty"`
 // Range validation
 // +kubebuilder:validation:Minimum=1
 // +kubebuilder:validation:Maximum=9
-Replicas int32 `json:"replicas,omitempty"`
+Count int32 `json:"count,omitempty"`
 
 // Pattern validation
 // +kubebuilder:validation:Pattern=^[a-z0-9]([-a-z0-9]*[a-z0-9])?$

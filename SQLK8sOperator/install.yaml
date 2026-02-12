@@ -3308,7 +3308,8 @@ spec:
 #     Relies on cert-manager to populate the TLS secret and inject caBundle
 #     via the cert-manager.io/inject-ca-from annotation below. Uncomment
 #     the annotation and configure a Certificate + Issuer resource.
-#---
+#
+---
 apiVersion: v1
 kind: Service
 metadata:

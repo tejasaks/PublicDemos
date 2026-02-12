@@ -87,7 +87,9 @@ function Add-Manifest {
 # -----------------------------------------------------------------------------
 "@
         Add-Content -Path $OutputFile -Value $separator -Encoding UTF8
-        Get-Content -Path $FilePath | Add-Content -Path $OutputFile -Encoding UTF8
+        # Use -Raw to preserve exact line content (avoids pipeline line-merging issues)
+        $content = Get-Content -Path $FilePath -Raw
+        Add-Content -Path $OutputFile -Value $content -NoNewline -Encoding UTF8
         Write-Host "  Added: $relativePath" -ForegroundColor Green
     }
     else {

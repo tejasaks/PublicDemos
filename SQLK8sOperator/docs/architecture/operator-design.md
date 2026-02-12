@@ -206,7 +206,7 @@ type SQLServerStatus struct {
     // Conditions represent detailed status
     Conditions []metav1.Condition `json:"conditions,omitempty"`
     
-    // Replica counts
+    // Instance counts
     ReadyInstances   int32 `json:"readyInstances"`
     CurrentInstances int32 `json:"currentInstances"`
     

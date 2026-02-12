@@ -268,8 +268,8 @@ This command submits your configuration to Kubernetes. The operator will:
 kubectl get sqlserver -n mssql
 
 # Expected output:
-# NAME           VERSION   EDITION     REPLICAS   READY   STATUS    AGE
-# my-sqlserver   2025      Developer   1          1       Running   2m
+# NAME           VERSION   EDITION     COUNT   READY   STATUS    AGE
+# my-sqlserver   2025      Developer   1       1       Running   2m
 ```
 
 ### Check the Pods
