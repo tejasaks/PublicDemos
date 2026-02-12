@@ -6,12 +6,13 @@
 # from a URL for easy operator installation.
 #
 # Usage:
-#   ./scripts/generate-install-yaml.sh [VERSION] [IMAGE]
+#   ./scripts/generate-install-yaml.sh [VERSION] [IMAGE] [SIDECAR_IMAGE]
 #
 # Examples:
 #   ./scripts/generate-install-yaml.sh
 #   ./scripts/generate-install-yaml.sh v1.0.0
 #   ./scripts/generate-install-yaml.sh v1.0.0 ghcr.io/myorg/mssql-operator:v1.0.0
+#   ./scripts/generate-install-yaml.sh v1.0.0 ghcr.io/myorg/mssql-operator:v1.0.0 ghcr.io/myorg/mssql-ag-helper:v1.0.0
 # =============================================================================
 
 set -euo pipefail
@@ -22,6 +23,7 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 OUTPUT_FILE="${ROOT_DIR}/install.yaml"
 VERSION="${1:-v1.0.0}"
 IMAGE="${2:-ghcr.io/tejasaks/mssql-operator:${VERSION}}"
+SIDECAR_IMAGE="${3:-ghcr.io/tejasaks/mssql-ag-helper:${VERSION}}"
 
 # Source files in order
 DEPLOY_DIR="${ROOT_DIR}/deploy"
@@ -30,6 +32,7 @@ CRD_DIR="${DEPLOY_DIR}/crds"
 echo "Generating install.yaml..."
 echo "  Version: ${VERSION}"
 echo "  Image: ${IMAGE}"
+echo "  Sidecar: ${SIDECAR_IMAGE}"
 echo "  Output: ${OUTPUT_FILE}"
 echo ""
 
@@ -116,12 +119,17 @@ echo "# ------------------------------------------------------------------------
 
 # Read deployment and substitute image
 if [[ -f "${DEPLOY_DIR}/deployment.yaml" ]]; then
-    # Use sed to replace the image placeholder with actual image,
-    # and override imagePullPolicy from Never (local dev) to IfNotPresent (remote install)
+    # Use sed to replace local dev values with registry images for remote installation:
+    #   - Container image → registry operator image
+    #   - imagePullPolicy: Never → IfNotPresent
+    #   - AG_HELPER_IMAGE env var → registry sidecar image
+    #   - AG_HELPER_IMAGE_PULL_POLICY env var → IfNotPresent
     sed -e "s|image:.*mssql-operator.*|image: ${IMAGE}|g" \
         -e "s|imagePullPolicy: Never|imagePullPolicy: IfNotPresent|g" \
+        -e "s|value: \"mssql-ag-helper:dev\"|value: \"${SIDECAR_IMAGE}\"|g" \
+        -e "s|value: \"Never\"|value: \"IfNotPresent\"|g" \
         "${DEPLOY_DIR}/deployment.yaml" >> "${OUTPUT_FILE}"
-    echo "  Added: deploy/deployment.yaml (with image: ${IMAGE})"
+    echo "  Added: deploy/deployment.yaml (with image: ${IMAGE}, sidecar: ${SIDECAR_IMAGE})"
 else
     echo "  ERROR: deployment.yaml not found!"
     exit 1

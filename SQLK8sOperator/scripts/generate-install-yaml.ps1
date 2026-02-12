@@ -5,17 +5,19 @@
 # from a URL for easy operator installation.
 #
 # Usage:
-#   .\scripts\generate-install-yaml.ps1 [-Version "v1.0.0"] [-Image "ghcr.io/org/mssql-operator:v1.0.0"]
+#   .\scripts\generate-install-yaml.ps1 [-Version "v1.0.0"] [-Image "..."] [-SidecarImage "..."]
 #
 # Examples:
 #   .\scripts\generate-install-yaml.ps1
 #   .\scripts\generate-install-yaml.ps1 -Version "v1.0.0"
 #   .\scripts\generate-install-yaml.ps1 -Version "v1.0.0" -Image "ghcr.io/myorg/mssql-operator:v1.0.0"
+#   .\scripts\generate-install-yaml.ps1 -Version "v1.0.0" -Image "ghcr.io/myorg/mssql-operator:v1.0.0" -SidecarImage "ghcr.io/myorg/mssql-ag-helper:v1.0.0"
 # =============================================================================
 
 param(
     [string]$Version = "v1.0.0",
-    [string]$Image = ""
+    [string]$Image = "",
+    [string]$SidecarImage = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,10 +32,14 @@ $CrdDir = Join-Path $DeployDir "crds"
 if ([string]::IsNullOrEmpty($Image)) {
     $Image = "ghcr.io/tejasaks/mssql-operator:$Version"
 }
+if ([string]::IsNullOrEmpty($SidecarImage)) {
+    $SidecarImage = "ghcr.io/tejasaks/mssql-ag-helper:$Version"
+}
 
 Write-Host "Generating install.yaml..." -ForegroundColor Cyan
 Write-Host "  Version: $Version"
 Write-Host "  Image: $Image"
+Write-Host "  Sidecar: $SidecarImage"
 Write-Host "  Output: $OutputFile"
 Write-Host ""
 
@@ -136,11 +142,17 @@ if (Test-Path $deploymentFile) {
     
     # Read and substitute image and pull policy for remote installation
     $content = Get-Content -Path $deploymentFile -Raw
+    # Replace local dev values with registry images for remote installation:
+    #   - Container image → registry operator image
+    #   - imagePullPolicy: Never → IfNotPresent
+    #   - AG_HELPER_IMAGE env var → registry sidecar image
+    #   - AG_HELPER_IMAGE_PULL_POLICY env var → IfNotPresent
     $content = $content -replace 'image:.*mssql-operator.*', "image: $Image"
-    # Override imagePullPolicy from Never (local dev) to IfNotPresent (remote install)
     $content = $content -replace 'imagePullPolicy:\s*Never', 'imagePullPolicy: IfNotPresent'
+    $content = $content -replace 'value: "mssql-ag-helper:dev"', "value: `"$SidecarImage`""
+    $content = $content -replace 'value: "Never"', 'value: "IfNotPresent"'
     Add-Content -Path $OutputFile -Value $content -Encoding UTF8
-    Write-Host "  Added: deploy/deployment.yaml (with image: $Image)" -ForegroundColor Green
+    Write-Host "  Added: deploy/deployment.yaml (with image: $Image, sidecar: $SidecarImage)" -ForegroundColor Green
 }
 else {
     Write-Host "  ERROR: deployment.yaml not found!" -ForegroundColor Red

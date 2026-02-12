@@ -3505,9 +3505,9 @@ spec:
             #   value: "mssql-operator-webhook-tls"
             # AG Helper sidecar image configuration
             - name: AG_HELPER_IMAGE
-              value: "mssql-ag-helper:dev"
+              value: "ghcr.io/tejasaks/mssql-ag-helper:v1.0.0"
             - name: AG_HELPER_IMAGE_PULL_POLICY
-              value: "Never"
+              value: "IfNotPresent"
             # SQL Exporter image configuration
             - name: SQL_EXPORTER_IMAGE
               value: "burningalchemist/sql_exporter:latest"

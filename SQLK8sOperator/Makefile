@@ -1,14 +1,35 @@
 # MSSQL Kubernetes Operator Makefile
 
-# Version configuration
-VERSION ?= 1.0.0
+# =============================================================================
+# Configuration — override any variable via environment or make arguments
+# =============================================================================
+# Production (default):
+#   make docker-build docker-push    → ghcr.io/tejasaks/mssql-operator:v1.0.0
+#
+# Local development (minikube):
+#   make minikube-deploy             → builds mssql-operator:dev locally
+#
+# Custom registry:
+#   make docker-build REGISTRY=myregistry.io/myorg VERSION=v2.0.0
+# =============================================================================
 
-# Registry configuration - update for your environment
-REGISTRY ?= localhost:5000/sqlserver-operator
+# Version (v-prefixed to match container image tag convention)
+VERSION ?= v1.0.0
 
-# Image URL to use all building/pushing image targets
-IMG ?= $(REGISTRY)/operator:$(VERSION)
-SIDECAR_IMG ?= $(REGISTRY)/ag-helper:$(VERSION)
+# Container registry — defaults to GHCR for production/release
+REGISTRY ?= ghcr.io/tejasaks
+
+# Production image references (built and pushed to REGISTRY)
+IMG ?= $(REGISTRY)/mssql-operator:$(VERSION)
+SIDECAR_IMG ?= $(REGISTRY)/mssql-ag-helper:$(VERSION)
+
+# Image pull policy for generated install.yaml (IfNotPresent for registry images)
+IMAGE_PULL_POLICY ?= IfNotPresent
+
+# Local development overrides (used by minikube-deploy target)
+DEV_IMG ?= mssql-operator:dev
+DEV_SIDECAR_IMG ?= mssql-ag-helper:dev
+DEV_IMAGE_PULL_POLICY ?= Never
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -51,7 +72,7 @@ manifests: controller-gen tidy ## Generate CRD manifests.
 .PHONY: generate-install-yaml
 generate-install-yaml: ensure-scripts-executable ## Generate the combined install.yaml for direct URL installation.
 	@echo "Generating install.yaml..."
-	@./scripts/generate-install-yaml.sh $(VERSION) $(IMG)
+	@./scripts/generate-install-yaml.sh $(VERSION) $(IMG) $(SIDECAR_IMG)
 
 .PHONY: generate
 generate: controller-gen tidy ## Generate code (DeepCopy functions).
@@ -142,10 +163,10 @@ minikube-setup: ensure-scripts-executable ## Setup minikube for local developmen
 	./scripts/dev-setup.sh start
 
 .PHONY: minikube-deploy
-minikube-deploy: docker-build docker-build-sidecar ## Build and deploy to minikube.
+minikube-deploy: ## Build and deploy to minikube using local dev images (imagePullPolicy: Never).
 	eval $$(minikube docker-env) && \
-	docker build -t ${IMG} -f Dockerfile . && \
-	docker build -t ${SIDECAR_IMG} -f Dockerfile.sidecar . && \
+	docker build -t $(DEV_IMG) -f Dockerfile . && \
+	docker build -t $(DEV_SIDECAR_IMG) -f Dockerfile.sidecar . && \
 	$(MAKE) deploy
 
 ##@ Tools
@@ -175,10 +196,10 @@ docker-build-all: ## Build all Docker images.
 docker-push-all: ## Push all Docker images to registry.
 	docker push $(IMG)
 	docker push $(SIDECAR_IMG)
-	docker tag $(IMG) $(REGISTRY)/operator:latest
-	docker tag $(SIDECAR_IMG) $(REGISTRY)/ag-helper:latest
-	docker push $(REGISTRY)/operator:latest
-	docker push $(REGISTRY)/ag-helper:latest
+	docker tag $(IMG) $(REGISTRY)/mssql-operator:latest
+	docker tag $(SIDECAR_IMG) $(REGISTRY)/mssql-ag-helper:latest
+	docker push $(REGISTRY)/mssql-operator:latest
+	docker push $(REGISTRY)/mssql-ag-helper:latest
 	@echo ""
 	@echo "Images pushed to $(REGISTRY)"
 
@@ -186,7 +207,7 @@ docker-push-all: ## Push all Docker images to registry.
 release: manifests generate-install-yaml docker-build-all docker-push-all ## Build, push images and generate manifests for release.
 	@echo ""
 	@echo "Release $(VERSION) complete!"
-	@echo "Images: $(REGISTRY)/operator:$(VERSION), $(REGISTRY)/ag-helper:$(VERSION)"
+	@echo "Images: $(IMG), $(SIDECAR_IMG)"
 	@echo "Install manifest: install.yaml"
 
 .PHONY: dist
@@ -244,8 +265,15 @@ clean: ## Clean build artifacts and distribution packages.
 	@echo "Note: install.yaml is preserved (commit it to enable direct URL installation)"
 
 .PHONY: version
-version: ## Display the current version.
-	@echo "Version: $(VERSION)"
-	@echo "Operator Image: $(IMG)"
-	@echo "AG Helper Image: $(SIDECAR_IMG)"
+version: ## Display the current version and image configuration.
+	@echo "Version:          $(VERSION)"
+	@echo "Registry:         $(REGISTRY)"
+	@echo "Operator Image:   $(IMG)"
+	@echo "AG Helper Image:  $(SIDECAR_IMG)"
+	@echo "Pull Policy:      $(IMAGE_PULL_POLICY)"
+	@echo ""
+	@echo "Local Dev:"
+	@echo "  Operator:       $(DEV_IMG)"
+	@echo "  AG Helper:      $(DEV_SIDECAR_IMG)"
+	@echo "  Pull Policy:    $(DEV_IMAGE_PULL_POLICY)"
 
