@@ -134,9 +134,11 @@ if (Test-Path $deploymentFile) {
 "@
     Add-Content -Path $OutputFile -Value $separator -Encoding UTF8
     
-    # Read and substitute image
+    # Read and substitute image and pull policy for remote installation
     $content = Get-Content -Path $deploymentFile -Raw
     $content = $content -replace 'image:.*mssql-operator.*', "image: $Image"
+    # Override imagePullPolicy from Never (local dev) to IfNotPresent (remote install)
+    $content = $content -replace 'imagePullPolicy:\s*Never', 'imagePullPolicy: IfNotPresent'
     Add-Content -Path $OutputFile -Value $content -Encoding UTF8
     Write-Host "  Added: deploy/deployment.yaml (with image: $Image)" -ForegroundColor Green
 }

@@ -3452,7 +3452,7 @@ spec:
           # For local development, use: mssql-operator:dev
           # For production, use: mcr.microsoft.com/mssql/operator:latest
           image: ghcr.io/tejasaks/mssql-operator:v1.0.0
-          imagePullPolicy: Never
+          imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

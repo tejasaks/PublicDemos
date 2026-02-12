@@ -116,8 +116,11 @@ echo "# ------------------------------------------------------------------------
 
 # Read deployment and substitute image
 if [[ -f "${DEPLOY_DIR}/deployment.yaml" ]]; then
-    # Use sed to replace the image placeholder with actual image
-    sed "s|image:.*mssql-operator.*|image: ${IMAGE}|g" "${DEPLOY_DIR}/deployment.yaml" >> "${OUTPUT_FILE}"
+    # Use sed to replace the image placeholder with actual image,
+    # and override imagePullPolicy from Never (local dev) to IfNotPresent (remote install)
+    sed -e "s|image:.*mssql-operator.*|image: ${IMAGE}|g" \
+        -e "s|imagePullPolicy: Never|imagePullPolicy: IfNotPresent|g" \
+        "${DEPLOY_DIR}/deployment.yaml" >> "${OUTPUT_FILE}"
     echo "  Added: deploy/deployment.yaml (with image: ${IMAGE})"
 else
     echo "  ERROR: deployment.yaml not found!"
