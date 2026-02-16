@@ -22,8 +22,13 @@ type SQLServerSpec struct {
 	// +kubebuilder:validation:MaxLength=1024
 	Description string `json:"description,omitempty"`
 
-	// Version is the SQL Server version (e.g., "2022", "2025")
-	// +kubebuilder:validation:Enum="2019";"2022";"2025"
+	// Version is the SQL Server version key. This value is looked up against the
+	// image catalog in OperatorConfiguration.spec.images.catalog. Built-in keys
+	// are "2019", "2022", and "2025". Custom keys (e.g., "2025-fts", "2025-ai")
+	// can be added to the catalog by the cluster administrator.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`
 	// +kubebuilder:default="2022"
 	Version string `json:"version,omitempty"`
 
@@ -413,30 +418,28 @@ func (s *SQLServerSpec) GetImage() string {
 // GetImageWithConfig returns the container image to use with optional OperatorConfiguration
 // Priority order:
 //  1. spec.instance.image (explicit per-SQLServer override)
-//  2. OperatorConfiguration.spec.images.sql{version} (cluster-wide config)
-//  3. Hardcoded defaults based on version
+//  2. OperatorConfiguration catalog lookup (catalog[version] → DefaultImages[version])
+//  3. Built-in DefaultImages map fallback
 func (s *SQLServerSpec) GetImageWithConfig(imageConfig *ImageConfiguration) string {
 	// Priority 1: Explicit image in SQLServer spec
 	if s.Instance.Image != "" {
 		return s.Instance.Image
 	}
 
-	// Priority 2: OperatorConfiguration images
+	// Priority 2: OperatorConfiguration catalog + DefaultImages fallback
 	if imageConfig != nil {
-		return imageConfig.GetSQLImage(s.Version)
+		if img := imageConfig.GetSQLImage(s.Version); img != "" {
+			return img
+		}
 	}
 
-	// Priority 3: Hardcoded defaults based on version
-	switch s.Version {
-	case "2025":
-		return "mcr.microsoft.com/mssql/server:2025-latest"
-	case "2022":
-		return "mcr.microsoft.com/mssql/server:2022-latest"
-	case "2019":
-		return "mcr.microsoft.com/mssql/server:2019-latest"
-	default:
-		return "mcr.microsoft.com/mssql/server:2022-latest"
+	// Priority 3: Built-in DefaultImages map (no OperatorConfiguration present)
+	if img, ok := DefaultImages[s.Version]; ok {
+		return img
 	}
+
+	// Ultimate fallback for unknown versions without catalog entry
+	return DefaultImages["2022"]
 }
 
 // GetEditionPID returns the MSSQL_PID value for the edition

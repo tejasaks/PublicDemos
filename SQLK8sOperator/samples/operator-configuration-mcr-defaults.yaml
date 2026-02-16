@@ -42,15 +42,17 @@ spec:
     # https://mcr.microsoft.com/en-us/product/mssql/server/about
     #
     # Available tags: https://mcr.microsoft.com/v2/mssql/server/tags/list
-    
-    # SQL Server 2019 - Pinned to specific CU
-    sql2019: mcr.microsoft.com/mssql/server:2019-CU27-ubuntu-22.04
-    
-    # SQL Server 2022 - Pinned to specific CU
-    sql2022: mcr.microsoft.com/mssql/server:2022-CU16-ubuntu-22.04
-    
-    # SQL Server 2025 - Latest (or specify CU when available)
-    sql2025: mcr.microsoft.com/mssql/server:2025-latest
+    #
+    # The catalog maps version keys to container images. Users reference these
+    # keys via SQLServer.spec.version. Built-in defaults for "2019", "2022",
+    # "2025" are provided automatically — list them here to pin CU versions.
+    catalog:
+      # SQL Server 2019 - Pinned to specific CU
+      "2019": mcr.microsoft.com/mssql/server:2019-CU27-ubuntu-22.04
+      # SQL Server 2022 - Pinned to specific CU
+      "2022": mcr.microsoft.com/mssql/server:2022-CU16-ubuntu-22.04
+      # SQL Server 2025 - Latest (or specify CU when available)
+      "2025": mcr.microsoft.com/mssql/server:2025-latest
     
     # -------------------------------------------------------------------------
     # Operator Component Images (Locally-built)

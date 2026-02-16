@@ -31,6 +31,11 @@ metadata:
   namespace: mssql-system
 spec:
   # Override default images to use local builds
+  # Note: SQL Server images are not overridden here — the operator will use
+  # built-in defaults (mcr.microsoft.com/mssql/server:xxxx-latest).
+  # To register custom SQL Server images, add a catalog section:
+  #   catalog:
+  #     "2025-dev": my-custom-sql:dev
   images:
     # AG Helper sidecar - local build
     # Default (remote): ghcr.io/tejasaks/mssql-ag-helper:v1.0.0

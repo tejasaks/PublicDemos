@@ -235,7 +235,7 @@ spec:
               dockerImage:
                 default: mcr.microsoft.com/mssql/server:2022-latest
                 description: 'DockerImage is the default SQL Server image (DEPRECATED:
-                  use images.sql2022 instead)'
+                  use images.catalog instead)'
                 type: string
               images:
                 description: |-
@@ -264,18 +264,16 @@ spec:
                     items:
                       type: string
                     type: array
-                  sql2019:
-                    default: mcr.microsoft.com/mssql/server:2019-latest
-                    description: SQL2019 is the container image for SQL Server 2019
-                    type: string
-                  sql2022:
-                    default: mcr.microsoft.com/mssql/server:2022-latest
-                    description: SQL2022 is the container image for SQL Server 2022
-                    type: string
-                  sql2025:
-                    default: mcr.microsoft.com/mssql/server:2025-latest
-                    description: SQL2025 is the container image for SQL Server 2025
-                    type: string
+                  catalog:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Catalog is a map of version keys to SQL Server container image references.
+                      The map key is the version string that users specify in SQLServer.spec.version,
+                      and the value is the full container image reference.
+                      Built-in defaults ("2019", "2022", "2025") are provided automatically and do not
+                      need to be listed unless you want to override them with custom images.
+                    type: object
                   sqlExporter:
                     default: burningalchemist/sql_exporter:latest
                     description: SQLExporter is the container image for the SQL Exporter
@@ -3149,11 +3147,14 @@ spec:
                 type: boolean
               version:
                 default: "2022"
-                description: Version is the SQL Server version (e.g., "2022", "2025")
-                enum:
-                - "2019"
-                - "2022"
-                - "2025"
+                description: |-
+                  Version is the SQL Server version key. This value is looked up against the
+                  image catalog in OperatorConfiguration.spec.images.catalog. Built-in keys
+                  are "2019", "2022", and "2025". Custom keys (e.g., "2025-fts", "2025-ai")
+                  can be added to the catalog by the cluster administrator.
+                maxLength: 128
+                minLength: 1
+                pattern: ^[a-zA-Z0-9][a-zA-Z0-9._-]*$
                 type: string
             required:
             - credentials

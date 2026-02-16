@@ -67,19 +67,23 @@ spec:
   #
   images:
     # -------------------------------------------------------------------------
-    # SQL Server Images (Mirrored from MCR)
+    # SQL Server Image Catalog (Mirrored from MCR)
     # -------------------------------------------------------------------------
-    # These images should be pulled from MCR and pushed to your private registry.
+    # The catalog maps version keys to container images. Users reference these
+    # keys via SQLServer.spec.version. Built-in defaults for "2019", "2022",
+    # "2025" are provided automatically — list them here to override with your
+    # private registry mirrors.
+    #
     # See "HOW TO MIRROR IMAGES" section below for step-by-step instructions.
-    
-    # SQL Server 2019
-    sql2019: myregistry.azurecr.io/mssql/server:2019-CU27-ubuntu-22.04
-    
-    # SQL Server 2022
-    sql2022: myregistry.azurecr.io/mssql/server:2022-CU16-ubuntu-22.04
-    
-    # SQL Server 2025
-    sql2025: myregistry.azurecr.io/mssql/server:2025-latest
+    catalog:
+      # Standard SQL Server versions (mirrored from MCR)
+      "2019": myregistry.azurecr.io/mssql/server:2019-CU27-ubuntu-22.04
+      "2022": myregistry.azurecr.io/mssql/server:2022-CU16-ubuntu-22.04
+      "2025": myregistry.azurecr.io/mssql/server:2025-latest
+      # Custom images for your organization:
+      # "2025-fts": myregistry.azurecr.io/mssql/server:2025-fts
+      # "2025-ai": myregistry.azurecr.io/mssql-ai:2025-ollama-minio
+      # "2022-polybase": myregistry.azurecr.io/mssql/server:2022-polybase
     
     # -------------------------------------------------------------------------
     # Operator Component Images (Built and pushed to your registry)

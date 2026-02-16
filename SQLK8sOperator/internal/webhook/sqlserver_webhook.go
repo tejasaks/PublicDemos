@@ -125,6 +125,13 @@ func (v *SQLServerValidator) validate(ctx context.Context, sqlserver *mssqlv1alp
 		result.Merge(imageResult)
 	}
 
+	// 5. Validate version resolves to an image (catalog lookup + defaults + instance.image)
+	// Skip if spec.instance.image is set (it overrides the catalog entirely)
+	if sqlserver.Spec.Instance.Image == "" {
+		versionResult := v.validateVersionResolvesToImage(ctx, sqlserver)
+		result.Merge(versionResult)
+	}
+
 	// 5. Validate memory is sufficient for SQL Server
 	if sqlserver.Spec.Instance.Resources.Limits.Memory() != nil {
 		memResult := validation.ValidateMemoryForSQLServer(sqlserver.Spec.Instance.Resources.Limits.Memory().String())
@@ -201,6 +208,54 @@ func (v *SQLServerValidator) validateSecretAndPassword(ctx context.Context, sqls
 			result.AddError("%s", pwResult.Message)
 		}
 	}
+
+	return result
+}
+
+// validateVersionResolvesToImage checks that spec.version resolves to a container image
+// via the catalog (OperatorConfiguration) or the built-in DefaultImages map.
+func (v *SQLServerValidator) validateVersionResolvesToImage(ctx context.Context, sqlserver *mssqlv1alpha1.SQLServer) *validation.ValidationResult {
+	result := validation.NewValidationResult()
+	version := sqlserver.Spec.Version
+
+	// Check built-in defaults first (fast path)
+	if _, ok := mssqlv1alpha1.DefaultImages[version]; ok {
+		return result
+	}
+
+	// Load OperatorConfiguration to check catalog
+	config := &mssqlv1alpha1.OperatorConfiguration{}
+	err := v.Client.Get(ctx, types.NamespacedName{Name: "default"}, config)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// No OperatorConfiguration — version must be in defaults
+			available := (&mssqlv1alpha1.ImageConfiguration{}).GetAvailableVersions()
+			result.AddError("version %q is not a built-in version and no OperatorConfiguration exists. "+
+				"Available built-in versions: %s. "+
+				"To use custom versions, create an OperatorConfiguration with an image catalog, "+
+				"or set spec.instance.image directly",
+				version, strings.Join(available, ", "))
+			return result
+		}
+		// Transient error — warn but allow
+		result.AddWarning("Could not load OperatorConfiguration to validate version %q: %v", version, err)
+		return result
+	}
+
+	// Check catalog
+	imageConfig := config.Spec.Images
+	if imageConfig != nil {
+		if img := imageConfig.GetSQLImage(version); img != "" {
+			return result // Found in catalog or defaults
+		}
+	}
+
+	// Version not found anywhere
+	available := imageConfig.GetAvailableVersions()
+	result.AddError("version %q does not resolve to any container image. "+
+		"Available versions: %s. "+
+		"Add it to OperatorConfiguration.spec.images.catalog or set spec.instance.image directly",
+		version, strings.Join(available, ", "))
 
 	return result
 }

@@ -40,6 +40,7 @@ Day-to-day usage and configuration.
 |----------|-------------|
 | [Deployment Scenarios](user-guide/deployment-scenarios.md) | Standalone, HA, AD patterns |
 | [Configuration Reference](user-guide/configuration-reference.md) | Complete CRD field reference |
+| [Custom Image Catalog](user-guide/custom-image-catalog.md) | Register and use custom SQL Server images |
 | [Validation & Security](user-guide/validation-security.md) | Input validation and security rules |
 | [Troubleshooting](user-guide/troubleshooting.md) | Common issues and solutions |
 

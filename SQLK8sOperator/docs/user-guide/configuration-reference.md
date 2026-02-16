@@ -242,8 +242,8 @@ The OperatorConfiguration CRD provides cluster-wide defaults for the operator. C
 When determining which container image to use, the operator follows this priority order:
 
 1. **Per-resource override** - `spec.instance.image` in SQLServer or `spec.sidecar.image` in SQLServerAG
-2. **OperatorConfiguration** - `spec.images.sql{version}` in the `default` OperatorConfiguration
-3. **Hardcoded defaults** - Built-in MCR images (mcr.microsoft.com/mssql/server:xxxx-latest)
+2. **OperatorConfiguration catalog** - `spec.images.catalog[version]` in the `default` OperatorConfiguration
+3. **Built-in defaults** - Built-in MCR images for "2019", "2022", "2025" (mcr.microsoft.com/mssql/server:xxxx-latest)
 
 ### Full Spec Reference
 
@@ -255,9 +255,11 @@ metadata:
 spec:
   # Container image configuration
   images:
-    sql2019: string      # Default: mcr.microsoft.com/mssql/server:2019-latest
-    sql2022: string      # Default: mcr.microsoft.com/mssql/server:2022-latest
-    sql2025: string      # Default: mcr.microsoft.com/mssql/server:2025-latest
+    catalog:             # Map of version keys → container image references
+      "2019": string    # Override built-in default for SQL Server 2019
+      "2022": string    # Override built-in default for SQL Server 2022
+      "2025": string    # Override built-in default for SQL Server 2025
+      "custom-key": string  # Any custom version key (e.g., "2025-fts", "2025-ai")
     agHelper: string     # Default: mssql-ag-helper:latest
     sqlExporter: string  # Default: burningalchemist/sql_exporter:latest
     imagePullSecrets:    # List of secret names for private registries
@@ -295,8 +297,10 @@ metadata:
   name: default
 spec:
   images:
-    sql2022: myregistry.azurecr.io/mssql/server:2022-CU15
-    sql2025: myregistry.azurecr.io/mssql/server:2025-rc1
+    catalog:
+      "2022": myregistry.azurecr.io/mssql/server:2022-CU15
+      "2025": myregistry.azurecr.io/mssql/server:2025-rc1
+      "2025-fts": myregistry.azurecr.io/mssql/server:2025-fts
     agHelper: myregistry.azurecr.io/mssql-operator/ag-helper:1.0.0
     imagePullSecrets:
       - acr-auth-secret

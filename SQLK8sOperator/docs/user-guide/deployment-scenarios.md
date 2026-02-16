@@ -873,9 +873,10 @@ metadata:
   name: default
 spec:
   images:
-    sql2019: myregistry.azurecr.io/mssql/server:2019-CU27-ubuntu-22.04
-    sql2022: myregistry.azurecr.io/mssql/server:2022-CU16-ubuntu-22.04
-    sql2025: myregistry.azurecr.io/mssql/server:2025-latest
+    catalog:
+      "2019": myregistry.azurecr.io/mssql/server:2019-CU27-ubuntu-22.04
+      "2022": myregistry.azurecr.io/mssql/server:2022-CU16-ubuntu-22.04
+      "2025": myregistry.azurecr.io/mssql/server:2025-latest
     agHelper: myregistry.azurecr.io/mssql-operator/ag-helper:v1.0.0
     sqlExporter: myregistry.azurecr.io/third-party/sql-exporter:0.14.0
     imagePullSecrets:

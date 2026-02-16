@@ -8,6 +8,8 @@ See LICENSE file in the project root for full license information.
 package v1alpha1
 
 import (
+	"sort"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -19,7 +21,7 @@ type OperatorConfigurationSpec struct {
 	// +optional
 	Images *ImageConfiguration `json:"images,omitempty"`
 
-	// DockerImage is the default SQL Server image (DEPRECATED: use images.sql2022 instead)
+	// DockerImage is the default SQL Server image (DEPRECATED: use images.catalog instead)
 	// +kubebuilder:default="mcr.microsoft.com/mssql/server:2022-latest"
 	DockerImage string `json:"dockerImage,omitempty"`
 
@@ -67,20 +69,26 @@ type OperatorConfigurationSpec struct {
 }
 
 // ImageConfiguration defines container images for all operator-managed components
-// This allows cluster administrators to specify custom images from private registries
-// or pin to specific versions across all SQL Server deployments
+// This allows cluster administrators to specify custom images from private registries,
+// pin to specific versions, or register unlimited custom SQL Server images (e.g.,
+// SQL2025+FTS, SQL2025+AI, SQL2022+Polybase) via the catalog map.
 type ImageConfiguration struct {
-	// SQL2019 is the container image for SQL Server 2019
-	// +kubebuilder:default="mcr.microsoft.com/mssql/server:2019-latest"
-	SQL2019 string `json:"sql2019,omitempty"`
-
-	// SQL2022 is the container image for SQL Server 2022
-	// +kubebuilder:default="mcr.microsoft.com/mssql/server:2022-latest"
-	SQL2022 string `json:"sql2022,omitempty"`
-
-	// SQL2025 is the container image for SQL Server 2025
-	// +kubebuilder:default="mcr.microsoft.com/mssql/server:2025-latest"
-	SQL2025 string `json:"sql2025,omitempty"`
+	// Catalog is a map of version keys to SQL Server container image references.
+	// The map key is the version string that users specify in SQLServer.spec.version,
+	// and the value is the full container image reference.
+	//
+	// Built-in defaults ("2019", "2022", "2025") are provided automatically and do not
+	// need to be listed unless you want to override them with custom images.
+	//
+	// Example:
+	//   catalog:
+	//     "2022": "mcr.microsoft.com/mssql/server:2022-CU16-ubuntu-22.04"
+	//     "2025": "mcr.microsoft.com/mssql/server:2025-latest"
+	//     "2025-fts": "myregistry.azurecr.io/mssql/server:2025-fts"
+	//     "2025-ai": "myregistry.azurecr.io/mssql-ai:2025-ollama"
+	//     "2022-polybase": "myregistry.azurecr.io/mssql/server:2022-polybase"
+	// +optional
+	Catalog map[string]string `json:"catalog,omitempty"`
 
 	// AGHelper is the container image for the AG Helper sidecar
 	// +kubebuilder:default="mssql-ag-helper:latest"
@@ -320,30 +328,40 @@ const DefaultExporterImage = "burningalchemist/sql_exporter:latest"
 // DefaultSidecarImage is the default AG helper sidecar image
 const DefaultSidecarImage = "ghcr.io/tejasaks/mssql-ag-helper:v1.0.0"
 
-// GetSQLImage returns the SQL Server image for the specified version
-// It checks the ImageConfiguration first, then falls back to DefaultImages
+// GetSQLImage returns the SQL Server image for the specified version key.
+// It checks the catalog map first, then falls back to DefaultImages.
 func (c *ImageConfiguration) GetSQLImage(version string) string {
-	if c != nil {
-		switch version {
-		case "2019":
-			if c.SQL2019 != "" {
-				return c.SQL2019
-			}
-		case "2022":
-			if c.SQL2022 != "" {
-				return c.SQL2022
-			}
-		case "2025":
-			if c.SQL2025 != "" {
-				return c.SQL2025
-			}
+	if c != nil && c.Catalog != nil {
+		if img, ok := c.Catalog[version]; ok && img != "" {
+			return img
 		}
 	}
-	// Fall back to defaults
+	// Fall back to built-in defaults
 	if img, ok := DefaultImages[version]; ok {
 		return img
 	}
-	return DefaultImages["2022"] // Ultimate fallback
+	return "" // Unknown version — let caller decide
+}
+
+// GetAvailableVersions returns a sorted list of all version keys available
+// (from catalog + built-in defaults). Used for user-facing error messages.
+func (c *ImageConfiguration) GetAvailableVersions() []string {
+	seen := make(map[string]bool)
+	for k := range DefaultImages {
+		seen[k] = true
+	}
+	if c != nil && c.Catalog != nil {
+		for k := range c.Catalog {
+			seen[k] = true
+		}
+	}
+	versions := make([]string, 0, len(seen))
+	for k := range seen {
+		versions = append(versions, k)
+	}
+	// Sort for deterministic output
+	sort.Strings(versions)
+	return versions
 }
 
 // GetAGHelperImage returns the AG Helper sidecar image

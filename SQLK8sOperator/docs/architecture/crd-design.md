@@ -234,11 +234,13 @@ spec:
 
 ```yaml
 spec:
-  # Image defaults per version
+  # Image catalog — maps version keys to container image references
   images:
-    sql2019: mcr.microsoft.com/mssql/server:2019-latest
-    sql2022: mcr.microsoft.com/mssql/server:2022-latest
-    sql2025: mcr.microsoft.com/mssql/server:2025-latest
+    catalog:
+      "2019": mcr.microsoft.com/mssql/server:2019-latest
+      "2022": mcr.microsoft.com/mssql/server:2022-latest
+      "2025": mcr.microsoft.com/mssql/server:2025-latest
+      "2025-fts": myregistry.azurecr.io/mssql/server:2025-fts   # custom
     agHelper: mssql-operator/ag-helper:latest
     sqlExporter: burningalchemist/sql_exporter:latest
   
