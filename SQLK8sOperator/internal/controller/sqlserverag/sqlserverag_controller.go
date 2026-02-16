@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -155,6 +156,13 @@ func (r *SQLServerAGReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		// Don't return error, continue with requeue
 	}
 
+	// Re-fetch the AG object to get the updated resource version after status write.
+	// Without this, the next status update (e.g., listener) would conflict.
+	if err := r.Get(ctx, req.NamespacedName, ag); err != nil {
+		logger.Error(err, "Failed to re-fetch SQLServerAG after status update")
+		return ctrl.Result{}, err
+	}
+
 	// Reconcile listener Service and Endpoints if listener is configured
 	if ag.Spec.Listener != nil {
 		if err := r.reconcileListener(ctx, ag, sqlServer); err != nil {
@@ -216,19 +224,43 @@ func (r *SQLServerAGReconciler) updateAGStatus(ctx context.Context, ag *mssqlv1a
 	synchronizedCount := int32(0)
 
 	for _, pod := range podList.Items {
-		// In a real implementation, we would query the sidecar API
-		// For now, we'll derive role from pod labels or annotations
-		role := pod.Labels["mssql.microsoft.com/role"]
-		if role == "" {
-			role = "SECONDARY" // Default
-		}
-		if role == "primary" || role == "PRIMARY" {
-			primaryReplica = pod.Name
+		role := "SECONDARY"
+		syncState := "SYNCHRONIZING"
+		connectedState := "DISCONNECTED"
+		health := "Unknown"
+
+		// Query the sidecar for real AG state
+		if pod.Status.Phase == corev1.PodRunning && pod.Status.PodIP != "" {
+			state, err := r.querySidecar(ctx, pod.Status.PodIP)
+			if err == nil && state != nil {
+				// Use actual sidecar data
+				if state.Role != "" {
+					role = strings.ToUpper(state.Role)
+				}
+				if state.SyncState != "" {
+					syncState = strings.ToUpper(state.SyncState)
+				}
+				connectedState = "CONNECTED"
+				if state.Health != "" {
+					health = state.Health
+				}
+				logger.V(4).Info("Got sidecar state", "pod", pod.Name, "role", role, "syncState", syncState)
+			} else {
+				// Sidecar query failed — fall back to pod labels
+				logger.V(4).Info("Sidecar query failed, using pod labels", "pod", pod.Name, "error", err)
+				labelRole := pod.Labels["mssql.microsoft.com/role"]
+				if strings.EqualFold(labelRole, "PRIMARY") {
+					role = "PRIMARY"
+					syncState = "SYNCHRONIZED"
+				}
+				// Pod is running, assume connected
+				connectedState = "CONNECTED"
+				health = "Healthy"
+			}
 		}
 
-		syncState := "SYNCHRONIZING"
-		if role == "PRIMARY" || role == "primary" {
-			syncState = "SYNCHRONIZED"
+		if strings.EqualFold(role, "PRIMARY") {
+			primaryReplica = pod.Name
 		}
 
 		// Check if pod is ready
@@ -240,7 +272,7 @@ func (r *SQLServerAGReconciler) updateAGStatus(ctx context.Context, ag *mssqlv1a
 			}
 		}
 
-		if syncState == "SYNCHRONIZED" && ready {
+		if strings.EqualFold(syncState, "SYNCHRONIZED") && ready {
 			synchronizedCount++
 		}
 
@@ -248,8 +280,8 @@ func (r *SQLServerAGReconciler) updateAGStatus(ctx context.Context, ag *mssqlv1a
 			Name:                 pod.Name,
 			Role:                 role,
 			SynchronizationState: syncState,
-			ConnectedState:       "CONNECTED",
-			Health:               "Healthy",
+			ConnectedState:       connectedState,
+			Health:               health,
 			IsLocal:              false,
 		})
 	}
