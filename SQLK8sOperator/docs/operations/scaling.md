@@ -422,31 +422,29 @@ kubectl apply -f sqlserver-prod.yaml
 
 ## Read Scale-Out
 
-### Configure Secondary Services
+### Connect to Secondary Replicas
 
-Route read traffic to secondary replicas:
+For read-only workloads, connect directly to individual secondary replica
+services created by the SQLServer resource:
 
 ```yaml
 apiVersion: mssql.microsoft.com/v1alpha1
 kind: SQLServerAG
 spec:
-  endpoints:
-    primary:
-      type: LoadBalancer
-      port: 1433
-    secondary:
-      type: LoadBalancer
-      port: 1434
+  listener:
+    name: productionag-listener
+    port: 1433
+    serviceType: ClusterIP
 ```
 
 ### Application Connection Strings
 
 ```
-# Read-write queries (primary)
-Server=prod-ag-primary.mssql.svc,1433;ApplicationIntent=ReadWrite;
+# Read-write queries (via listener — always routes to primary)
+Server=productionag-listener.mssql.svc,1433;ApplicationIntent=ReadWrite;
 
-# Read-only queries (secondary)
-Server=prod-ag-secondary.mssql.svc,1434;ApplicationIntent=ReadOnly;
+# Read-only queries (direct to a secondary replica)
+Server=sql-prod-1.sql-prod-headless.mssql.svc,1433;ApplicationIntent=ReadOnly;
 ```
 
 ### Load Distribution

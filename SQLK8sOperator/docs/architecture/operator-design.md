@@ -74,17 +74,22 @@ func (r *SQLServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 ```go
 type SQLServerAGReconciler struct {
     client.Client
-    Scheme   *runtime.Scheme
-    Recorder record.EventRecorder
+    Scheme     *runtime.Scheme
+    Recorder   record.EventRecorder
+    HTTPClient *http.Client
 }
 
 func (r *SQLServerAGReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
     // 1. Fetch the SQLServerAG instance
-    // 2. Fetch referenced SQLServer
-    // 3. Reconcile services (primary, secondary)
-    // 4. Update endpoint routing
-    // 5. Update status
-    // 6. Return result
+    // 2. Handle deletion (finalizers)
+    // 3. Fetch referenced SQLServer
+    // 4. Check SQLServer readiness
+    // 5. Update AG status (query each pod's sidecar at :8080/state)
+    // 6. Re-fetch AG (fresh resourceVersion after status write)
+    // 7. Reconcile listener (if spec.listener is configured)
+    // 8. Check manual failover (annotation-triggered)
+    // 9. Check automatic failover (if enabled)
+    // 10. Requeue after monitorInterval
 }
 ```
 

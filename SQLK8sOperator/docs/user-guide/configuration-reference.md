@@ -25,8 +25,8 @@ spec:
   # Optional description for auditing (max 1024 chars)
   description: string
   
-  # SQL Server version
-  version: "2019" | "2022" | "2025"  # Default: "2025"
+  # SQL Server version (any key from the image catalog)
+  version: string  # Pattern: ^[a-zA-Z0-9][a-zA-Z0-9._-]*$  Default: "2022"
   
   # SQL Server edition
   edition: Developer | Express | Standard | Enterprise  # Default: Developer
@@ -211,20 +211,15 @@ spec:
     leaseTimeout: string             # e.g., "60s"
     requiredSynchronizedSecondaries: int  # -1 = auto-calculate
   
-  # Service endpoints
-  endpoints:
-    primary:
-      type: LoadBalancer | ClusterIP | NodePort
-      port: int                      # Default: 1433
-      nodePort: int
-      annotations:
-        key: value
-    secondary:
-      type: LoadBalancer | ClusterIP | NodePort
-      port: int                      # Default: 1434
-      nodePort: int
-      annotations:
-        key: value
+  # AG Listener (optional — omit for DR/manual failover scenarios)
+  listener:
+    name: string                     # Listener/Service name
+    port: int                        # Default: 1433
+    serviceType: ClusterIP | LoadBalancer | NodePort
+    clusterIP: string                # Optional: request specific ClusterIP
+    loadBalancerIP: string           # Optional: request specific LB IP
+    annotations:                     # Optional: Service annotations
+      key: value
   
   # AG Helper sidecar configuration
   sidecar:

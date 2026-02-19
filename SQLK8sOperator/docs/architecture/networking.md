@@ -34,23 +34,23 @@ This document describes the network architecture, including Services, DNS, and t
 └───────────────────────────────┬─────────────────────────────────────┘
                                 │
         ┌───────────────────────┼───────────────────────┐
-        │                       │                       │
-        ▼                       ▼                       ▼
-┌───────────────┐       ┌───────────────┐       ┌───────────────┐
-│ sql-prod-01   │       │ prod-ag-      │       │ prod-ag-      │
-│ (Headless)    │       │ primary       │       │ secondary     │
-│               │       │ (LoadBalancer)│       │ (LoadBalancer)│
-│ No ClusterIP  │       │               │       │               │
-│ DNS only      │       │ ClusterIP +   │       │ ClusterIP +   │
-│               │       │ External IP   │       │ External IP   │
-│               │       │               │       │               │
-│ Port: 1433    │       │ Port: 1433    │       │ Port: 1434    │
-└───────┬───────┘       └───────┬───────┘       └───────┬───────┘
-        │                       │                       │
-        │                       │ Selector:             │ Selector:
-        │                       │ role=primary          │ role=secondary
-        │                       │                       │
-        ▼                       ▼                       ▼
+        │                                               │
+        ▼                                               ▼
+┌───────────────┐                               ┌───────────────────┐
+│ sql-prod-01   │                               │ productionag-     │
+│ (Headless)    │                               │ listener          │
+│               │                               │ (Selectorless)    │
+│ No ClusterIP  │                               │                   │
+│ DNS only      │                               │ ClusterIP or LB   │
+│               │                               │ Operator-managed  │
+│ Port: 1433    │                               │ Endpoints         │
+└───────┬───────┘                               │ Port: 1433        │
+        │                                       └─────────┬─────────┘
+        │                                                 │
+        │                                                 │ Endpoints point
+        │                                                 │ to current primary
+        │                                                 │ pod IP only
+        ▼                                                 ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         Pod Endpoints                                │
 │                                                                      │
@@ -58,9 +58,6 @@ This document describes the network architecture, including Services, DNS, and t
 │  │ sql-prod-01-0   │  │ sql-prod-01-1   │  │ sql-prod-01-2   │      │
 │  │ (PRIMARY)       │  │ (SECONDARY)     │  │ (SECONDARY)     │      │
 │  │ 10.0.1.10:1433  │  │ 10.0.1.11:1433  │  │ 10.0.1.12:1433  │      │
-│  │                 │  │                 │  │                 │      │
-│  │ Labels:         │  │ Labels:         │  │ Labels:         │      │
-│  │ role: primary   │  │ role: secondary │  │ role: secondary │      │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘      │
 │                                                                      │
 └─────────────────────────────────────────────────────────────────────┘
@@ -72,8 +69,7 @@ This document describes the network architecture, including Services, DNS, and t
 |----------|---------|---------|
 | SQLServer | Headless Service | Pod DNS names |
 | SQLServer | Client Service (optional) | Direct pod access |
-| SQLServerAG | Primary Service | Route to current primary |
-| SQLServerAG | Secondary Service | Route to readable secondaries |
+| SQLServerAG | Listener Service (optional) | Route to current primary via operator-managed Endpoints |
 
 ## DNS Resolution
 
@@ -92,8 +88,7 @@ StatefulSets with headless services get predictable DNS names:
 
 | DNS Name | Resolves To |
 |----------|-------------|
-| `prod-ag-primary.mssql.svc.cluster.local` | Current primary pod IP |
-| `prod-ag-secondary.mssql.svc.cluster.local` | Secondary pod IPs |
+| `productionag-listener.mssql.svc.cluster.local` | Current primary pod IP (via operator-managed Endpoints) |
 
 ### DNS Format
 
@@ -121,69 +116,62 @@ StatefulSets with headless services get predictable DNS names:
 ### Service Port Mapping
 
 ```yaml
-# Primary AG Service
+# Listener Service (selectorless, operator-managed Endpoints)
 apiVersion: v1
 kind: Service
 metadata:
-  name: prod-ag-primary
+  name: productionag-listener
 spec:
-  type: LoadBalancer
+  type: ClusterIP           # or LoadBalancer
   ports:
     - name: sql
-      port: 1433        # Service port (external)
-      targetPort: 1433  # Container port
+      port: 1433             # Service port
+      targetPort: 1433       # Container port
       protocol: TCP
-  selector:
-    mssql.microsoft.com/ag-role: primary
+  # No selector — Endpoints managed by the operator
+  # to always point to the current primary pod IP
 ```
 
 ## Traffic Flow
 
-### Read-Write Traffic (Primary)
+### Read-Write Traffic (via Listener)
+
+```
+┌──────────┐     ┌────────────────────────┐     ┌───────────────┐
+│  Client  │────▶│ productionag-listener  │────▶│ sql-prod-01-0 │
+│          │     │ Selectorless Service   │     │ (PRIMARY)     │
+│          │     │ 10.0.0.100:1433       │     │ 10.0.1.10:1433│
+└──────────┘     └────────────────────────┘     └───────────────┘
+                   Endpoints managed by
+                   operator → primary pod IP
+```
+
+### Read-Only Traffic (Direct Replica Access)
+
+For read-only workloads, connect directly to secondary replica services
+created by the SQLServer resource:
 
 ```
 ┌──────────┐     ┌───────────────────┐     ┌───────────────┐
-│  Client  │────▶│ prod-ag-primary   │────▶│ sql-prod-01-0 │
-│          │     │ LoadBalancer      │     │ (PRIMARY)     │
-│          │     │ 10.0.0.100:1433   │     │ 10.0.1.10:1433│
+│  Client  │────▶│ sql-prod-01-1     │────▶│ sql-prod-01-1 │
+│          │     │ (direct service)  │     │ (SECONDARY)   │
+│          │     │ 10.0.1.11:1433    │     │               │
 └──────────┘     └───────────────────┘     └───────────────┘
-```
-
-### Read-Only Traffic (Secondary)
-
-```
-┌──────────┐     ┌───────────────────┐     ┌───────────────┐
-│  Client  │────▶│ prod-ag-secondary │────▶│ sql-prod-01-1 │
-│          │     │ LoadBalancer      │     │ (SECONDARY)   │
-│          │     │ 10.0.0.101:1434   │     │ 10.0.1.11:1433│
-└──────────┘     └───────────────────┘     │               │
-                                           │      OR       │
-                                           │               │
-                                           │ sql-prod-01-2 │
-                                           │ (SECONDARY)   │
-                                           │ 10.0.1.12:1433│
-                                           └───────────────┘
 ```
 
 ### Failover Traffic Rerouting
 
-When failover occurs:
+When failover occurs, the operator updates the Endpoints resource to point to the new primary pod:
 
 ```
 Before Failover:                    After Failover:
 ─────────────────                   ────────────────
 
-Primary Service ──▶ Pod 0           Primary Service ──▶ Pod 1
-                   (PRIMARY)                            (PRIMARY)
-                                    
-Pod 0 labels:                       Pod 0 labels:
-  role: primary                       role: secondary
-
-Pod 1 labels:                       Pod 1 labels:
-  role: secondary                     role: primary
+Listener Endpoints ──▶ Pod 0 IP     Listener Endpoints ──▶ Pod 1 IP
+                      (PRIMARY)                            (PRIMARY)
 ```
 
-The operator updates pod labels, causing Kubernetes to automatically reroute traffic.
+The operator queries each pod's AG Helper sidecar (`GET /state` on port 8080) to discover which pod is the current PRIMARY, then updates the Endpoints object to route the listener Service to that pod's IP. No pod labels are involved in traffic routing.
 
 ### AG Endpoint Traffic
 
@@ -295,7 +283,7 @@ metadata:
   name: tcp-services
   namespace: ingress-nginx
 data:
-  "1433": "mssql/prod-ag-primary:1433"
+  "1433": "mssql/productionag-listener:1433"
 ```
 
 ## TLS/mTLS
@@ -343,7 +331,7 @@ CREATE ENDPOINT AG_Endpoint
 ### Connection String with TLS
 
 ```
-Server=prod-ag-primary.mssql.svc.cluster.local,1433;
+Server=productionag-listener.mssql.svc.cluster.local,1433;
 Database=MyDB;
 User Id=sa;
 Password=xxx;

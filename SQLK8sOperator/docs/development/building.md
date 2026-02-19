@@ -446,7 +446,7 @@ For **Linux/Ubuntu with minikube**, we provide `scripts/dev-setup.sh` as a conve
 ```
 
 **Expected workflow:**
-1. Checks prerequisites (Docker, minikube, kubectl, Go 1.22+)
+1. Checks prerequisites (Docker, minikube, kubectl, Go 1.24+)
 2. Starts minikube with 4 CPUs, 8GB RAM, Kubernetes v1.29
 3. Builds operator and AG Helper images inside minikube
 4. Installs CRDs and deploys the operator

@@ -69,8 +69,8 @@ The operator manages:
 │  │                         Managed Resources                              │  │
 │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐   │  │
 │  │  │ StatefulSet │  │  Services   │  │    PVCs     │  │ ConfigMaps  │   │  │
-│  │  │             │  │ (Primary,   │  │ (Data, Log, │  │ (mssql.conf)│   │  │
-│  │  │ Pods 0..N   │  │  Secondary) │  │  TempDB)    │  │             │   │  │
+│  │  │             │  │ (Headless,  │  │ (Data, Log, │  │ (mssql.conf)│   │  │
+│  │  │ Pods 0..N   │  │  Listener)  │  │  TempDB)    │  │             │   │  │
 │  │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘   │  │
 │  └───────────────────────────────────────────────────────────────────────┘  │
 │                                                                              │
@@ -91,7 +91,7 @@ The operator manages:
 
 | Component | Technology | Version | Purpose |
 |-----------|------------|---------|---------|
-| Language | Go | 1.22+ | Operator implementation |
+| Language | Go | 1.24+ | Operator implementation |
 | Framework | controller-runtime | v0.17.0 | Kubernetes controller SDK |
 | Client | client-go | v0.29.0 | Kubernetes API client |
 | CRD Generation | controller-gen | v0.14.0 | CRD and RBAC generation |
@@ -135,7 +135,7 @@ The operator architecture was informed by established patterns from:
 │                       SQLServerAG                            │
 │  (Namespace-scoped)                                          │
 │  - Defines Availability Group configuration                  │
-│  - Owns: Primary Service, Secondary Service                 │
+│  - Owns: Listener Service (optional), Endpoints              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -195,7 +195,7 @@ All child resources include `ownerReferences` pointing to parent CRs, enabling:
 │           ▼                           ▼                                  │
 │  ┌─────────────────────────────────────────────────────────────────┐    │
 │  │                        Kubernetes Services                       │    │
-│  │   Primary Service (:1433)  │  Secondary Service (:1434)         │    │
+│  │   Listener Service (:1433) — routes to current primary          │    │
 │  └─────────────────────────────────────────────────────────────────┘    │
 │                                                                          │
 │  ┌─────────────────┐                                                    │

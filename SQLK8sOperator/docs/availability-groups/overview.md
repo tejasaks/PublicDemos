@@ -71,10 +71,9 @@ An Availability Group is a SQL Server feature that enables:
 | Component | Purpose |
 |-----------|---------|
 | **SQLServer CR** | Deploys SQL Server pods with HADR enabled |
-| **SQLServerAG CR** | Configures AG services and endpoints |
+| **SQLServerAG CR** | Configures AG monitoring, failover, and optional listener |
 | **AG Helper Sidecar** | Monitors AG health, provides failover API |
-| **Primary Service** | Routes traffic to current primary |
-| **Secondary Service** | Routes traffic to readable secondaries |
+| **Listener Service** (optional) | Routes traffic to current primary via operator-managed Endpoints |
 
 ## AG Helper Sidecar
 

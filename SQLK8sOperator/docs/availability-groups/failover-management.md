@@ -40,9 +40,9 @@ When explicitly enabled, the operator automatically detects primary failure and 
 │     └─ POST /failover to selected secondary                    │
 │     └─ AG Helper promotes to primary                           │
 │                                                                 │
-│  5. Service Update                                              │
-│     └─ Pod labels updated (role: primary)                      │
-│     └─ Primary service reroutes traffic                        │
+│  5. Endpoint Update                                            │
+│     └─ Listener Endpoints updated to new primary pod IP         │
+│     └─ Listener service reroutes traffic                        │
 │                                                                 │
 │  6. Cooldown                                                    │
 │     └─ No failover for 60s to prevent flapping                 │

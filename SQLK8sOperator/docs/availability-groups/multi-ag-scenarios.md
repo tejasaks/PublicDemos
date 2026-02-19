@@ -54,8 +54,8 @@ Multiple Availability Groups allow you to:
                 │                            │
                 ▼                            ▼
      ┌──────────────────┐         ┌──────────────────┐
-     │ prod-ag-primary  │         │ analytics-primary│
-     │ :1433            │         │ :2433            │
+     │ productionag-   │         │ analyticsag-    │
+     │ listener :1433  │         │ listener :2433  │
      └──────────────────┘         └──────────────────┘
 ```
 
@@ -294,54 +294,44 @@ done
 
 ## Traffic Routing
 
-### Multiple Services
+### Listener Services
 
-Each AG gets its own services:
+Each AG gets its own listener service (selectorless, with operator-managed Endpoints):
 
 ```bash
 kubectl get svc -n mssql
 
-# NAME                     TYPE           PORT(S)
-# production-ag-primary    LoadBalancer   1433
-# production-ag-secondary  LoadBalancer   1434
-# analytics-ag-primary     LoadBalancer   2433
-# analytics-ag-secondary   LoadBalancer   2434
+# NAME                       TYPE           PORT(S)
+# productionag-listener      LoadBalancer   1433
+# analyticsag-listener       LoadBalancer   2433
 ```
 
 ### Connection Strings
 
 ```
-# Production databases (Orders, Inventory)
-Server=production-ag-primary.mssql.svc.cluster.local,1433;
+# Production databases (Orders, Inventory) — via listener
+Server=productionag-listener.mssql.svc.cluster.local,1433;
 
-# Analytics databases (Analytics, Reports)  
-Server=analytics-ag-primary.mssql.svc.cluster.local,2433;
+# Analytics databases (Analytics, Reports) — via listener
+Server=analyticsag-listener.mssql.svc.cluster.local,2433;
 
-# Read-only analytics
-Server=analytics-ag-secondary.mssql.svc.cluster.local,2434;
+# Read-only analytics — connect directly to a secondary replica pod
+Server=sql-ag-2.sql-ag.mssql.svc.cluster.local,1433;
 ApplicationIntent=ReadOnly;
 ```
 
-### Role Labels
+### Role Detection
 
-Each pod gets labels for EACH AG:
+The operator detects each pod's role via the sidecar HTTP API (`/state`), falling back to a single `mssql.microsoft.com/role` pod label. There are no per-AG role labels on pods.
 
-```yaml
-labels:
-  mssql.microsoft.com/ProductionAG-role: primary
-  mssql.microsoft.com/AnalyticsAG-role: secondary
-```
-
-Services use label selectors:
+Services use selectorless Endpoints managed by the operator:
 
 ```yaml
-# production-ag-primary service
-selector:
-  mssql.microsoft.com/ProductionAG-role: primary
+# productionag-listener service
+# Selectorless — Endpoints point to current ProductionAG primary pod IP
 
-# analytics-ag-primary service
-selector:
-  mssql.microsoft.com/AnalyticsAG-role: primary
+# analyticsag-listener service
+# Selectorless — Endpoints point to current AnalyticsAG primary pod IP
 ```
 
 ## Monitoring Multiple AGs

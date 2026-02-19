@@ -308,22 +308,31 @@ func (r *SQLServerAGReconciler) Reconcile(ctx, req) (Result, error) {
     ag := &SQLServerAG{}
     r.Get(ctx, req.NamespacedName, ag)
 
-    // 2. Get the referenced SQLServer resource
+    // 2. Handle deletion (finalizers)
+    // 3. Add finalizer if not present
+
+    // 4. Get the referenced SQLServer resource
     sqlServer := &SQLServer{}
     r.Get(ctx, NamespacedName{Name: ag.Spec.SQLServerRef.Name}, sqlServer)
 
-    // 3. Ensure SQLServer is ready
+    // 5. Ensure SQLServer is ready
     if !sqlServer.Status.Ready {
         return Result{RequeueAfter: 10 * time.Second}, nil
     }
 
-    // 4. Create/update endpoint services (primary/secondary routing)
-    r.reconcileEndpoints(ctx, ag, sqlServer)
-
-    // 5. Query all pod sidecars and update CRD status
+    // 6. Query all pod sidecars and update CRD status
     r.updateAGStatus(ctx, ag, sqlServer)
 
-    // 6. Check for failover if automatic failover is enabled
+    // 7. Re-fetch AG (fresh resourceVersion after status write)
+    r.Get(ctx, req.NamespacedName, ag)
+
+    // 8. Reconcile listener (if spec.listener is configured)
+    if ag.Spec.Listener != nil {
+        r.reconcileListener(ctx, ag, sqlServer)
+    }
+
+    // 9. Check for manual failover (annotation-triggered)
+    // 10. Check for automatic failover if enabled
     if ag.Spec.AvailabilityGroup.AutomaticFailover {
         r.checkAndHandleFailover(ctx, ag, sqlServer)
     }

@@ -372,22 +372,21 @@ kubectl exec -it sql-ag-0 -n mssql -c mssql -- \
 ```bash
 kubectl get svc -n mssql
 
-# NAME                      TYPE           CLUSTER-IP     EXTERNAL-IP   PORT(S)
-# production-ag-primary     LoadBalancer   10.0.100.10    <pending>     1433/TCP
-# production-ag-secondary   LoadBalancer   10.0.100.11    <pending>     1434/TCP
+# NAME                         TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)
+# productionag-listener        ClusterIP   10.0.100.10    <none>        1433/TCP
 ```
 
-### Connect via Primary Service
+### Connect via Listener Service
 
 ```bash
 # For minikube
 minikube tunnel
 
-# Get external IP
-kubectl get svc production-ag-primary -n mssql
+# Get service IP
+kubectl get svc productionag-listener -n mssql
 
 # Connect
-sqlcmd -S <EXTERNAL_IP>,1433 -U sa -P 'YourStrong@Passw0rd!'
+sqlcmd -S <CLUSTER_IP>,1433 -U sa -P 'YourStrong@Passw0rd!'
 ```
 
 ## Quick Reference
