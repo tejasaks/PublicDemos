@@ -21,12 +21,47 @@
 #     - PersistentVolumeClaims for Prometheus and Grafana data
 #
 # DEPLOYMENT ORDER:
-#   1. Apply Step 1 resources (namespace, secrets, SQLServer, services)
-#   2. Wait for all 3 pods to be Running (1/1 Ready + sql-exporter sidecar)
+#   1. kubectl apply -f ag-with-monitoring.yaml  (deploys everything at once)
+#   2. Wait for all 3 pods to be Running
 #   3. Execute T-SQL steps from ag-step2-setup-ag.md
-#   4. Apply Step 3 resources (SQLServerAG → deploys AG Helper sidecar)
-#   5. Deploy monitoring stack (Prometheus + Grafana)
-#   6. Access Grafana dashboards
+#   4. AG Helper activates automatically (operator was already waiting)
+#   5. Access Grafana dashboards
+#
+# ORDERING — SAFE TO APPLY EVERYTHING AT ONCE:
+#   This file deploys ALL Kubernetes resources in one kubectl apply, including
+#   the SQLServerAG resource which needs the AG to exist in SQL Server first.
+#   This is SAFE because the operator handles missing prerequisites gracefully:
+#
+#   ┌──────────────────────────────────────────────────────────────────────┐
+#   │  What happens when the whole file is applied before T-SQL setup:    │
+#   ├──────────────────────────────────────────────────────────────────────┤
+#   │                                                                    │
+#   │  SQLServer CR         → Operator creates StatefulSet, pods start   │
+#   │                         with mssql-server + sql-exporter.          │
+#   │                         Instance metrics (CPU, memory, etc.)       │
+#   │                         are available immediately.                 │
+#   │                                                                    │
+#   │  SQLServerAG CR       → AG controller starts reconciling:          │
+#   │    • If SQLServer not Ready yet → requeues every 10 seconds        │
+#   │    • If SQLServer Ready but AG not created in SQL Server yet →     │
+#   │      AG Helper sidecar is injected into pods (pods restart to      │
+#   │      add the container), AG Helper reports disconnected/empty      │
+#   │      state, controller sets phase="Creating", requeues every 10s  │
+#   │    • Once you run the T-SQL in Step 2 → AG Helper detects the AG, │
+#   │      reports role+sync state, controller transitions to Running    │
+#   │                                                                    │
+#   │  Monitoring stack     → Prometheus + Grafana deploy independently  │
+#   │                         in the 'monitoring' namespace. Prometheus  │
+#   │                         begins scraping once pods have the         │
+#   │                         prometheus.io/scrape annotation. Grafana   │
+#   │                         dashboards show "No data" until metrics    │
+#   │                         flow in (completely normal).               │
+#   │                                                                    │
+#   │  Net effect: You may see warnings in operator logs and             │
+#   │  "Creating" / "No data" states until T-SQL is completed.          │
+#   │  These are informational, not errors. Everything self-heals        │
+#   │  once the AG exists.                                               │
+#   └──────────────────────────────────────────────────────────────────────┘
 #
 # ARCHITECTURE:
 #
@@ -317,7 +352,19 @@ spec:
 #
 # ############################################################################
 #
-# After Step 1 pods are Running (2/2 Ready — mssql-server + sql-exporter):
+# NOTE: By this point, the SQLServerAG and monitoring resources from this file
+# are already deployed and in a "waiting" state. This is expected behavior:
+#   - SQLServerAG phase will show "Creating" (waiting for T-SQL AG creation)
+#   - AG Helper sidecar may show connection errors (no AG exists yet)
+#   - Prometheus targets may show DOWN (pods still stabilizing)
+#   - Grafana dashboards will show "No data" for AG metrics
+# All of these resolve automatically once you complete the T-SQL steps below.
+#
+# Wait for pods to reach at least 2/2 Ready (mssql-server + sql-exporter)
+# before starting T-SQL setup:
+#   kubectl get pods -n mssql -w
+#
+# Then:
 #
 #   1. Connect to each replica individually:
 #      sqlcmd -S <sql-ag-0-ip>,1433 -U sa -P 'YourStrong@Passw0rd!'
@@ -351,9 +398,18 @@ spec:
 
 # ############################################################################
 #
-#   STEP 3: SQLServerAG Configuration (AG Helper + K8s Management)
+#   STEP 3: SQLServerAG Configuration (already applied — activates after T-SQL)
 #
 # ############################################################################
+#
+# The SQLServerAG resource below was already submitted to the API server when
+# you ran kubectl apply in Step 1. The AG controller has been reconciling it
+# in the background, but since no AG existed in SQL Server yet, it was in a
+# retry loop (phase: "Creating", requeuing every 10 seconds).
+#
+# After completing the T-SQL setup in Step 2, the AG Helper sidecar detects
+# the AG and the controller transitions automatically to "Running".
+# No additional kubectl commands are needed for this step.
 
 ---
 apiVersion: mssql.microsoft.com/v1alpha1
@@ -430,9 +486,18 @@ spec:
 
 # ############################################################################
 #
-#   STEP 4: Monitoring Stack (Prometheus + Grafana)
+#   STEP 4: Monitoring Stack (already deployed — activates with pods)
 #
 # ############################################################################
+#
+# The Prometheus and Grafana resources below were already deployed when you
+# ran kubectl apply in Step 1. Prometheus begins scraping sql-exporter
+# endpoints as soon as the pods are annotated and running. Grafana loads
+# its pre-configured dashboards on startup.
+#
+# Before T-SQL setup: dashboards show instance metrics (CPU, memory, etc.)
+# but AG-specific panels show "No data" (the AG doesn't exist yet).
+# After T-SQL setup: AG metrics appear automatically within ~30 seconds.
 
 ---
 # Monitoring namespace
@@ -1232,28 +1297,63 @@ spec:
 #
 # ############################################################################
 #
-# This sample is designed to be applied in stages. You can either apply the
-# entire file at once (Steps 1, 3, and 4 deploy simultaneously) or apply
-# each section separately using label selectors or by splitting the file.
+# IMPORTANT: This file is designed to be applied ALL AT ONCE with a single
+# kubectl apply. You do NOT need to split it or apply sections separately.
+# The operator handles ordering automatically through retry loops.
+#
+# When you apply the entire file:
+#   - SQL Server pods start up (with sql-exporter sidecar for monitoring)
+#   - SQLServerAG controller begins waiting for SQL Server to be Ready
+#   - Prometheus + Grafana deploy in the monitoring namespace
+#   - Once SQL Server pods are Ready, the AG Helper sidecar is injected
+#   - AG Helper reports "no AG found" until you complete the T-SQL setup
+#   - After T-SQL, everything converges to a healthy state automatically
+#
+# The ONLY manual step is the T-SQL AG creation (Step 2 below).
+# Everything else is handled by the operator's reconciliation loops.
 #
 # ============================================================================
-# STEP 1: Deploy SQL Server with Monitoring
+# STEP 1: Apply the entire file
 # ============================================================================
 #
 #   kubectl apply -f samples/ag-with-monitoring.yaml
 #
-#   Wait for all pods — each pod should show 2/2 (mssql-server + sql-exporter):
+#   This creates ALL resources at once. The operator reconciles them in the
+#   correct order automatically. You will see some expected transient states:
+#
+#   EXPECTED TRANSIENT BEHAVIOR (before T-SQL setup):
+#   ┌──────────────────────────────────────────────────────────────────┐
+#   │  Resource          │  Temporary State     │  After T-SQL        │
+#   ├──────────────────────────────────────────────────────────────────┤
+#   │  SQLServer pods    │  Starting up          │  Running 3/3       │
+#   │  SQLServerAG       │  Phase: "Creating"    │  Phase: "Running"  │
+#   │  AG Helper sidecar │  Disconnected/empty   │  Reports AG state  │
+#   │  Prometheus targets│  DOWN or missing      │  UP (3 targets)    │
+#   │  Grafana dashboards│  "No data"            │  Live metrics      │
+#   │  Operator logs     │  Requeue warnings     │  Normal             │
+#   └──────────────────────────────────────────────────────────────────┘
+#
+#   These transient states are NORMAL and NOT errors. They resolve
+#   automatically once the T-SQL AG setup is completed in Step 2.
+#
+#   Wait for SQL Server pods — initially 2/2 (mssql-server + sql-exporter),
+#   then 3/3 after the AG Helper sidecar is injected by the SQLServerAG
+#   controller (this happens automatically, may cause a pod restart):
 #   kubectl get pods -n mssql -w
 #
-#   # Expected:
+#   # Expected progression:
 #   # NAME       READY   STATUS    RESTARTS   AGE
-#   # sql-ag-0   2/2     Running   0          2m
-#   # sql-ag-1   2/2     Running   0          2m
-#   # sql-ag-2   2/2     Running   0          2m
+#   # sql-ag-0   2/2     Running   0          1m   ← sql-exporter injected
+#   # sql-ag-1   2/2     Running   0          1m
+#   # sql-ag-2   2/2     Running   0          1m
+#   # ... (AG Helper sidecar injected shortly after) ...
+#   # sql-ag-0   3/3     Running   1          3m   ← ag-helper added
+#   # sql-ag-1   3/3     Running   1          3m
+#   # sql-ag-2   3/3     Running   1          3m
 #
-#   Verify the sql-exporter sidecar is running on each replica:
+#   Verify all containers are running:
 #   kubectl get pods -n mssql -o jsonpath='{range .items[*]}{.metadata.name}{": "}{range .spec.containers[*]}{.name}{" "}{end}{"\n"}{end}'
-#   # Should show: mssql-server sql-exporter (for each pod)
+#   # Should show: mssql-server sql-exporter ag-helper (for each pod)
 #
 #   Verify metrics are being exposed:
 #   kubectl port-forward pod/sql-ag-0 -n mssql 9399:9399
@@ -1279,26 +1379,41 @@ spec:
 #   # mssql_ag_synchronization_health{ag_name="ProductionAG"} 2
 #
 # ============================================================================
-# STEP 3: SQLServerAG deploys automatically (included in the same file)
+# STEP 3: Verify AG convergence (automatic — no action needed)
 # ============================================================================
 #
-#   The SQLServerAG resource was already applied in Step 1 along with the
-#   entire file. The operator will reconcile it once the AG exists in SQL
-#   Server (after Step 2).
+#   The SQLServerAG resource was already applied in Step 1. Before T-SQL
+#   setup, the AG controller was in a retry loop:
+#     - Phase: "Creating" (waiting for AG to appear in SQL Server)
+#     - AG Helper sidecar: reporting empty/disconnected state
+#     - Operator logs: "Waiting for SQLServer to be ready" or requeue msgs
 #
-#   Verify the AG Helper sidecar was injected (pods show 3/3):
-#   kubectl get pods -n mssql -w
-#   # Expected: 3/3 Ready (mssql-server + sql-exporter + ag-helper)
+#   After completing Step 2 (T-SQL), the AG Helper automatically detects
+#   the new AG and begins reporting state. The controller transitions
+#   from "Creating" → "Running" without any user intervention.
 #
-#   Check AG status:
+#   Verify convergence:
 #   kubectl get sqlserverag -n mssql
+#   # EXPECTED: Phase should now show "Running" or "Synchronized"
+#
 #   kubectl describe sqlserverag production-ag -n mssql
+#   # Check Events for: "AG status updated", "Primary detected"
+#
+#   Verify pods show 3/3 containers (mssql-server + sql-exporter + ag-helper):
+#   kubectl get pods -n mssql
+#   # All pods should show 3/3 Ready
+#
+#   Check AG Helper logs to confirm it found the AG:
+#   kubectl logs sql-ag-0 -n mssql -c ag-helper --tail=5
+#   # Expected: "AG 'ProductionAG' State: role=PRIMARY, sync=SYNCHRONIZED"
 #
 # ============================================================================
 # STEP 4: Access Grafana Dashboards
 # ============================================================================
 #
-#   The monitoring stack (Prometheus + Grafana) was deployed in Step 1.
+#   Prometheus and Grafana were deployed alongside everything else in Step 1.
+#   By this point they should be running and scraping metrics from all 3
+#   SQL Server replicas.
 #
 #   OPTION A: Port-forward (development / local access):
 #
