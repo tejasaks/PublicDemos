@@ -226,7 +226,18 @@ spec:
     image: string
     monitorInterval: string          # Default: "10s"
     connectionTimeout: string        # Default: "30s"
+    maxRetries: int                  # Default: 3, range: 1-30
+    retryInterval: string            # Default: "5s"
+    stalenessThreshold: string       # Default: "30s"
 ```
+
+#### Connection Resilience Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `maxRetries` | int | 3 | Number of retry attempts for transient SQL errors before giving up. Range: 1-30. |
+| `retryInterval` | string | `5s` | Go duration between retry attempts (e.g., `5s`, `10s`). |
+| `stalenessThreshold` | string | `30s` | If the last successful SQL query is older than this duration, the AG Helper flags its data as stale. Both `/healthz` and `/readyz` return 503 when data is stale. The AG controller maps stale pods to `connectedState=STALE` and excludes them from failover candidate evaluation. Should generally be ≥ 3× `monitorInterval`. |
 
 ## OperatorConfiguration CRD
 

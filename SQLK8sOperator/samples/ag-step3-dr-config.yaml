@@ -106,6 +106,9 @@ spec:
     image: ghcr.io/tejasaks/mssql-ag-helper:v1.0.0
     monitorInterval: "10s"
     connectionTimeout: "30s"
+    maxRetries: 3
+    retryInterval: "5s"
+    stalenessThreshold: "30s"
 
 # ============================================================================
 # USAGE

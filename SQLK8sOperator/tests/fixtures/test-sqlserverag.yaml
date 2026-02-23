@@ -43,3 +43,6 @@ spec:
     image: mssql-ag-helper:dev
     monitorInterval: "10s"
     connectionTimeout: "30s"
+    maxRetries: 3
+    retryInterval: "5s"
+    stalenessThreshold: "30s"

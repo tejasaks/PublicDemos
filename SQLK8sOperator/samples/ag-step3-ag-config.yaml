@@ -189,6 +189,10 @@ spec:
     image: ghcr.io/tejasaks/mssql-ag-helper:v1.0.0
     monitorInterval: "10s"
     connectionTimeout: "30s"
+    # Connection resilience: retry transient SQL errors before declaring unhealthy
+    maxRetries: 3             # Number of retry attempts per query (1-30)
+    retryInterval: "5s"       # Delay between retry attempts
+    stalenessThreshold: "30s" # Data older than this triggers stale warnings
 
 # ============================================================================
 # USAGE

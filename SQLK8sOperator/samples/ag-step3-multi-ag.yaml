@@ -88,6 +88,9 @@ spec:
     image: ghcr.io/tejasaks/mssql-ag-helper:v1.0.0
     monitorInterval: "10s"
     connectionTimeout: "30s"
+    maxRetries: 3
+    retryInterval: "5s"
+    stalenessThreshold: "30s"
 
 ---
 # Reporting AG - Read scale-out with async replicas
@@ -152,6 +155,9 @@ spec:
     image: ghcr.io/tejasaks/mssql-ag-helper:v1.0.0
     monitorInterval: "30s"  # Less frequent for reporting AG
     connectionTimeout: "30s"
+    maxRetries: 3
+    retryInterval: "5s"
+    stalenessThreshold: "90s"  # 3x monitorInterval for reporting AG
 
 ---
 # Disaster Recovery AG - Geo-DR with manual failover
@@ -215,6 +221,9 @@ spec:
     image: ghcr.io/tejasaks/mssql-ag-helper:v1.0.0
     monitorInterval: "60s"  # Infrequent monitoring for DR
     connectionTimeout: "60s"
+    maxRetries: 5             # More retries for cross-region DR
+    retryInterval: "10s"
+    stalenessThreshold: "180s" # 3x monitorInterval for DR AG
 
 # ============================================================================
 # T-SQL TEMPLATES FOR THESE AGs

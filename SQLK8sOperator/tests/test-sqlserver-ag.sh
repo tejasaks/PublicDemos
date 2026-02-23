@@ -211,6 +211,9 @@ spec:
       port: 1433
   sidecar:
     monitorInterval: "10s"
+    maxRetries: 3
+    retryInterval: "5s"
+    stalenessThreshold: "30s"
 EOF
 
 if resource_exists "sqlserverag/${AG_NAME}" "${TEST_NAMESPACE}"; then

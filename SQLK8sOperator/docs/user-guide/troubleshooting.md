@@ -208,6 +208,56 @@ kubectl exec -it my-sqlserver-0 -n mssql -- \
   -Q "SELECT synchronization_health_desc FROM sys.dm_hadr_availability_replica_states"
 ```
 
+### AG Helper Reporting Stale Data
+
+**Symptoms:**
+- `/healthz` and `/readyz` return 503 with `"dataStale": true`
+- AG controller shows `connectedState: STALE` in `kubectl get sqlserverag -o yaml`
+- Pod remains Running but readiness gate blocks traffic
+
+**Diagnosis:**
+```bash
+# Check current state and staleness
+kubectl exec -it my-sqlserver-0 -n mssql -c ag-helper -- \
+  curl -s localhost:8080/state | jq '{dataStale, connectionState, consecutiveFailures, lastSuccessfulQuery}'
+
+# Example output when stale:
+# {
+#   "dataStale": true,
+#   "connectionState": "Reconnecting",
+#   "consecutiveFailures": 5,
+#   "lastSuccessfulQuery": "2024-01-15T10:28:30Z"
+# }
+
+# Check AG Helper logs for retry details
+kubectl logs my-sqlserver-0 -n mssql -c ag-helper --tail=50 | grep -i "retry\|stale\|transient"
+
+# Verify SQL Server is actually reachable
+kubectl exec -it my-sqlserver-0 -n mssql -- \
+  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'password' -C -Q "SELECT 1"
+```
+
+**Causes & Solutions:**
+
+| Cause | Solution |
+|-------|----------|
+| SQL Server temporarily unresponsive | Wait for retries to succeed — staleness auto-clears on next successful query |
+| SQL Server process crashed | Check `kubectl logs my-sqlserver-0 -n mssql -c mssql-server` |
+| Network issue within pod | Restart the pod: `kubectl delete pod my-sqlserver-0 -n mssql` |
+| `stalenessThreshold` too aggressive | Increase: set to ≥ 3× `monitorInterval` (e.g., `30s` for `10s` interval) |
+| High SQL Server load causing timeouts | Increase `connectionTimeout` or `retryInterval` |
+
+### Connection State: Disconnected
+
+**Symptoms:**
+- AG Helper logs show `connection state changed to Disconnected`
+- `connectionState` in `/state` response is `"Disconnected"`
+- All retries have been exhausted
+
+**Solution:** This typically indicates SQL Server is down or unreachable. The AG Helper will
+automatically transition back to `Connected` once SQL Server recovers and the next monitor
+poll succeeds. If this persists, check the SQL Server container logs and pod events.
+
 ## Validation Errors
 
 ### StorageClass Not Found

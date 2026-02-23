@@ -104,7 +104,7 @@ See [AG Helper Reference](ag-helper-reference.md) for complete API documentation
 
 ## Health States
 
-The AG Helper reports one of four health states:
+The AG Helper reports one of four health states, plus an orthogonal **stale data** condition:
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -142,6 +142,9 @@ The AG Helper reports one of four health states:
 │                                    │   FAIL   │                   │
 │                                    └──────────┘                   │
 │                                                                   │
+│  Any state + dataStale=true → Liveness: FAIL, Readiness: FAIL   │
+│  Controller maps stale pod to connectedState=STALE               │
+│                                                                   │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -151,6 +154,12 @@ The AG Helper reports one of four health states:
 | **Healthy** | AG running, all synced | ✅ Pass | ✅ Pass |
 | **Warning** | AG running, some syncing | ✅ Pass | ✅ Pass |
 | **Critical** | AG broken or unreachable | ❌ Fail | ❌ Fail |
+| **Stale** | Data exceeds `stalenessThreshold` | ❌ Fail | ❌ Fail |
+
+> **Note:** Stale is an overlay condition, not a distinct health state. When `dataStale=true`, both
+> probes return 503 regardless of the cached health state. This prevents the sidecar from indefinitely
+> serving outdated "Healthy" data when SQL Server is unreachable. See
+> [AG Helper Reference](ag-helper-reference.md#health-state-matrix) for details.
 
 ## Traffic Routing
 

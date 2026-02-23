@@ -8,7 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- (List new features here)
+- **Connection resilience for AG Helper sidecar**: connection state machine (`Connected` → `Reconnecting` → `Disconnected`), `executeWithRetry` wrapper for transient SQL error recovery, staleness detection with configurable threshold, 503 responses on stale data for both `/healthz` and `/readyz` probes
+- **Stale-pod filtering in failover evaluation**: AG controller treats `dataStale=true` as `connectedState=STALE` and excludes stale pods from failover candidate selection — prevents acting on outdated role claims
+- **New CRD fields** in `AGSidecarSpec`: `maxRetries` (int, default 3, range 1-30), `retryInterval` (duration, default `5s`), `stalenessThreshold` (duration, default `30s`)
+- **Webhook validation** for new sidecar fields: validates duration format for `retryInterval` and `stalenessThreshold`, warns if `stalenessThreshold` < 10s
+- **New ag-helper CLI flags**: `--max-retries`, `--retry-interval`, `--staleness-threshold`
+- **Connection pool tuning**: optimized `database/sql` pool parameters (30min lifetime, 1 idle, 3 max open, 10min idle time)
 
 ### Changed
 - (List changes to existing functionality)

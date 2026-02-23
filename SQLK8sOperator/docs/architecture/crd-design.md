@@ -226,6 +226,9 @@ spec:
     image: string
     monitorInterval: duration
     connectionTimeout: duration
+    maxRetries: int               # Default: 3, range: 1-30
+    retryInterval: duration       # Default: "5s"
+    stalenessThreshold: duration  # Default: "30s"
 ```
 
 ## OperatorConfiguration CRD

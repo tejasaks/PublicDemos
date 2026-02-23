@@ -11,6 +11,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -122,6 +123,22 @@ func (v *SQLServerAGValidator) validate(ctx context.Context, ag *mssqlv1alpha1.S
 	if ag.Spec.Sidecar != nil && ag.Spec.Sidecar.Image != "" {
 		imageResult := validation.ValidateImageReference(ag.Spec.Sidecar.Image)
 		result.Merge(imageResult)
+	}
+
+	// 7b. Validate sidecar connection resilience fields
+	if ag.Spec.Sidecar != nil {
+		if ag.Spec.Sidecar.RetryInterval != "" {
+			if _, err := time.ParseDuration(ag.Spec.Sidecar.RetryInterval); err != nil {
+				result.AddError("sidecar.retryInterval: invalid duration %q: %v", ag.Spec.Sidecar.RetryInterval, err)
+			}
+		}
+		if ag.Spec.Sidecar.StalenessThreshold != "" {
+			if d, err := time.ParseDuration(ag.Spec.Sidecar.StalenessThreshold); err != nil {
+				result.AddError("sidecar.stalenessThreshold: invalid duration %q: %v", ag.Spec.Sidecar.StalenessThreshold, err)
+			} else if d < 10*time.Second {
+				result.AddWarning("sidecar.stalenessThreshold %s is very short — may cause false stale reports during normal operation", ag.Spec.Sidecar.StalenessThreshold)
+			}
+		}
 	}
 
 	// 8. Validate HealthCheckCredentials

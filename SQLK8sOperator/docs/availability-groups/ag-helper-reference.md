@@ -177,6 +177,9 @@ stringData:
 | `-monitor-interval` | `10s` | AG check interval |
 | `-connection-timeout` | `30s` | SQL connection timeout |
 | `-http-port` | `8080` | HTTP API port |
+| `-max-retries` | `3` | Number of retry attempts for transient SQL errors (1-30) |
+| `-retry-interval` | `5s` | Delay between retry attempts |
+| `-staleness-threshold` | `30s` | Data older than this threshold triggers stale warnings |
 
 ### Advanced Configuration
 
@@ -216,13 +219,26 @@ Liveness probe endpoint. Returns 200 if AG Helper is running.
 
 **Response Codes:**
 - `200 OK` - Healthy, Warning, or Waiting state
-- `503 Service Unavailable` - Critical state
+- `503 Service Unavailable` - Critical state **or** data is stale
 
-**Response:**
+**Response (normal):**
 ```json
 {
   "status": "ok",
-  "health": "Healthy"
+  "health": "Healthy",
+  "connectionState": "Connected",
+  "dataStale": false
+}
+```
+
+**Response (stale data — 503):**
+```json
+{
+  "status": "Stale",
+  "health": "Healthy",
+  "connectionState": "Reconnecting",
+  "dataStale": true,
+  "message": "data is stale - last successful query was 45s ago"
 }
 ```
 
@@ -234,14 +250,27 @@ Readiness probe endpoint. Returns 200 only if replica can serve traffic.
 
 **Response Codes:**
 - `200 OK` - Healthy or Warning state
-- `503 Service Unavailable` - Waiting or Critical state
+- `503 Service Unavailable` - Waiting, Critical state, **or** data is stale
 
-**Response:**
+**Response (normal):**
 ```json
 {
   "status": "ready",
   "health": "Healthy",
-  "role": "PRIMARY"
+  "role": "PRIMARY",
+  "connectionState": "Connected",
+  "dataStale": false
+}
+```
+
+**Response (stale data — 503):**
+```json
+{
+  "status": "not ready",
+  "health": "Healthy",
+  "role": "PRIMARY",
+  "connectionState": "Disconnected",
+  "dataStale": true
 }
 ```
 
@@ -256,6 +285,10 @@ Full AG state including all availability groups and databases.
 {
   "instanceName": "sql-ag-prod01-0",
   "health": "Healthy",
+  "connectionState": "Connected",
+  "lastSuccessfulQuery": "2024-01-15T10:30:00Z",
+  "consecutiveFailures": 0,
+  "dataStale": false,
   "timestamp": "2024-01-15T10:30:00Z",
   "availabilityGroups": [
     {
@@ -408,6 +441,11 @@ readinessProbe:
 | Healthy | ✅ 200 | ✅ 200 | AG online, all synced |
 | Warning | ✅ 200 | ✅ 200 | AG online, some syncing |
 | Critical | ❌ 503 | ❌ 503 | AG broken, SQL unreachable |
+| Stale | ❌ 503 | ❌ 503 | Data older than `stalenessThreshold`; SQL may be recovering |
+
+> **Note:** Stale is not a health state — it is an overlay condition. When `dataStale=true`, both
+> liveness and readiness return 503 regardless of the cached health state. The AG controller maps
+> stale pods to `connectedState=STALE` and excludes them from failover candidate evaluation.
 
 ### Primary-Only Readiness
 
@@ -535,8 +573,9 @@ mssql_ag_database_sync_state{ag_name="ProductionAG",database="AppDB"} 2
 | `MONITOR_INTERVAL` | `10s` | No | Check interval |
 | `CONNECTION_TIMEOUT` | `5s` | No | SQL connect timeout |
 | `QUERY_TIMEOUT` | `10s` | No | SQL query timeout |
-| `MAX_RETRIES` | `3` | No | Retry count |
-| `RETRY_DELAY` | `1s` | No | Retry delay |
+| `MAX_RETRIES` | `3` | No | Retry count for transient SQL errors |
+| `RETRY_DELAY` | `1s` | No | Retry delay between attempts |
+| `STALENESS_THRESHOLD` | `30s` | No | Data older than this is marked stale |
 | `LOG_LEVEL` | `info` | No | debug/info/warn/error |
 | `LOG_FORMAT` | `json` | No | json/text |
 | `ENABLE_METRICS` | `true` | No | Export metrics |

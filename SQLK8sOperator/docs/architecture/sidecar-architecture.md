@@ -103,6 +103,9 @@ containers:
       - "-http-port=8080"
       - "-monitor-interval=10s"
       - "-ag-name=ProductionAG"  # Required: explicit AG name
+      - "-max-retries=3"         # Retry transient SQL errors (1-30)
+      - "-retry-interval=5s"     # Delay between retries
+      - "-staleness-threshold=30s" # Data older than this = stale
     env:
       - name: SQL_PASSWORD
         valueFrom:
@@ -133,57 +136,75 @@ containers:
 ### Health States
 
 ```
-┌────────────────────────────────────────────────────────────────────┐
-│                    AG Helper State Machine                          │
-├────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  ┌──────────┐     AG detected      ┌──────────┐                    │
-│  │ WAITING  │ ─────────────────────▶│ HEALTHY  │                    │
-│  │          │                       │          │                    │
-│  │ Liveness:│◀───── AG removed ─────│ Liveness:│                    │
-│  │   PASS   │                       │   PASS   │                    │
-│  │ Readiness│                       │ Readiness│                    │
-│  │   FAIL   │                       │   PASS   │                    │
-│  └──────────┘                       └────┬─────┘                    │
-│                                          │                          │
-│                                          │ replica not synced       │
-│                                          ▼                          │
-│                                     ┌──────────┐                    │
-│                                     │ WARNING  │                    │
-│                                     │          │                    │
-│                                     │ Liveness:│                    │
-│                                     │   PASS   │                    │
-│                                     │ Readiness│                    │
-│                                     │   PASS   │                    │
-│                                     └────┬─────┘                    │
-│                                          │                          │
-│                                          │ AG broken/unreachable    │
-│                                          ▼                          │
-│                                     ┌──────────┐                    │
-│                                     │ CRITICAL │                    │
-│                                     │          │                    │
-│                                     │ Liveness:│                    │
-│                                     │   FAIL   │                    │
-│                                     │ Readiness│                    │
-│                                     │   FAIL   │                    │
-│                                     └──────────┘                    │
-│                                                                     │
-└────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    AG Helper State Machine                               │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌──────────┐     AG detected      ┌──────────┐                         │
+│  │ WAITING  │ ─────────────────────▶│ HEALTHY  │                         │
+│  │          │                       │          │                         │
+│  │ Liveness:│◀───── AG removed ─────│ Liveness:│                         │
+│  │   PASS   │                       │   PASS   │                         │
+│  │ Readiness│                       │ Readiness│                         │
+│  │   FAIL   │                       │   PASS   │                         │
+│  └──────────┘                       └────┬─────┘                         │
+│                                          │                               │
+│                                          │ replica not synced            │
+│                                          ▼                               │
+│                                     ┌──────────┐                         │
+│                                     │ WARNING  │                         │
+│                                     │          │                         │
+│                                     │ Liveness:│                         │
+│                                     │   PASS   │                         │
+│                                     │ Readiness│                         │
+│                                     │   PASS   │                         │
+│                                     └────┬─────┘                         │
+│                                          │                               │
+│                                          │ AG broken/unreachable         │
+│                                          ▼                               │
+│                                     ┌──────────┐                         │
+│                                     │ CRITICAL │                         │
+│                                     │          │                         │
+│                                     │ Liveness:│                         │
+│                                     │   FAIL   │                         │
+│                                     │ Readiness│                         │
+│                                     │   FAIL   │                         │
+│                                     └──────────┘                         │
+│                                                                          │
+│                                                                          │
+│  Connection State Machine (overlays health states above):                │
+│                                                                          │
+│  ┌───────────┐  transient error    ┌──────────────┐  retries exhausted  │
+│  │ CONNECTED │ ───────────────────▶│ RECONNECTING │ ──────────────────▶ │
+│  │           │◀────────────────────│              │                     │
+│  │ Queries   │  retry succeeds     │ Retrying SQL │   ┌──────────────┐ │
+│  │ succeed   │                     │ with backoff │   │ DISCONNECTED │ │
+│  └───────────┘                     └──────────────┘   │              │ │
+│       ▲                                                │ All queries  │ │
+│       └────────────── reconnection succeeds ──────────│ fail         │ │
+│                                                        └──────────────┘ │
+│                                                                          │
+│  Staleness Detection (orthogonal to above):                              │
+│  - If lastSuccessfulQuery > stalenessThreshold ago → dataStale=true     │
+│  - Stale data: /health → 503, /ready → 503                              │
+│  - Controller maps stale to connectedState=STALE, health=Warning        │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### HTTP Endpoints
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/health`, `/healthz` | GET | Liveness probe |
-| `/ready`, `/readyz` | GET | Readiness probe |
-| `/state` | GET | Full AG state (JSON) |
-| `/role` | GET | Current replica role |
-| `/failover` | POST | Trigger failover |
-| `/sequence` | GET | Last hardened LSN |
-| `/ags` | GET | List all discovered AGs |
-| `/state/{agName}` | GET | Specific AG state |
-| `/discover` | POST | Force AG discovery |
+| Endpoint | Method | Purpose | Notes |
+|----------|--------|---------|-------|
+| `/health`, `/healthz` | GET | Liveness probe | Returns 503 when data is stale |
+| `/ready`, `/readyz` | GET | Readiness probe | Returns 503 when data is stale |
+| `/state` | GET | Full AG state (JSON) | Includes `dataStale`, `connectionState`, `consecutiveFailures` |
+| `/role` | GET | Current replica role | |
+| `/failover` | POST | Trigger failover | |
+| `/sequence` | GET | Last hardened LSN | |
+| `/ags` | GET | List all discovered AGs | |
+| `/state/{agName}` | GET | Specific AG state | Includes staleness metadata |
+| `/discover` | POST | Force AG discovery | |
 
 ## SQL Exporter Sidecar
 
@@ -290,6 +311,11 @@ readinessProbe:
   # - SQL Server is running
   # - AG is configured (or we're not in AG mode)
   # - This replica is synchronized
+  # - Data is not stale (lastSuccessfulQuery within stalenessThreshold)
+  #
+  # Returns 503 when:
+  # - Data is stale (no successful SQL query within stalenessThreshold)
+  # - Response includes connectionState and dataStale fields
 ```
 
 ### Probe Timing

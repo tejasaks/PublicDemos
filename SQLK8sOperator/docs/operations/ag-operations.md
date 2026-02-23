@@ -313,11 +313,15 @@ kubectl get pod sql-ag-0 -n mssql -o jsonpath='{.status.conditions}' | jq
 ### Query AG Helper API
 
 ```bash
-# Health check
+# Health check (returns 503 if data is stale)
 kubectl exec -it sql-ag-0 -n mssql -c ag-helper -- curl -s localhost:8080/health
 
-# Full AG state
+# Full AG state (includes connectionState, dataStale, consecutiveFailures)
 kubectl exec -it sql-ag-0 -n mssql -c ag-helper -- curl -s localhost:8080/state | jq
+
+# Check staleness specifically
+kubectl exec -it sql-ag-0 -n mssql -c ag-helper -- \
+  curl -s localhost:8080/state | jq '{dataStale, connectionState, consecutiveFailures}'
 
 # Role check
 kubectl exec -it sql-ag-0 -n mssql -c ag-helper -- curl -s localhost:8080/role
@@ -461,6 +465,7 @@ The listener exists but no primary replica is available.
 | Listener maintenance on | `kubectl annotate sqlserverag <ag> -n mssql mssql.microsoft.com/listener-maintenance=true` |
 | Listener maintenance off | `kubectl annotate sqlserverag <ag> -n mssql mssql.microsoft.com/listener-maintenance-` |
 | Watch AG | `kubectl get sqlserverag <ag> -n mssql -w` |
+| Check staleness | `kubectl exec -it <pod> -n mssql -c ag-helper -- curl -s localhost:8080/state \| jq '{dataStale, connectionState}'` |
 | View events | `kubectl get events -n mssql --field-selector involvedObject.name=<ag>` |
 | Operator logs | `kubectl logs deployment/mssql-operator -n mssql-system --tail=100` |
 

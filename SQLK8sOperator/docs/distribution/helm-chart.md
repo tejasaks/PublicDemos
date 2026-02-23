@@ -213,6 +213,9 @@ agHelper:
     repository: ghcr.io/yourorg/mssql-operator/ag-helper
     tag: ""  # Defaults to appVersion
   monitorInterval: 10s
+  maxRetries: 3             # Retry attempts for transient SQL errors (1-30)
+  retryInterval: 5s         # Delay between retries
+  stalenessThreshold: 30s   # Data older than this → stale
 
 # SQL Exporter defaults
 sqlExporter:

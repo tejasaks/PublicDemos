@@ -63,6 +63,11 @@ type SidecarState struct {
 	SyncState        string `json:"syncState"`
 	SequenceNumber   int64  `json:"sequenceNumber"`
 	LocalReplicaName string `json:"localReplicaName"`
+
+	// Connection health and staleness tracking
+	ConnectionState     string `json:"connectionState"`
+	DataStale           bool   `json:"dataStale"`
+	ConsecutiveFailures int    `json:"consecutiveFailures"`
 }
 
 // FailoverCandidate represents a replica that can become primary
@@ -233,18 +238,36 @@ func (r *SQLServerAGReconciler) updateAGStatus(ctx context.Context, ag *mssqlv1a
 		if pod.Status.Phase == corev1.PodRunning && pod.Status.PodIP != "" {
 			state, err := r.querySidecar(ctx, pod.Status.PodIP)
 			if err == nil && state != nil {
-				// Use actual sidecar data
-				if state.Role != "" {
-					role = strings.ToUpper(state.Role)
+				// Check if the sidecar is reporting stale data
+				if state.DataStale {
+					logger.Info("Sidecar reporting stale data",
+						"pod", pod.Name,
+						"connectionState", state.ConnectionState,
+						"consecutiveFailures", state.ConsecutiveFailures)
+					// Use stale data with degraded connected state so the
+					// controller can make informed failover decisions
+					connectedState = "STALE"
+					health = "Warning"
+					if state.Role != "" {
+						role = strings.ToUpper(state.Role)
+					}
+					if state.SyncState != "" {
+						syncState = strings.ToUpper(state.SyncState)
+					}
+				} else {
+					// Fresh data — use actual sidecar state
+					if state.Role != "" {
+						role = strings.ToUpper(state.Role)
+					}
+					if state.SyncState != "" {
+						syncState = strings.ToUpper(state.SyncState)
+					}
+					connectedState = "CONNECTED"
+					if state.Health != "" {
+						health = state.Health
+					}
 				}
-				if state.SyncState != "" {
-					syncState = strings.ToUpper(state.SyncState)
-				}
-				connectedState = "CONNECTED"
-				if state.Health != "" {
-					health = state.Health
-				}
-				logger.V(4).Info("Got sidecar state", "pod", pod.Name, "role", role, "syncState", syncState)
+				logger.V(4).Info("Got sidecar state", "pod", pod.Name, "role", role, "syncState", syncState, "stale", state.DataStale)
 			} else {
 				// Sidecar query failed — fall back to pod labels
 				logger.V(4).Info("Sidecar query failed, using pod labels", "pod", pod.Name, "error", err)
@@ -631,6 +654,16 @@ func (r *SQLServerAGReconciler) querySidecarStates(ctx context.Context, ag *mssq
 		state, err := r.querySidecar(ctx, pod.Status.PodIP)
 		if err != nil {
 			logger.V(4).Info("Failed to query sidecar", "pod", pod.Name, "error", err)
+			continue
+		}
+
+		// If data is stale, we cannot trust role or sync state for failover decisions.
+		// A stale "PRIMARY" may actually be down — treat as if no primary was found.
+		if state.DataStale {
+			logger.Info("Sidecar data is stale, skipping for failover evaluation",
+				"pod", pod.Name,
+				"connectionState", state.ConnectionState,
+				"consecutiveFailures", state.ConsecutiveFailures)
 			continue
 		}
 

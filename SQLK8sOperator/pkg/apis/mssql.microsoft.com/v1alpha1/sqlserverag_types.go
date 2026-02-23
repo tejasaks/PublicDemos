@@ -277,6 +277,24 @@ type AGSidecarSpec struct {
 	// ConnectionTimeout for SQL connections
 	// +kubebuilder:default="30s"
 	ConnectionTimeout string `json:"connectionTimeout,omitempty"`
+
+	// MaxRetries is the number of reconnect attempts on transient SQL errors
+	// before the sidecar declares the connection as Disconnected.
+	// +kubebuilder:default=3
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=30
+	MaxRetries int `json:"maxRetries,omitempty"`
+
+	// RetryInterval is the delay between SQL reconnect attempts
+	// +kubebuilder:default="5s"
+	RetryInterval string `json:"retryInterval,omitempty"`
+
+	// StalenessThreshold is how long after the last successful SQL query
+	// before the sidecar considers its cached AG state stale. When state is
+	// stale the /health and /ready endpoints return 503 and the AG controller
+	// treats the instance as degraded for failover evaluation.
+	// +kubebuilder:default="30s"
+	StalenessThreshold string `json:"stalenessThreshold,omitempty"`
 }
 
 // SQLServerAGStatus defines the observed state of SQLServerAG

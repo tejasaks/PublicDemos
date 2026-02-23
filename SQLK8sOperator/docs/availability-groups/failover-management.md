@@ -144,10 +144,18 @@ When multiple secondaries are available, the operator selects the best candidate
 
 ### Selection Criteria (in order)
 
-1. **Synchronization State**: SYNCHRONIZED replicas preferred
-2. **Hardened LSN**: Highest log sequence number (least data loss)
-3. **Health Status**: Only HEALTHY replicas considered
-4. **Data Loss Policy**: Respects `dataLossThreshold` setting
+1. **Data Staleness**: Replicas with `dataStale=true` are immediately excluded — their role and sync state cannot be trusted
+2. **Synchronization State**: SYNCHRONIZED replicas preferred
+3. **Hardened LSN**: Highest log sequence number (least data loss)
+4. **Health Status**: Only HEALTHY replicas considered
+5. **Data Loss Policy**: Respects `dataLossThreshold` setting
+
+> **Staleness and failover timing:** When a pod's sidecar reports stale data, the controller
+> skips it for failover candidate evaluation. This means a pod with stale data that was formerly
+> the primary will not be counted as "having a primary", which accelerates failover detection.
+> Worst-case failover detection is bounded at ~70s (10s poll miss + 30s staleness threshold +
+> 30s `NoPrimaryGracePeriod`). Without staleness detection, a permanently stale "Healthy" response
+> would prevent failover indefinitely.
 
 ### Selection Flowchart
 
@@ -159,6 +167,12 @@ When multiple secondaries are available, the operator selects the best candidate
 │  Get all secondary replicas                                  │
 │              │                                               │
 │              ▼                                               │
+│  ┌─────────────────────────────────┐                        │
+│  │ Filter: dataStale == false      │                        │
+│  │  (stale pods are excluded)      │                        │
+│  └─────────────────┬───────────────┘                        │
+│                    │                                         │
+│                    ▼                                         │
 │  ┌─────────────────────────────────┐                        │
 │  │ Filter: Health == HEALTHY       │                        │
 │  │         or Health == WARNING    │                        │

@@ -14,9 +14,12 @@ package main
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -102,6 +105,18 @@ const (
 	Disconnected ConnectedState = "DISCONNECTED"
 )
 
+// SQLConnectionState represents the AG Helper's connection to SQL Server
+type SQLConnectionState string
+
+const (
+	// SQLConnConnected means the connection pool is healthy and queries are succeeding
+	SQLConnConnected SQLConnectionState = "Connected"
+	// SQLConnReconnecting means queries have failed and the helper is retrying
+	SQLConnReconnecting SQLConnectionState = "Reconnecting"
+	// SQLConnDisconnected means all retry attempts have been exhausted
+	SQLConnDisconnected SQLConnectionState = "Disconnected"
+)
+
 // AGState represents the complete state of the AG from this instance's perspective
 type AGState struct {
 	AGName           string          `json:"agName"`
@@ -114,7 +129,14 @@ type AGState struct {
 	Databases        []DatabaseState `json:"databases"`
 	LastUpdated      time.Time       `json:"lastUpdated"`
 	Health           string          `json:"health"`
-	mu               sync.RWMutex
+
+	// Connection health and staleness tracking
+	ConnectionState     SQLConnectionState `json:"connectionState"`
+	LastSuccessfulQuery time.Time          `json:"lastSuccessfulQuery"`
+	ConsecutiveFailures int                `json:"consecutiveFailures"`
+	DataStale           bool               `json:"dataStale"`
+
+	mu sync.RWMutex
 }
 
 // InstanceState represents the state of a SQL Server instance in an AG
@@ -160,19 +182,33 @@ type AGHelper struct {
 	connectionTimeout time.Duration
 	httpPort          int
 	stopCh            chan struct{}
+
+	// Connection health tracking
+	connState           SQLConnectionState
+	connStateMu         sync.RWMutex
+	consecutiveFails    int
+	lastSuccessfulQuery time.Time
+	maxRetries          int           // max reconnect attempts before declaring disconnected
+	retryInterval       time.Duration // delay between reconnect attempts
+	stalenessThreshold  time.Duration // how long before stale data triggers unhealthy
 }
 
 // NewAGHelper creates a new AGHelper instance
-func NewAGHelper(agName, connStr string, monitorInterval, connTimeout time.Duration, httpPort int) *AGHelper {
+func NewAGHelper(agName, connStr string, monitorInterval, connTimeout time.Duration, httpPort int, maxRetries int, retryInterval, stalenessThreshold time.Duration) *AGHelper {
 	return &AGHelper{
-		agName:            agName,
-		connectionString:  connStr,
-		monitorInterval:   monitorInterval,
-		connectionTimeout: connTimeout,
-		httpPort:          httpPort,
+		agName:             agName,
+		connectionString:   connStr,
+		monitorInterval:    monitorInterval,
+		connectionTimeout:  connTimeout,
+		httpPort:           httpPort,
+		maxRetries:         maxRetries,
+		retryInterval:      retryInterval,
+		stalenessThreshold: stalenessThreshold,
+		connState:          SQLConnDisconnected,
 		state: &AGState{
-			AGName:      agName,
-			LastUpdated: time.Now(),
+			AGName:          agName,
+			LastUpdated:     time.Now(),
+			ConnectionState: SQLConnDisconnected,
 		},
 		stopCh: make(chan struct{}),
 	}
@@ -185,9 +221,11 @@ func (h *AGHelper) Connect(ctx context.Context) error {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
 
-	db.SetConnMaxLifetime(5 * time.Minute)
-	db.SetMaxIdleConns(2)
-	db.SetMaxOpenConns(5)
+	// Pool tuning: localhost connection, low churn, keep 1 warm connection
+	db.SetConnMaxLifetime(30 * time.Minute) // Reduce reconnect churn (localhost is reliable)
+	db.SetMaxIdleConns(1)                   // Single idle conn for the monitor goroutine
+	db.SetMaxOpenConns(3)                   // Monitor loop + failover + listener query
+	db.SetConnMaxIdleTime(10 * time.Minute) // Close truly unused idle connections
 
 	// Test connection
 	ctx, cancel := context.WithTimeout(ctx, h.connectionTimeout)
@@ -198,8 +236,149 @@ func (h *AGHelper) Connect(ctx context.Context) error {
 	}
 
 	h.db = db
+	h.setConnState(SQLConnConnected)
+	h.lastSuccessfulQuery = time.Now()
+	h.consecutiveFails = 0
 	klog.Info("Connected to SQL Server")
 	return nil
+}
+
+// ============================================================================
+// CONNECTION STATE MACHINE & RETRY LOGIC
+// ============================================================================
+
+// setConnState atomically updates the connection state
+func (h *AGHelper) setConnState(state SQLConnectionState) {
+	h.connStateMu.Lock()
+	defer h.connStateMu.Unlock()
+	if h.connState != state {
+		klog.Infof("SQL connection state: %s → %s", h.connState, state)
+	}
+	h.connState = state
+}
+
+// getConnState returns the current connection state
+func (h *AGHelper) getConnState() SQLConnectionState {
+	h.connStateMu.RLock()
+	defer h.connStateMu.RUnlock()
+	return h.connState
+}
+
+// markQuerySuccess records a successful query and resets failure counters
+func (h *AGHelper) markQuerySuccess() {
+	h.connStateMu.Lock()
+	defer h.connStateMu.Unlock()
+	if h.connState != SQLConnConnected {
+		klog.Infof("SQL connection restored (was %s, consecutive failures: %d)", h.connState, h.consecutiveFails)
+	}
+	h.connState = SQLConnConnected
+	h.consecutiveFails = 0
+	h.lastSuccessfulQuery = time.Now()
+}
+
+// markQueryFailure records a failed query and transitions connection state
+func (h *AGHelper) markQueryFailure() {
+	h.connStateMu.Lock()
+	defer h.connStateMu.Unlock()
+	h.consecutiveFails++
+	if h.consecutiveFails >= h.maxRetries {
+		h.connState = SQLConnDisconnected
+	} else {
+		h.connState = SQLConnReconnecting
+	}
+}
+
+// isDataStale returns true if time since last successful query exceeds the staleness threshold
+func (h *AGHelper) isDataStale() bool {
+	h.connStateMu.RLock()
+	defer h.connStateMu.RUnlock()
+	if h.lastSuccessfulQuery.IsZero() {
+		return true
+	}
+	return time.Since(h.lastSuccessfulQuery) > h.stalenessThreshold
+}
+
+// isTransientError determines if a SQL error is transient (network/connection)
+// vs. permanent (bad query, permission denied). Only transient errors trigger reconnect.
+func isTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// driver.ErrBadConn indicates the connection is unusable
+	if errors.Is(err, driver.ErrBadConn) {
+		return true
+	}
+	// Network errors (timeout, connection reset, refused)
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	// go-mssqldb / OS-level error strings
+	errStr := err.Error()
+	return strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "broken pipe") ||
+		strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "i/o timeout") ||
+		strings.Contains(errStr, "forcibly closed") ||
+		strings.Contains(errStr, "connection was lost")
+}
+
+// executeWithRetry wraps a SQL operation with connection-aware retry logic.
+// On success it marks the connection as healthy. On transient errors it attempts
+// a reconnect (Ping) and retries the operation. If all retries fail, the connection
+// state transitions to Disconnected.
+func (h *AGHelper) executeWithRetry(ctx context.Context, operation string, fn func(ctx context.Context) error) error {
+	err := fn(ctx)
+	if err == nil {
+		h.markQuerySuccess()
+		return nil
+	}
+
+	// Non-transient errors (e.g., bad SQL syntax) should not trigger reconnect
+	if !isTransientError(err) {
+		klog.Warningf("[%s] Non-transient SQL error: %v", operation, err)
+		return err
+	}
+
+	klog.Warningf("[%s] Transient SQL error: %v — attempting reconnect (%d max retries)",
+		operation, err, h.maxRetries)
+	h.setConnState(SQLConnReconnecting)
+
+	for attempt := 1; attempt <= h.maxRetries; attempt++ {
+		// Wait before retry (don't hammer localhost)
+		select {
+		case <-ctx.Done():
+			h.markQueryFailure()
+			return fmt.Errorf("context cancelled during reconnect: %w", ctx.Err())
+		case <-time.After(h.retryInterval):
+		}
+
+		// Ping to verify the pool can get a live connection
+		pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		pingErr := h.db.PingContext(pingCtx)
+		cancel()
+
+		if pingErr != nil {
+			klog.Warningf("[%s] Reconnect attempt %d/%d — ping failed: %v",
+				operation, attempt, h.maxRetries, pingErr)
+			continue
+		}
+
+		// Connection restored — retry the original operation
+		retryErr := fn(ctx)
+		if retryErr == nil {
+			h.markQuerySuccess()
+			klog.Infof("[%s] Reconnected to SQL Server after %d attempt(s)", operation, attempt)
+			return nil
+		}
+
+		klog.Warningf("[%s] Reconnect attempt %d/%d — operation retry failed: %v",
+			operation, attempt, h.maxRetries, retryErr)
+	}
+
+	// All retries exhausted
+	h.markQueryFailure()
+	return fmt.Errorf("[%s] SQL connection lost after %d retries: %w", operation, h.maxRetries, err)
 }
 
 // GetAGStateByName retrieves the state for a specific AG
@@ -455,22 +634,30 @@ func (h *AGHelper) GetSequenceNumber(ctx context.Context) (int64, error) {
 	return 0, nil
 }
 
-// GetAGState retrieves the complete AG state
+// GetAGState retrieves the complete AG state with connection retry logic
 func (h *AGHelper) GetAGState(ctx context.Context) (*AGState, error) {
 	state := &AGState{
 		AGName:      h.agName,
 		LastUpdated: time.Now(),
 	}
 
-	// Get local replica info
-	role, err := h.GetRole(ctx)
+	// Wrap the critical role query with retry logic — this is the first and
+	// most essential query. If it fails with a transient error, the retry
+	// wrapper will attempt reconnection before giving up.
+	var role AGRole
+	err := h.executeWithRetry(ctx, "GetRole", func(ctx context.Context) error {
+		var innerErr error
+		role, innerErr = h.GetRole(ctx)
+		return innerErr
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get role: %w", err)
 	}
 	state.Role = role
 	state.IsLocalPrimary = role == RolePrimary
 
-	// Get sequence number
+	// Remaining queries benefit from the connection recovery above.
+	// If the role query succeeded, the connection is confirmed healthy.
 	seqNum, err := h.GetSequenceNumber(ctx)
 	if err != nil {
 		klog.Warningf("Failed to get sequence number: %v", err)
@@ -493,6 +680,12 @@ func (h *AGHelper) GetAGState(ctx context.Context) (*AGState, error) {
 
 	// Determine overall health
 	state.Health = h.determineHealth(state)
+
+	// Populate connection health metadata
+	state.ConnectionState = h.getConnState()
+	state.LastSuccessfulQuery = h.lastSuccessfulQuery
+	state.ConsecutiveFailures = h.consecutiveFails
+	state.DataStale = h.isDataStale()
 
 	// Find local instance name
 	for _, inst := range state.Instances {
@@ -718,7 +911,16 @@ func (h *AGHelper) MonitorLoop(ctx context.Context) {
 func (h *AGHelper) monitorAG(ctx context.Context, lastHealth *string, waitingLogCount *int) {
 	state, err := h.GetAGState(ctx)
 	if err != nil {
-		klog.Errorf("Failed to get AG state: %v", err)
+		klog.Errorf("Failed to get AG state: %v (connState=%s, consecutiveFails=%d)",
+			err, h.getConnState(), h.consecutiveFails)
+
+		// Mark existing cached state as stale so HTTP handlers report accurately
+		h.state.mu.Lock()
+		h.state.DataStale = h.isDataStale()
+		h.state.ConnectionState = h.getConnState()
+		h.state.ConsecutiveFailures = h.consecutiveFails
+		h.state.LastUpdated = time.Now()
+		h.state.mu.Unlock()
 		return
 	}
 
@@ -756,6 +958,19 @@ func (h *AGHelper) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
+	// If data is stale beyond threshold, report unhealthy regardless of cached health
+	if h.state.DataStale {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":          "Stale",
+			"role":            h.state.Role,
+			"connectionState": h.state.ConnectionState,
+			"dataStale":       true,
+			"staleSince":      h.state.LastSuccessfulQuery,
+		})
+		return
+	}
+
 	// "Waiting" is acceptable for liveness - pod is alive, just waiting for AG setup
 	// "Healthy" and "Warning" are also OK
 	// Only "Critical" returns 503
@@ -767,8 +982,10 @@ func (h *AGHelper) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": h.state.Health,
-		"role":   h.state.Role,
+		"status":          h.state.Health,
+		"role":            h.state.Role,
+		"connectionState": h.state.ConnectionState,
+		"dataStale":       false,
 	})
 }
 
@@ -789,6 +1006,19 @@ func (h *AGHelper) handleReady(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
+	// Stale data → not ready (traffic should not be routed to this pod)
+	if h.state.DataStale {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ready":           false,
+			"status":          "Stale",
+			"role":            h.state.Role,
+			"connectionState": h.state.ConnectionState,
+			"dataStale":       true,
+		})
+		return
+	}
+
 	// For readiness, we require the AG to actually be configured and working
 	// "Waiting" means not ready to receive traffic
 	switch h.state.Health {
@@ -799,9 +1029,11 @@ func (h *AGHelper) handleReady(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"ready":  h.state.Health == "Healthy" || h.state.Health == "Warning",
-		"status": h.state.Health,
-		"role":   h.state.Role,
+		"ready":           h.state.Health == "Healthy" || h.state.Health == "Warning",
+		"status":          h.state.Health,
+		"role":            h.state.Role,
+		"connectionState": h.state.ConnectionState,
+		"dataStale":       false,
 	})
 }
 
@@ -1027,14 +1259,17 @@ func logCredentialSource(username string) {
 
 func main() {
 	var (
-		agName            string
-		sqlHost           string
-		sqlPort           int
-		sqlUser           string
-		sqlPassword       string
-		monitorInterval   time.Duration
-		connectionTimeout time.Duration
-		httpPort          int
+		agName             string
+		sqlHost            string
+		sqlPort            int
+		sqlUser            string
+		sqlPassword        string
+		monitorInterval    time.Duration
+		connectionTimeout  time.Duration
+		httpPort           int
+		maxRetries         int
+		retryInterval      time.Duration
+		stalenessThreshold time.Duration
 	)
 
 	flag.StringVar(&agName, "ag-name", os.Getenv("AG_NAME"), "Name of the Availability Group")
@@ -1047,6 +1282,9 @@ func main() {
 	flag.DurationVar(&monitorInterval, "monitor-interval", 10*time.Second, "Interval between AG state checks")
 	flag.DurationVar(&connectionTimeout, "connection-timeout", 30*time.Second, "SQL connection timeout")
 	flag.IntVar(&httpPort, "http-port", 8080, "HTTP API port")
+	flag.IntVar(&maxRetries, "max-retries", 3, "Max reconnect attempts on transient SQL errors before declaring disconnected")
+	flag.DurationVar(&retryInterval, "retry-interval", 5*time.Second, "Delay between SQL reconnect attempts")
+	flag.DurationVar(&stalenessThreshold, "staleness-threshold", 30*time.Second, "Duration after which cached AG state is considered stale")
 
 	klog.InitFlags(nil)
 	flag.Parse()
@@ -1064,7 +1302,11 @@ func main() {
 	connStr := fmt.Sprintf("server=%s;port=%d;user id=%s;password=%s;database=master;connection timeout=30",
 		sqlHost, sqlPort, sqlUser, sqlPassword)
 
-	helper := NewAGHelper(agName, connStr, monitorInterval, connectionTimeout, httpPort)
+	helper := NewAGHelper(agName, connStr, monitorInterval, connectionTimeout, httpPort,
+		maxRetries, retryInterval, stalenessThreshold)
+
+	klog.Infof("Connection resilience: maxRetries=%d, retryInterval=%s, stalenessThreshold=%s",
+		maxRetries, retryInterval, stalenessThreshold)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -427,9 +427,29 @@ spec:
                     default: mssql-ag-helper:latest
                     description: Image is the AG helper sidecar image
                     type: string
+                  maxRetries:
+                    default: 3
+                    description: |-
+                      MaxRetries is the number of reconnect attempts on transient SQL errors
+                      before the sidecar declares the connection as Disconnected.
+                    maximum: 30
+                    minimum: 1
+                    type: integer
                   monitorInterval:
                     default: 10s
                     description: MonitorInterval is how often to check AG health
+                    type: string
+                  retryInterval:
+                    default: 5s
+                    description: RetryInterval is the delay between SQL reconnect attempts
+                    type: string
+                  stalenessThreshold:
+                    default: 30s
+                    description: |-
+                      StalenessThreshold is how long after the last successful SQL query
+                      before the sidecar considers its cached AG state stale. When state is
+                      stale the /health and /ready endpoints return 503 and the AG controller
+                      treats the instance as degraded for failover evaluation.
                     type: string
                   resources:
                     description: Resources for the sidecar container

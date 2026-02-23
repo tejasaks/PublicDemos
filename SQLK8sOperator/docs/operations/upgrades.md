@@ -252,7 +252,16 @@ Apply the updated configuration:
 kubectl apply -f operator-configuration.yaml
 ```
 
-**Step 3: Delete existing AG Helper pods to pick up the new image**
+**Step 3: Apply updated CRDs (if upgrading to a version with new CRD fields)**
+
+If the new AG Helper version uses new CRD fields (e.g., `maxRetries`, `retryInterval`,
+`stalenessThreshold`), apply the updated CRDs first:
+
+```bash
+kubectl apply -f deploy/crds/
+```
+
+**Step 4: Delete existing AG Helper pods to pick up the new image**
 
 ```bash
 # List AG Helper pods

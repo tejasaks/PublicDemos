@@ -217,8 +217,12 @@ func (h *AGHelper) determineHealth(state *AGState) string {
 | `Healthy` | All replicas synchronized | 200 OK | 200 OK |
 | `Warning` | Some replicas not synchronized | 200 OK | 200 OK |
 | `Waiting` | AG not configured yet | 200 OK | 503 Unavailable |
-| `Critical` | AG broken or no sync | 503 Unavailable | 503 Unavailable |
+| `Critical` | AG broken or no sync | 503 Unavailable | 503 Unavailable || `Stale` | Data exceeds `stalenessThreshold` | 503 Unavailable | 503 Unavailable |
 
+> **Staleness note:** When the AG Helper cannot reach SQL Server and the last successful query
+> exceeds the `stalenessThreshold` (default 30s), the cached state is flagged `dataStale=true`.
+> Both probes return 503 to signal that the sidecar's data may be outdated. The AG controller
+> treats this as `connectedState=STALE` and excludes the pod from failover candidate evaluation.
 ### Probe Behavior Rationale
 
 - **Liveness (`/healthz`)**: Returns 200 even for `Waiting` state because the pod is alive and functioning—it's just waiting for AG configuration. Returning 503 would cause Kubernetes to restart a perfectly healthy pod.
@@ -251,6 +255,10 @@ The AG Helper exposes these endpoints on port 8080:
   "isLocalPrimary": true,
   "sequenceNumber": 12345678,
   "health": "Healthy",
+  "connectionState": "Connected",
+  "lastSuccessfulQuery": "2026-01-30T10:30:00Z",
+  "consecutiveFailures": 0,
+  "dataStale": false,
   "lastUpdated": "2026-01-30T10:30:00Z",
   "replicas": [
     {
@@ -365,6 +373,15 @@ func (r *SQLServerAGReconciler) querySidecarStates(ctx, ag, sqlServer) ([]Failov
         state, err := r.querySidecar(ctx, pod.Status.PodIP)
         if err != nil {
             continue  // Log and skip failed pods
+        }
+
+        // Skip stale pods — their role/state data is unreliable.
+        // The controller cannot trust a stale "PRIMARY" claim because
+        // the pod may have already lost that role during the stale window.
+        if state.DataStale {
+            klog.Warningf("Pod %s has stale data (last query: %v, failures: %d) — skipping for failover evaluation",
+                pod.Name, state.LastSuccessfulQuery, state.ConsecutiveFailures)
+            continue
         }
 
         if state.Role == "PRIMARY" {
