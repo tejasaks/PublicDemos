@@ -332,3 +332,37 @@ spec:
 #   done
 #
 # ============================================================================
+#
+# ============================================================================
+# CLEANUP
+# ============================================================================
+#
+# To remove this configuration:
+#
+# 1. Delete the OperatorConfiguration:
+#    kubectl delete -f samples/operator-configuration-private-registry.yaml
+#
+#    Or by name:
+#    kubectl delete operatorconfiguration default
+#
+# 2. Delete the image pull secrets from each namespace:
+#    for ns in mssql production staging; do
+#      kubectl delete secret acr-pull-secret -n $ns --ignore-not-found
+#    done
+#
+# To remove the operator and ALL resources:
+#
+# 1. Delete all SQLServer and SQLServerAG resources first:
+#    kubectl delete sqlserver --all -A
+#    kubectl delete sqlserverag --all -A
+#
+# 2. Delete the operator:
+#    kubectl delete -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/install.yaml
+#
+#    Or if installed from a local file:
+#    kubectl delete -f install.yaml
+#
+# NOTE: Deleting CRDs (included in install.yaml) removes ALL custom resources.
+#       Delete workloads first if you need to preserve PVCs or other data.
+#
+# ============================================================================

@@ -87,3 +87,32 @@ spec:
 # │  imagePullPolicy: IfNotPresent                                          │
 # │  Source: install.yaml (default OperatorConfiguration)                   │
 # └─────────────────────────────────────────────────────────────────────────┘
+
+# ============================================================================
+# CLEANUP
+# ============================================================================
+#
+# To remove this local dev configuration:
+#
+# 1. Delete the OperatorConfiguration:
+#    kubectl delete -f samples/operator-configuration-local-dev.yaml
+#
+#    Or by name:
+#    kubectl delete operatorconfiguration mssql-operator-config -n mssql-system
+#
+# To remove the entire local dev environment:
+#
+# 1. Delete all SQLServer and SQLServerAG resources:
+#    kubectl delete sqlserver --all -A
+#    kubectl delete sqlserverag --all -A
+#
+# 2. Delete the operator:
+#    kubectl delete -f install.yaml
+#
+# 3. (Optional) Delete minikube cluster entirely:
+#    minikube delete
+#
+# NOTE: Deleting CRDs (included in install.yaml) removes ALL custom resources.
+#       Delete workloads first if you need to preserve PVCs or other data.
+#
+# ============================================================================

@@ -165,3 +165,35 @@ spec:
 #    Existing resources will pick up changes on their next reconciliation.
 #
 # ============================================================================
+#
+# ============================================================================
+# CLEANUP
+# ============================================================================
+#
+# To remove this configuration:
+#
+# 1. Delete the OperatorConfiguration:
+#    kubectl delete -f samples/operator-configuration.yaml
+#
+#    Or by name:
+#    kubectl delete operatorconfiguration default
+#
+# 2. The operator will fall back to built-in defaults for any future resources.
+#    Existing SQLServer resources will continue running with their current images.
+#
+# To remove the operator and ALL resources:
+#
+# 1. Delete all SQLServer and SQLServerAG resources first:
+#    kubectl delete sqlserver --all -A
+#    kubectl delete sqlserverag --all -A
+#
+# 2. Delete the operator:
+#    kubectl delete -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/install.yaml
+#
+#    Or if installed from a local file:
+#    kubectl delete -f install.yaml
+#
+# NOTE: Deleting CRDs (included in install.yaml) removes ALL custom resources.
+#       Delete workloads first if you need to preserve PVCs or other data.
+#
+# ============================================================================

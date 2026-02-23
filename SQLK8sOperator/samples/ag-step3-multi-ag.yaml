@@ -280,3 +280,36 @@ spec:
 #    # dr-ag-primary, dr-ag-secondary
 #
 # ============================================================================
+#
+# ============================================================================
+# CLEANUP
+# ============================================================================
+#
+# To remove all AG resources created by this sample:
+#
+# 1. Delete all three SQLServerAG resources at once:
+#    kubectl delete -f samples/ag-step3-multi-ag.yaml
+#
+#    Or individually:
+#    kubectl delete sqlserverag production-ag reporting-ag dr-ag -n mssql
+#
+# 2. Verify AG-related services were removed:
+#    kubectl get svc -n mssql
+#    # No *-primary or *-secondary services should remain
+#
+# 3. (Optional) Also remove the SQLServer replicas from step 1:
+#    kubectl delete -f samples/ag-step1-replicas.yaml
+#
+# 4. (Optional) Delete the namespace to remove everything:
+#    kubectl delete namespace mssql
+#
+# 5. To remove the operator itself and all CRDs:
+#    kubectl delete -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/install.yaml
+#
+#    Or if installed from a local file:
+#    kubectl delete -f install.yaml
+#
+# NOTE: Deleting CRDs will remove ALL SQLServer and SQLServerAG resources
+#       across all namespaces. Make sure no other workloads depend on them.
+#
+# ============================================================================

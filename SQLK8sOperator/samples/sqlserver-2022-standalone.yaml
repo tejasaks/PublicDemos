@@ -95,3 +95,33 @@ stringData:
   # IMPORTANT: Use a strong password in production!
   # Requirements: 8+ chars, uppercase, lowercase, number, special char
   password: "YourStrong@Passw0rd!"
+
+# ============================================================================
+# CLEANUP
+# ============================================================================
+#
+# To remove all resources created by this sample:
+#
+# 1. Delete the SQLServer and its Secret:
+#    kubectl delete -f samples/sqlserver-2022-standalone.yaml
+#
+#    Or individually:
+#    kubectl delete sqlserver sql2022-dev01 -n mssql
+#    kubectl delete secret sql2022-dev01-sa -n mssql
+#
+# 2. Delete the PVC (persistent storage) if no longer needed:
+#    kubectl delete pvc -l mssql.microsoft.com/instance=sql2022-dev01 -n mssql
+#
+# 3. (Optional) Delete the namespace to remove everything:
+#    kubectl delete namespace mssql
+#
+# 4. To remove the operator itself and all CRDs:
+#    kubectl delete -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/install.yaml
+#
+#    Or if installed from a local file:
+#    kubectl delete -f install.yaml
+#
+# NOTE: Deleting CRDs will remove ALL SQLServer resources across all namespaces.
+#       PVCs are NOT automatically deleted — remove them manually if desired.
+#
+# ============================================================================

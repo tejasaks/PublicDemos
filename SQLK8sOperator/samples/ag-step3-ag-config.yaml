@@ -355,3 +355,36 @@ spec:
 #    kubectl annotate sqlserverag production-ag -n mssql force-reconcile=$(date +%s)
 #
 # ============================================================================
+#
+# ============================================================================
+# CLEANUP
+# ============================================================================
+#
+# To remove resources created by this sample:
+#
+# 1. Delete the SQLServerAG resource (removes AG Helper sidecar and services):
+#    kubectl delete -f samples/ag-step3-ag-config.yaml
+#
+#    Or by name:
+#    kubectl delete sqlserverag production-ag -n mssql
+#
+# 2. Verify the AG Helper sidecar was removed from pods:
+#    kubectl get pods -n mssql -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.containers[*]}{.name}{" "}{end}{"\n"}{end}'
+#    # Should show only mssql-server (no ag-helper)
+#
+# 3. (Optional) Also remove the SQLServer replicas from step 1:
+#    kubectl delete -f samples/ag-step1-replicas.yaml
+#
+# 4. (Optional) Delete the namespace to remove everything:
+#    kubectl delete namespace mssql
+#
+# 5. To remove the operator itself and all CRDs:
+#    kubectl delete -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/install.yaml
+#
+#    Or if installed from a local file:
+#    kubectl delete -f install.yaml
+#
+# NOTE: Deleting CRDs will remove ALL SQLServer and SQLServerAG resources
+#       across all namespaces. Make sure no other workloads depend on them.
+#
+# ============================================================================
