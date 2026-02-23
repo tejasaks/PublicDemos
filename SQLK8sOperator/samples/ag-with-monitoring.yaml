@@ -1,0 +1,1457 @@
+# ============================================================================
+# SQL Server Availability Group with Full Monitoring Stack
+# ============================================================================
+#
+# This sample deploys a complete SQL Server AG cluster with Prometheus and
+# Grafana monitoring enabled on ALL 3 replicas. It combines the 3-step AG
+# deployment process into a single file and adds monitoring configuration.
+#
+# WHAT THIS CREATES:
+#   Namespace: mssql
+#     - Secret: sql-ag-sa (SA password)
+#     - Secret: sql-ag-helper (AG Helper credentials)
+#     - SQLServer: sql-ag (3 replicas, monitoring enabled, sql-exporter sidecar)
+#     - Service: sql-ag-0, sql-ag-1, sql-ag-2 (per-replica access)
+#     - SQLServerAG: production-ag (AG management + AG Helper sidecar)
+#
+#   Namespace: monitoring
+#     - Prometheus (scrapes sql-exporter on all 3 replicas)
+#     - Grafana (pre-loaded AG dashboard + SQL Server overview)
+#     - ServiceAccount, ClusterRole, ClusterRoleBinding for Prometheus
+#     - PersistentVolumeClaims for Prometheus and Grafana data
+#
+# DEPLOYMENT ORDER:
+#   1. Apply Step 1 resources (namespace, secrets, SQLServer, services)
+#   2. Wait for all 3 pods to be Running (1/1 Ready + sql-exporter sidecar)
+#   3. Execute T-SQL steps from ag-step2-setup-ag.md
+#   4. Apply Step 3 resources (SQLServerAG → deploys AG Helper sidecar)
+#   5. Deploy monitoring stack (Prometheus + Grafana)
+#   6. Access Grafana dashboards
+#
+# ARCHITECTURE:
+#
+#   ┌─────────────────────────────────────────────────────────────────────┐
+#   │  Namespace: mssql                                                   │
+#   │                                                                     │
+#   │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐              │
+#   │  │  sql-ag-0    │  │  sql-ag-1    │  │  sql-ag-2    │              │
+#   │  │              │  │              │  │              │              │
+#   │  │ ┌──────────┐ │  │ ┌──────────┐ │  │ ┌──────────┐ │              │
+#   │  │ │ SQL Srvr │ │  │ │ SQL Srvr │ │  │ │ SQL Srvr │ │              │
+#   │  │ │  :1433   │ │  │ │  :1433   │ │  │ │  :1433   │ │              │
+#   │  │ ├──────────┤ │  │ ├──────────┤ │  │ ├──────────┤ │              │
+#   │  │ │ Exporter │ │  │ │ Exporter │ │  │ │ Exporter │ │              │
+#   │  │ │  :9399   │ │  │ │  :9399   │ │  │ │  :9399   │ │              │
+#   │  │ ├──────────┤ │  │ ├──────────┤ │  │ ├──────────┤ │              │
+#   │  │ │AG Helper │ │  │ │AG Helper │ │  │ │AG Helper │ │              │
+#   │  │ └──────────┘ │  │ └──────────┘ │  │ └──────────┘ │              │
+#   │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘              │
+#   │         │ :9399           │ :9399           │ :9399                │
+#   └─────────┼─────────────────┼─────────────────┼──────────────────────┘
+#             │                 │                 │
+#             └─────────────────┼─────────────────┘
+#                               │  scrape /metrics
+#                               ▼
+#   ┌─────────────────────────────────────────────────────────────────────┐
+#   │  Namespace: monitoring                                              │
+#   │                                                                     │
+#   │  ┌────────────────────┐         ┌────────────────────┐              │
+#   │  │    Prometheus      │────────>│      Grafana       │              │
+#   │  │    :9090           │  query  │      :3000         │              │
+#   │  │  7d retention      │         │  AG Dashboard      │              │
+#   │  │  auto-discovery    │         │  Overview Dashboard│              │
+#   │  └────────────────────┘         └────────────────────┘              │
+#   │                                                                     │
+#   └─────────────────────────────────────────────────────────────────────┘
+#
+# ============================================================================
+
+# ############################################################################
+#
+#   STEP 1: SQL Server Instances with Monitoring Enabled
+#
+# ############################################################################
+
+---
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mssql
+
+---
+# SA password secret
+# SECURITY: Change this password in production!
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sql-ag-sa
+  namespace: mssql
+  labels:
+    app.kubernetes.io/component: mssql
+type: Opaque
+stringData:
+  password: "YourStrong@Passw0rd!"  # CHANGE THIS!
+
+---
+# AG Helper credentials secret
+# This login will be created in SQL Server during Step 2 (T-SQL setup)
+# Required permissions: VIEW SERVER STATE, ALTER ANY AVAILABILITY GROUP
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sql-ag-helper
+  namespace: mssql
+  labels:
+    app.kubernetes.io/component: ag-helper
+type: Opaque
+stringData:
+  username: "ag_helper"
+  password: "AGHelper@Passw0rd!"  # CHANGE THIS! Must match T-SQL in Step 2
+
+---
+# SQL Server with 3 instances for AG — monitoring ENABLED on all replicas
+#
+# When monitoring.enabled is true, the operator automatically injects a
+# sql-exporter sidecar container into EVERY pod in the StatefulSet.
+# Each sql-exporter instance:
+#   - Connects to localhost:1433 (its own SQL Server)
+#   - Exposes Prometheus metrics on port 9399
+#   - Collects instance, performance, resource, AND AG metrics
+#   - Annotates the pod for Prometheus auto-discovery
+#
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServer
+metadata:
+  name: sql-ag
+  namespace: mssql
+spec:
+  description: "SQL Server AG cluster with monitoring enabled on all replicas"
+  
+  version: "2025"
+  edition: Developer  # Use Enterprise for production
+  
+  instance:
+    # 3 instances for the AG — each will get a sql-exporter sidecar
+    count: 3
+    
+    resources:
+      limits:
+        cpu: "4"
+        memory: 8Gi
+      requests:
+        cpu: "2"
+        memory: 4Gi
+    
+    storage:
+      data:
+        size: 50Gi
+        # storageClass: managed-premium  # Uncomment for Azure
+      log:
+        size: 20Gi
+      backup:
+        size: 50Gi
+    
+    config:
+      hadrEnabled: true   # Required for AG
+      agentEnabled: true
+      collation: SQL_Latin1_General_CP1_CI_AS
+    
+    # Distribute pods across nodes for HA
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: mssql
+                  mssql.microsoft.com/instance: sql-ag
+              topologyKey: kubernetes.io/hostname
+  
+  credentials:
+    saPasswordSecretRef:
+      name: sql-ag-sa
+      key: password
+  
+  service:
+    type: LoadBalancer
+    port: 1433
+  
+  # ========================================================================
+  # MONITORING CONFIGURATION
+  # ========================================================================
+  # Enables the sql-exporter sidecar on ALL 3 replicas (sql-ag-0, 1, 2).
+  # The exporter automatically collects AG-specific metrics when HADR is
+  # enabled, including:
+  #   - mssql_ag_is_primary          (which replica is primary)
+  #   - mssql_ag_replica_role        (PRIMARY / SECONDARY / RESOLVING)
+  #   - mssql_ag_replica_connected_state  (connected / disconnected)
+  #   - mssql_ag_database_synchronization_state  (sync status per DB)
+  #   - mssql_ag_redo_queue_size     (redo lag on secondaries)
+  #   - mssql_ag_log_send_queue_size (log send lag)
+  #   - mssql_ag_synchronization_health  (overall AG health)
+  #
+  # Plus standard instance metrics: CPU, memory, connections, batch/sec, etc.
+  # ========================================================================
+  monitoring:
+    enabled: true
+    
+    # SQL Exporter image (each replica gets its own sidecar)
+    exporterImage: burningalchemist/sql_exporter:latest
+    
+    # Metrics endpoint port (Prometheus scrapes this)
+    # Each pod exposes :9399/metrics on its own IP
+    exporterPort: 9399
+    
+    # Scrape interval hint for Prometheus
+    scrapeInterval: 15s
+    
+    # Resources for the exporter sidecar (per replica)
+    exporterResources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+
+---
+# ============================================================================
+# PER-REPLICA SERVICES
+# ============================================================================
+# Direct access to each SQL Server replica and its metrics endpoint.
+# The metrics port (9399) is exposed so you can also curl individual
+# exporters for debugging:
+#   curl http://<sql-ag-0-ip>:9399/metrics
+# ============================================================================
+
+---
+# Service for replica 0
+apiVersion: v1
+kind: Service
+metadata:
+  name: sql-ag-0
+  namespace: mssql
+  labels:
+    app: mssql
+    mssql.microsoft.com/instance: sql-ag
+    mssql.microsoft.com/replica: "0"
+spec:
+  type: LoadBalancer
+  selector:
+    app: mssql
+    mssql.microsoft.com/instance: sql-ag
+    statefulset.kubernetes.io/pod-name: sql-ag-0
+  ports:
+    - name: sql
+      port: 1433
+      targetPort: 1433
+    - name: ag-endpoint
+      port: 5022
+      targetPort: 5022
+    - name: metrics
+      port: 9399
+      targetPort: 9399
+
+---
+# Service for replica 1
+apiVersion: v1
+kind: Service
+metadata:
+  name: sql-ag-1
+  namespace: mssql
+  labels:
+    app: mssql
+    mssql.microsoft.com/instance: sql-ag
+    mssql.microsoft.com/replica: "1"
+spec:
+  type: LoadBalancer
+  selector:
+    app: mssql
+    mssql.microsoft.com/instance: sql-ag
+    statefulset.kubernetes.io/pod-name: sql-ag-1
+  ports:
+    - name: sql
+      port: 1433
+      targetPort: 1433
+    - name: ag-endpoint
+      port: 5022
+      targetPort: 5022
+    - name: metrics
+      port: 9399
+      targetPort: 9399
+
+---
+# Service for replica 2
+apiVersion: v1
+kind: Service
+metadata:
+  name: sql-ag-2
+  namespace: mssql
+  labels:
+    app: mssql
+    mssql.microsoft.com/instance: sql-ag
+    mssql.microsoft.com/replica: "2"
+spec:
+  type: LoadBalancer
+  selector:
+    app: mssql
+    mssql.microsoft.com/instance: sql-ag
+    statefulset.kubernetes.io/pod-name: sql-ag-2
+  ports:
+    - name: sql
+      port: 1433
+      targetPort: 1433
+    - name: ag-endpoint
+      port: 5022
+      targetPort: 5022
+    - name: metrics
+      port: 9399
+      targetPort: 9399
+
+
+# ############################################################################
+#
+#   STEP 2: T-SQL Setup (Manual — see ag-step2-setup-ag.md)
+#
+# ############################################################################
+#
+# After Step 1 pods are Running (2/2 Ready — mssql-server + sql-exporter):
+#
+#   1. Connect to each replica individually:
+#      sqlcmd -S <sql-ag-0-ip>,1433 -U sa -P 'YourStrong@Passw0rd!'
+#
+#   2. Create AG Helper login on ALL replicas:
+#      CREATE LOGIN ag_helper WITH PASSWORD = 'AGHelper@Passw0rd!';
+#      GRANT VIEW SERVER STATE TO ag_helper;
+#      GRANT ALTER ANY AVAILABILITY GROUP TO ag_helper;
+#
+#   3. Create mirroring endpoints, certificates, and the AG
+#      (see ag-step2-setup-ag.md for full T-SQL)
+#
+#   4. Verify the AG is created:
+#      SELECT name, replica_server_name, role_desc
+#      FROM sys.dm_hadr_availability_replica_states ars
+#      JOIN sys.availability_groups ag ON ars.group_id = ag.group_id;
+#
+# At this point you can already verify monitoring is working:
+#
+#   # Port-forward to a replica's metrics endpoint
+#   kubectl port-forward pod/sql-ag-0 -n mssql 9399:9399
+#   curl http://localhost:9399/metrics | grep mssql_ag
+#
+#   Expected output includes:
+#     mssql_ag_is_primary{ag_name="ProductionAG"} 1
+#     mssql_ag_synchronization_health{ag_name="ProductionAG"} 2
+#     mssql_ag_replica_role{ag_name="ProductionAG",replica="sql-ag-0"} 1
+#
+# ############################################################################
+
+
+# ############################################################################
+#
+#   STEP 3: SQLServerAG Configuration (AG Helper + K8s Management)
+#
+# ############################################################################
+
+---
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServerAG
+metadata:
+  name: production-ag
+  namespace: mssql
+spec:
+  description: "Production AG with monitoring — all 3 replicas observed"
+  
+  # Reference to the SQLServer resource from Step 1
+  sqlServerRef:
+    name: sql-ag
+  
+  availabilityGroup:
+    # Must match the AG name created via T-SQL in Step 2
+    name: ProductionAG
+    
+    # All 3 replicas participate in the AG
+    instanceCount: 3
+    
+    primaryConfig:
+      availabilityMode: SynchronousCommit
+      failoverMode: External
+      readableSecondary: ReadOnly
+      sessionTimeout: 10
+    
+    secondaryConfig:
+      availabilityMode: SynchronousCommit
+      failoverMode: External
+      readableSecondary: ReadOnly
+      sessionTimeout: 10
+    
+    seedingMode: Automatic
+    clusterType: External
+    endpointPort: 5022
+    dbFailover: true
+    
+    # Manual failover by default — set to true for automatic
+    automaticFailover: false
+    
+    healthCheckCredentials:
+      secretRef:
+        usernameSecret:
+          name: sql-ag-helper
+          key: username
+        passwordSecret:
+          name: sql-ag-helper
+          key: password
+  
+  # AG Listener — single VIP that routes to primary
+  listener:
+    name: productionag-listener
+    port: 1433
+    serviceType: ClusterIP
+  
+  # Failover settings
+  failover:
+    automatic: true
+    dataLossThreshold: 0
+    healthCheckTimeout: "30s"
+    leaseTimeout: "60s"
+    requiredSynchronizedSecondaries: -1
+  
+  # AG Helper sidecar — monitors AG health on each replica
+  sidecar:
+    image: ghcr.io/tejasaks/mssql-ag-helper:v1.0.0
+    monitorInterval: "10s"
+    connectionTimeout: "30s"
+    maxRetries: 3
+    retryInterval: "5s"
+    stalenessThreshold: "30s"
+
+
+# ############################################################################
+#
+#   STEP 4: Monitoring Stack (Prometheus + Grafana)
+#
+# ############################################################################
+
+---
+# Monitoring namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    app.kubernetes.io/name: monitoring
+    app.kubernetes.io/part-of: mssql-operator
+
+---
+# ============================================================================
+# PROMETHEUS CONFIGURATION
+# ============================================================================
+# Auto-discovers sql-exporter sidecars on all 3 AG replicas via Kubernetes
+# pod annotations. The operator sets these annotations when monitoring is
+# enabled:
+#   prometheus.io/scrape: "true"
+#   prometheus.io/port: "9399"
+# ============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+  labels:
+    app: prometheus
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    scrape_configs:
+      # Scrape Prometheus itself
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+
+      # Auto-discover SQL Server exporters via pod annotations
+      # This will find sql-ag-0, sql-ag-1, and sql-ag-2 automatically
+      - job_name: 'sql-exporter'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - mssql   # Only look in the mssql namespace
+        relabel_configs:
+          # Only scrape pods annotated with prometheus.io/scrape=true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          # Use pod IP + annotated port for scraping
+          - source_labels: [__meta_kubernetes_pod_ip, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            target_label: __address__
+            regex: (.+);(.+)
+            replacement: ${1}:${2}
+          # Preserve useful labels
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: kubernetes_pod_name
+          - source_labels: [__meta_kubernetes_pod_label_mssql_microsoft_com_instance]
+            action: replace
+            target_label: sqlserver_instance
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: monitoring
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-mssql-monitoring
+rules:
+  - apiGroups: [""]
+    resources: [nodes, nodes/proxy, services, endpoints, pods]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get]
+  - nonResourceURLs: ["/metrics"]
+    verbs: [get]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-mssql-monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus-mssql-monitoring
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: monitoring
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data
+  namespace: monitoring
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitoring
+  labels:
+    app: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      serviceAccountName: prometheus
+      securityContext:
+        fsGroup: 65534
+        runAsNonRoot: true
+        runAsUser: 65534
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.48.0
+          args:
+            - '--config.file=/etc/prometheus/prometheus.yml'
+            - '--storage.tsdb.path=/prometheus'
+            - '--storage.tsdb.retention.time=7d'
+            - '--storage.tsdb.retention.size=1GB'
+            - '--web.enable-lifecycle'
+            - '--web.enable-admin-api'
+            - '--web.listen-address=0.0.0.0:9090'
+          ports:
+            - containerPort: 9090
+              name: web
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: web
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: web
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: prometheus-data
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoring
+  labels:
+    app: prometheus
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9090
+      targetPort: 9090
+      name: web
+  selector:
+    app: prometheus
+
+---
+# ============================================================================
+# GRAFANA CONFIGURATION
+# ============================================================================
+# Pre-configured with:
+#   - Prometheus data source (auto-provisioned)
+#   - AG-specific dashboard (primary/secondary roles, sync state, lag)
+#   - SQL Server Overview dashboard (CPU, memory, connections, batch/sec)
+# ============================================================================
+
+---
+# Grafana data source — auto-connects to Prometheus
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: monitoring
+  labels:
+    app: grafana
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        url: http://prometheus.monitoring.svc:9090
+        access: proxy
+        isDefault: true
+        editable: false
+
+---
+# Dashboard auto-provisioning configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+  namespace: monitoring
+  labels:
+    app: grafana
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: 'default'
+        orgId: 1
+        folder: 'SQL Server'
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards
+
+---
+# ============================================================================
+# GRAFANA DASHBOARDS
+# ============================================================================
+# Two dashboards are pre-loaded:
+#
+#   1. "SQL Server AG Monitoring" — AG-specific metrics for all 3 replicas
+#      - Primary/secondary role per replica
+#      - Synchronization state and health
+#      - Redo queue and log send queue lag
+#      - Connected state per replica
+#
+#   2. "SQL Server Overview" — Instance-level metrics for all 3 replicas
+#      - CPU and memory usage gauges
+#      - Active connections
+#      - Batch requests/sec
+#      - Buffer cache size over time
+#      - Instance up/down status
+# ============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: monitoring
+  labels:
+    app: grafana
+data:
+  # ---- Dashboard 1: AG Monitoring ----
+  ag-monitoring.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "liveNow": false,
+      "panels": [
+        {
+          "title": "AG Health Overview",
+          "type": "row",
+          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+          "id": 100,
+          "collapsed": false
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "mappings": [
+                {"options": {"0": {"color": "red",    "index": 0, "text": "NOT HEALTHY"}}, "type": "value"},
+                {"options": {"1": {"color": "yellow", "index": 1, "text": "PARTIALLY HEALTHY"}}, "type": "value"},
+                {"options": {"2": {"color": "green",  "index": 2, "text": "HEALTHY"}}, "type": "value"}
+              ],
+              "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 2}]}
+            }
+          },
+          "gridPos": {"h": 4, "w": 8, "x": 0, "y": 1},
+          "id": 1,
+          "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+          "targets": [{"expr": "mssql_ag_synchronization_health{ag_name=\"ProductionAG\"}", "legendFormat": "AG Health", "refId": "A"}],
+          "title": "AG Synchronization Health",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "mappings": [
+                {"options": {"0": {"color": "blue",   "index": 0, "text": "RESOLVING"}}, "type": "value"},
+                {"options": {"1": {"color": "green",  "index": 1, "text": "PRIMARY"}}, "type": "value"},
+                {"options": {"2": {"color": "orange", "index": 2, "text": "SECONDARY"}}, "type": "value"}
+              ],
+              "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}
+            }
+          },
+          "gridPos": {"h": 4, "w": 16, "x": 8, "y": 1},
+          "id": 2,
+          "options": {"colorMode": "background", "graphMode": "none", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}},
+          "targets": [{"expr": "mssql_ag_replica_role{ag_name=\"ProductionAG\"}", "legendFormat": "{{kubernetes_pod_name}}", "refId": "A"}],
+          "title": "Replica Roles (sql-ag-0 / sql-ag-1 / sql-ag-2)",
+          "type": "stat"
+        },
+        {
+          "title": "Per-Replica Status",
+          "type": "row",
+          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5},
+          "id": 101,
+          "collapsed": false
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "mappings": [
+                {"options": {"0": {"color": "red",   "index": 0, "text": "DISCONNECTED"}}, "type": "value"},
+                {"options": {"1": {"color": "green", "index": 1, "text": "CONNECTED"}}, "type": "value"}
+              ],
+              "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+            }
+          },
+          "gridPos": {"h": 4, "w": 8, "x": 0, "y": 6},
+          "id": 3,
+          "options": {"colorMode": "background", "graphMode": "none", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}},
+          "targets": [{"expr": "mssql_ag_replica_connected_state{ag_name=\"ProductionAG\"}", "legendFormat": "{{kubernetes_pod_name}}", "refId": "A"}],
+          "title": "Replica Connected State",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "mappings": [
+                {"options": {"0": {"color": "red",    "index": 0, "text": "NOT SYNCING"}}, "type": "value"},
+                {"options": {"1": {"color": "yellow", "index": 1, "text": "SYNCHRONIZING"}}, "type": "value"},
+                {"options": {"2": {"color": "green",  "index": 2, "text": "SYNCHRONIZED"}}, "type": "value"}
+              ],
+              "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 2}]}
+            }
+          },
+          "gridPos": {"h": 4, "w": 16, "x": 8, "y": 6},
+          "id": 4,
+          "options": {"colorMode": "background", "graphMode": "none", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}},
+          "targets": [{"expr": "mssql_ag_database_synchronization_state{ag_name=\"ProductionAG\"}", "legendFormat": "{{kubernetes_pod_name}} / {{database}}", "refId": "A"}],
+          "title": "Database Sync State (per replica / database)",
+          "type": "stat"
+        },
+        {
+          "title": "Replication Lag",
+          "type": "row",
+          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 10},
+          "id": 102,
+          "collapsed": false
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {
+                "axisCenteredZero": false, "axisLabel": "Bytes",
+                "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2,
+                "pointSize": 5, "showPoints": "never",
+                "stacking": {"mode": "none"}, "thresholdsStyle": {"mode": "dashed"}
+              },
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1073741824}]},
+              "unit": "bytes"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 11},
+          "id": 5,
+          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+          "targets": [{"expr": "mssql_ag_redo_queue_size{ag_name=\"ProductionAG\"}", "legendFormat": "{{kubernetes_pod_name}} / {{database}}", "refId": "A"}],
+          "title": "Redo Queue Size (secondary lag)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {
+                "axisCenteredZero": false, "axisLabel": "Bytes",
+                "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2,
+                "pointSize": 5, "showPoints": "never",
+                "stacking": {"mode": "none"}, "thresholdsStyle": {"mode": "dashed"}
+              },
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 10485760}]},
+              "unit": "bytes"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 11},
+          "id": 6,
+          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+          "targets": [{"expr": "mssql_ag_log_send_queue_size{ag_name=\"ProductionAG\"}", "legendFormat": "{{kubernetes_pod_name}} / {{database}}", "refId": "A"}],
+          "title": "Log Send Queue Size (primary → secondary lag)",
+          "type": "timeseries"
+        },
+        {
+          "title": "Instance Health (all replicas)",
+          "type": "row",
+          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 19},
+          "id": 103,
+          "collapsed": false
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "mappings": [
+                {"options": {"0": {"color": "red",   "index": 0, "text": "DOWN"}}, "type": "value"},
+                {"options": {"1": {"color": "green", "index": 1, "text": "UP"}}, "type": "value"}
+              ],
+              "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+            }
+          },
+          "gridPos": {"h": 4, "w": 8, "x": 0, "y": 20},
+          "id": 7,
+          "options": {"colorMode": "background", "graphMode": "none", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}},
+          "targets": [{"expr": "mssql_up{sqlserver_instance=\"sql-ag\"}", "legendFormat": "{{kubernetes_pod_name}}", "refId": "A"}],
+          "title": "SQL Server Instance Status",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 90}]},
+              "unit": "percent"
+            }
+          },
+          "gridPos": {"h": 4, "w": 8, "x": 8, "y": 20},
+          "id": 8,
+          "options": {"orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"]}, "showThresholdMarkers": true},
+          "targets": [{"expr": "mssql_cpu_percent{sqlserver_instance=\"sql-ag\"}", "legendFormat": "{{kubernetes_pod_name}}", "refId": "A"}],
+          "title": "CPU Usage % (per replica)",
+          "type": "gauge"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 90}]},
+              "unit": "percent"
+            }
+          },
+          "gridPos": {"h": 4, "w": 8, "x": 16, "y": 20},
+          "id": 9,
+          "options": {"orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"]}, "showThresholdMarkers": true},
+          "targets": [{"expr": "mssql_memory_usage_percent{sqlserver_instance=\"sql-ag\"}", "legendFormat": "{{kubernetes_pod_name}}", "refId": "A"}],
+          "title": "Memory Usage % (per replica)",
+          "type": "gauge"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {
+                "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1,
+                "showPoints": "never", "stacking": {"mode": "none"}
+              },
+              "unit": "short"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+          "id": 10,
+          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+          "targets": [{"expr": "mssql_connections{sqlserver_instance=\"sql-ag\"}", "legendFormat": "{{kubernetes_pod_name}}", "refId": "A"}],
+          "title": "Active Connections (per replica)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {
+                "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1,
+                "showPoints": "never", "stacking": {"mode": "none"}
+              },
+              "unit": "reqps"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+          "id": 11,
+          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+          "targets": [{"expr": "rate(mssql_batch_requests_total{sqlserver_instance=\"sql-ag\"}[5m])", "legendFormat": "{{kubernetes_pod_name}}", "refId": "A"}],
+          "title": "Batch Requests Rate (per replica, 5m avg)",
+          "type": "timeseries"
+        }
+      ],
+      "refresh": "10s",
+      "schemaVersion": 38,
+      "style": "dark",
+      "tags": ["sql-server", "availability-group", "mssql", "ag-monitoring"],
+      "templating": {"list": []},
+      "time": {"from": "now-1h", "to": "now"},
+      "timepicker": {},
+      "timezone": "",
+      "title": "SQL Server AG Monitoring",
+      "uid": "mssql-ag-monitoring",
+      "version": 1,
+      "weekStart": ""
+    }
+  # ---- Dashboard 2: SQL Server Overview ----
+  sqlserver-overview.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "liveNow": false,
+      "panels": [
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 90}]},
+              "unit": "percent"
+            }
+          },
+          "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0},
+          "id": 1,
+          "options": {"orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"]}, "showThresholdMarkers": true},
+          "targets": [{"expr": "mssql_cpu_percent", "legendFormat": "{{kubernetes_pod_name}}", "refId": "A"}],
+          "title": "CPU Usage %",
+          "type": "gauge"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 90}]},
+              "unit": "percent"
+            }
+          },
+          "gridPos": {"h": 8, "w": 6, "x": 6, "y": 0},
+          "id": 2,
+          "options": {"orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"]}, "showThresholdMarkers": true},
+          "targets": [{"expr": "mssql_memory_usage_percent", "legendFormat": "{{kubernetes_pod_name}}", "refId": "A"}],
+          "title": "Memory Usage %",
+          "type": "gauge"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "unit": "short"}},
+          "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0},
+          "id": 3,
+          "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"]}},
+          "targets": [{"expr": "mssql_connections", "legendFormat": "{{kubernetes_pod_name}}", "refId": "A"}],
+          "title": "Active Connections",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "unit": "short"}},
+          "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0},
+          "id": 4,
+          "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+          "targets": [{"expr": "mssql_batch_requests_per_second", "legendFormat": "{{kubernetes_pod_name}}", "refId": "A"}],
+          "title": "Batch Requests/sec",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 1, "showPoints": "never", "stacking": {"mode": "none"}},
+              "unit": "short"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+          "id": 5,
+          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+          "targets": [{"expr": "rate(mssql_batch_requests_total[5m])", "legendFormat": "{{kubernetes_pod_name}}", "refId": "A"}],
+          "title": "Batch Requests Rate (5m)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 1, "showPoints": "never", "stacking": {"mode": "none"}},
+              "unit": "bytes"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+          "id": 6,
+          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+          "targets": [{"expr": "mssql_buffer_cache_size_bytes", "legendFormat": "{{kubernetes_pod_name}}", "refId": "A"}],
+          "title": "Buffer Cache Size",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "mappings": [
+                {"options": {"0": {"color": "red", "index": 0, "text": "Offline"}}, "type": "value"},
+                {"options": {"1": {"color": "green", "index": 1, "text": "Online"}}, "type": "value"}
+              ],
+              "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+            }
+          },
+          "gridPos": {"h": 6, "w": 24, "x": 0, "y": 16},
+          "id": 7,
+          "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+          "targets": [{"expr": "mssql_up", "legendFormat": "{{kubernetes_pod_name}}", "refId": "A"}],
+          "title": "SQL Server Status",
+          "type": "stat"
+        }
+      ],
+      "refresh": "10s",
+      "schemaVersion": 38,
+      "style": "dark",
+      "tags": ["sql-server", "mssql", "database"],
+      "templating": {"list": []},
+      "time": {"from": "now-1h", "to": "now"},
+      "timepicker": {},
+      "timezone": "",
+      "title": "SQL Server Overview",
+      "uid": "mssql-overview",
+      "version": 1,
+      "weekStart": ""
+    }
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-data
+  namespace: monitoring
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      securityContext:
+        fsGroup: 472
+        runAsNonRoot: true
+        runAsUser: 472
+      containers:
+        - name: grafana
+          image: grafana/grafana:10.2.0
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: admin
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: admin  # CHANGE THIS in production!
+            - name: GF_INSTALL_PLUGINS
+              value: ""
+            # Anonymous access for demo — disable in production
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: "Viewer"
+          volumeMounts:
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+            - name: data
+              mountPath: /var/lib/grafana
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: datasources
+          configMap:
+            name: grafana-datasources
+        - name: dashboard-provider
+          configMap:
+            name: grafana-dashboard-provider
+        - name: dashboards
+          configMap:
+            name: grafana-dashboards
+        - name: data
+          persistentVolumeClaim:
+            claimName: grafana-data
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app: grafana
+spec:
+  type: LoadBalancer  # Use NodePort if LoadBalancer not available
+  ports:
+    - port: 3000
+      targetPort: 3000
+      name: http
+  selector:
+    app: grafana
+
+
+# ############################################################################
+#
+#   DEPLOYMENT INSTRUCTIONS
+#
+# ############################################################################
+#
+# This sample is designed to be applied in stages. You can either apply the
+# entire file at once (Steps 1, 3, and 4 deploy simultaneously) or apply
+# each section separately using label selectors or by splitting the file.
+#
+# ============================================================================
+# STEP 1: Deploy SQL Server with Monitoring
+# ============================================================================
+#
+#   kubectl apply -f samples/ag-with-monitoring.yaml
+#
+#   Wait for all pods — each pod should show 2/2 (mssql-server + sql-exporter):
+#   kubectl get pods -n mssql -w
+#
+#   # Expected:
+#   # NAME       READY   STATUS    RESTARTS   AGE
+#   # sql-ag-0   2/2     Running   0          2m
+#   # sql-ag-1   2/2     Running   0          2m
+#   # sql-ag-2   2/2     Running   0          2m
+#
+#   Verify the sql-exporter sidecar is running on each replica:
+#   kubectl get pods -n mssql -o jsonpath='{range .items[*]}{.metadata.name}{": "}{range .spec.containers[*]}{.name}{" "}{end}{"\n"}{end}'
+#   # Should show: mssql-server sql-exporter (for each pod)
+#
+#   Verify metrics are being exposed:
+#   kubectl port-forward pod/sql-ag-0 -n mssql 9399:9399
+#   curl -s http://localhost:9399/metrics | head -20
+#
+# ============================================================================
+# STEP 2: T-SQL Setup (Manual)
+# ============================================================================
+#
+#   Follow ag-step2-setup-ag.md to:
+#     - Create AG Helper login on all 3 replicas
+#     - Create certificates and mirroring endpoints
+#     - Create the Availability Group "ProductionAG"
+#     - Join secondary replicas to the AG
+#
+#   After AG creation, verify AG metrics are exposed:
+#   kubectl port-forward pod/sql-ag-0 -n mssql 9399:9399
+#   curl -s http://localhost:9399/metrics | grep mssql_ag
+#
+#   # Expected output:
+#   # mssql_ag_is_primary{ag_name="ProductionAG"} 1
+#   # mssql_ag_replica_role{ag_name="ProductionAG",replica="sql-ag-0"} 1
+#   # mssql_ag_synchronization_health{ag_name="ProductionAG"} 2
+#
+# ============================================================================
+# STEP 3: SQLServerAG deploys automatically (included in the same file)
+# ============================================================================
+#
+#   The SQLServerAG resource was already applied in Step 1 along with the
+#   entire file. The operator will reconcile it once the AG exists in SQL
+#   Server (after Step 2).
+#
+#   Verify the AG Helper sidecar was injected (pods show 3/3):
+#   kubectl get pods -n mssql -w
+#   # Expected: 3/3 Ready (mssql-server + sql-exporter + ag-helper)
+#
+#   Check AG status:
+#   kubectl get sqlserverag -n mssql
+#   kubectl describe sqlserverag production-ag -n mssql
+#
+# ============================================================================
+# STEP 4: Access Grafana Dashboards
+# ============================================================================
+#
+#   The monitoring stack (Prometheus + Grafana) was deployed in Step 1.
+#
+#   OPTION A: Port-forward (development / local access):
+#
+#     kubectl port-forward svc/grafana -n monitoring 3000:3000
+#
+#     Open in browser: http://localhost:3000
+#     Login: admin / admin (change on first login in production)
+#
+#   OPTION B: LoadBalancer (cloud environments):
+#
+#     kubectl get svc grafana -n monitoring
+#     # Use the EXTERNAL-IP on port 3000
+#
+#   OPTION C: NodePort (bare-metal / minikube):
+#
+#     # Edit the Grafana Service type to NodePort:
+#     kubectl patch svc grafana -n monitoring -p '{"spec":{"type":"NodePort"}}'
+#     kubectl get svc grafana -n monitoring
+#     # Access via <node-ip>:<node-port>
+#
+#     # For minikube:
+#     minikube service grafana -n monitoring
+#
+#   NAVIGATE TO DASHBOARDS:
+#
+#     1. Click "Dashboards" in the left sidebar (or press "d" then "b")
+#     2. Open the "SQL Server" folder
+#     3. Two dashboards are available:
+#
+#        ┌─────────────────────────────────────────────────────────────┐
+#        │  SQL Server AG Monitoring                                   │
+#        │  ─────────────────────────────────────────────────────────  │
+#        │  • AG Synchronization Health (HEALTHY / PARTIALLY / NOT)   │
+#        │  • Replica Roles (PRIMARY / SECONDARY per pod)             │
+#        │  • Replica Connected State                                  │
+#        │  • Database Sync State (per database per replica)          │
+#        │  • Redo Queue Size (secondary lag over time)               │
+#        │  • Log Send Queue Size (primary→secondary lag)             │
+#        │  • Instance Status (UP/DOWN per replica)                   │
+#        │  • CPU / Memory gauges (per replica)                       │
+#        │  • Active Connections / Batch Requests (per replica)       │
+#        └─────────────────────────────────────────────────────────────┘
+#
+#        ┌─────────────────────────────────────────────────────────────┐
+#        │  SQL Server Overview                                        │
+#        │  ─────────────────────────────────────────────────────────  │
+#        │  • CPU / Memory gauges (all instances)                     │
+#        │  • Active Connections                                       │
+#        │  • Batch Requests/sec                                       │
+#        │  • Batch Requests Rate (5m trend)                          │
+#        │  • Buffer Cache Size (trend)                               │
+#        │  • Instance Up/Down status                                 │
+#        └─────────────────────────────────────────────────────────────┘
+#
+# ============================================================================
+# STEP 5: Verify Prometheus Targets
+# ============================================================================
+#
+#   Port-forward to Prometheus:
+#   kubectl port-forward svc/prometheus -n monitoring 9090:9090
+#
+#   Open http://localhost:9090/targets in your browser.
+#   You should see 3 targets under the "sql-exporter" job:
+#
+#     Endpoint                        State   Labels
+#     ─────────────────────────────   ─────   ──────────────────────────
+#     sql-ag-0.mssql:9399/metrics     UP      kubernetes_pod_name=sql-ag-0
+#     sql-ag-1.mssql:9399/metrics     UP      kubernetes_pod_name=sql-ag-1
+#     sql-ag-2.mssql:9399/metrics     UP      kubernetes_pod_name=sql-ag-2
+#
+#   Run sample PromQL queries:
+#
+#   # Check all 3 replicas are up
+#   mssql_up{sqlserver_instance="sql-ag"}
+#
+#   # Show AG health
+#   mssql_ag_synchronization_health{ag_name="ProductionAG"}
+#
+#   # Show replica roles
+#   mssql_ag_replica_role{ag_name="ProductionAG"}
+#
+#   # Show sync state per database
+#   mssql_ag_database_synchronization_state{ag_name="ProductionAG"}
+#
+#   # Show redo lag on secondaries (bytes)
+#   mssql_ag_redo_queue_size{ag_name="ProductionAG"}
+#
+#   # Show CPU on all 3 replicas
+#   mssql_cpu_percent{sqlserver_instance="sql-ag"}
+#
+# ============================================================================
+# USEFUL QUERIES FOR GRAFANA EXPLORE
+# ============================================================================
+#
+#   # Which replica is primary?
+#   mssql_ag_replica_role{ag_name="ProductionAG"} == 1
+#
+#   # Any databases NOT synchronized?
+#   mssql_ag_database_synchronization_state{ag_name="ProductionAG"} != 2
+#
+#   # Redo queue > 1GB (indicates secondary falling behind)
+#   mssql_ag_redo_queue_size{ag_name="ProductionAG"} > 1073741824
+#
+#   # CPU over 80% on any replica
+#   mssql_cpu_percent{sqlserver_instance="sql-ag"} > 80
+#
+#   # Memory over 90% on any replica
+#   mssql_memory_usage_percent{sqlserver_instance="sql-ag"} > 90
+#
+#   # Batch requests rate per replica (5 min average)
+#   rate(mssql_batch_requests_total{sqlserver_instance="sql-ag"}[5m])
+#
+#   # Any replica down?
+#   mssql_up{sqlserver_instance="sql-ag"} == 0
+#
+# ############################################################################
+
+# ============================================================================
+# CLEANUP
+# ============================================================================
+#
+# To remove all resources created by this sample:
+#
+# 1. Delete the SQLServerAG (removes AG Helper sidecar):
+#    kubectl delete sqlserverag production-ag -n mssql
+#
+# 2. Delete all resources in this file:
+#    kubectl delete -f samples/ag-with-monitoring.yaml
+#
+# 3. Verify SQL Server resources are removed:
+#    kubectl get pods,pvc,svc -n mssql
+#
+# 4. Delete monitoring resources:
+#    kubectl delete namespace monitoring
+#
+#    Note: The ClusterRole and ClusterRoleBinding are cluster-scoped:
+#    kubectl delete clusterrole prometheus-mssql-monitoring
+#    kubectl delete clusterrolebinding prometheus-mssql-monitoring
+#
+# 5. (Optional) Delete the mssql namespace:
+#    kubectl delete namespace mssql
+#
+# 6. (Optional) Delete PVCs manually (not auto-deleted):
+#    kubectl delete pvc --all -n mssql
+#    kubectl delete pvc --all -n monitoring
+#
+# 7. To remove the operator itself and all CRDs:
+#    kubectl delete -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/install.yaml
+#
+#    Or if installed from a local file:
+#    kubectl delete -f install.yaml
+#
+# NOTE: Deleting CRDs will remove ALL SQLServer and SQLServerAG resources
+#       across all namespaces. Make sure no other workloads depend on them.
+#
+# ============================================================================
