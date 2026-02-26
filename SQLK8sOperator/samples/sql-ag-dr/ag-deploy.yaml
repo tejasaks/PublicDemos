@@ -1,0 +1,246 @@
+# ============================================================================
+# SQL Server Availability Group — Disaster Recovery Deployment
+# ============================================================================
+#
+# Self-contained manifest for a DR-oriented AG: 2 synchronous-commit replicas
+# for local HA plus 1 asynchronous-commit replica for disaster recovery.
+# Manual failover only — DBA controls all failover decisions.
+#
+# WHAT THIS CREATES:
+#   Namespace: mssql
+#     - Secret: sql-ag-sa        (SA password)
+#     - Secret: sql-ag-helper    (AG Helper credentials)
+#     - SQLServer: sql-ag        (3 replicas, hadrEnabled)
+#     - Service: sql-ag-0/1/2    (per-replica direct access)
+#     - SQLServerAG: dr-ag       (manual failover, no listener)
+#
+# TWO-STEP DEPLOYMENT:
+#   1. kubectl apply -f ag-deploy.yaml       ← this file
+#   2. Follow ag-configure.md or run ag-configure.sh
+#
+# ORDERING — SAFE TO APPLY EVERYTHING AT ONCE:
+#   The operator retries every 10s until the AG exists in SQL Server.
+#   Warnings during this window are informational, not errors.
+#
+# SCENARIO: Disaster Recovery
+#   - 2 synchronous-commit replicas (sql-ag-0, sql-ag-1) for local HA
+#   - 1 asynchronous-commit replica (sql-ag-2) for geo-DR
+#   - Manual failover only (DBA decides when to fail over)
+#   - No AG Listener (connect directly to replicas)
+#   - DR replica not readable (standby only)
+#
+# ============================================================================
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mssql
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sql-ag-sa
+  namespace: mssql
+  labels:
+    app.kubernetes.io/component: mssql
+type: Opaque
+stringData:
+  password: "YourStrong@Passw0rd!"  # CHANGE THIS!
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sql-ag-helper
+  namespace: mssql
+  labels:
+    app.kubernetes.io/component: ag-helper
+type: Opaque
+stringData:
+  username: "ag_helper"
+  password: "AGHelper@Passw0rd!"  # CHANGE THIS!
+
+---
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServer
+metadata:
+  name: sql-ag
+  namespace: mssql
+spec:
+  description: "SQL Server AG cluster — 2 local + 1 DR replica"
+  
+  version: "2025"
+  edition: Developer  # Use Enterprise for production
+  
+  instance:
+    count: 3
+    
+    resources:
+      limits:
+        cpu: "4"
+        memory: 8Gi
+      requests:
+        cpu: "2"
+        memory: 4Gi
+    
+    storage:
+      data:
+        size: 50Gi
+      log:
+        size: 20Gi
+      backup:
+        size: 50Gi
+    
+    config:
+      hadrEnabled: true
+      agentEnabled: true
+      collation: SQL_Latin1_General_CP1_CI_AS
+    
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: mssql
+                  mssql.microsoft.com/instance: sql-ag
+              topologyKey: kubernetes.io/hostname
+  
+  credentials:
+    saPasswordSecretRef:
+      name: sql-ag-sa
+      key: password
+  
+  service:
+    type: LoadBalancer
+    port: 1433
+
+---
+# Per-replica services
+apiVersion: v1
+kind: Service
+metadata:
+  name: sql-ag-0
+  namespace: mssql
+  labels: { app: mssql, mssql.microsoft.com/instance: sql-ag, mssql.microsoft.com/replica: "0" }
+spec:
+  type: LoadBalancer
+  selector: { app: mssql, mssql.microsoft.com/instance: sql-ag, statefulset.kubernetes.io/pod-name: sql-ag-0 }
+  ports:
+    - { name: sql, port: 1433, targetPort: 1433 }
+    - { name: ag-endpoint, port: 5022, targetPort: 5022 }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sql-ag-1
+  namespace: mssql
+  labels: { app: mssql, mssql.microsoft.com/instance: sql-ag, mssql.microsoft.com/replica: "1" }
+spec:
+  type: LoadBalancer
+  selector: { app: mssql, mssql.microsoft.com/instance: sql-ag, statefulset.kubernetes.io/pod-name: sql-ag-1 }
+  ports:
+    - { name: sql, port: 1433, targetPort: 1433 }
+    - { name: ag-endpoint, port: 5022, targetPort: 5022 }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sql-ag-2
+  namespace: mssql
+  labels: { app: mssql, mssql.microsoft.com/instance: sql-ag, mssql.microsoft.com/replica: "2" }
+spec:
+  type: LoadBalancer
+  selector: { app: mssql, mssql.microsoft.com/instance: sql-ag, statefulset.kubernetes.io/pod-name: sql-ag-2 }
+  ports:
+    - { name: sql, port: 1433, targetPort: 1433 }
+    - { name: ag-endpoint, port: 5022, targetPort: 5022 }
+
+# ============================================================================
+# SQLServerAG — DR Configuration
+# ============================================================================
+# No listener. Manual failover only. DBA connects directly to replicas.
+# ============================================================================
+
+---
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServerAG
+metadata:
+  name: dr-ag
+  namespace: mssql
+spec:
+  description: "DR Availability Group — manual failover, no listener"
+  
+  sqlServerRef:
+    name: sql-ag
+  
+  availabilityGroup:
+    name: DisasterRecoveryAG  # Must match the AG created via T-SQL
+    instanceCount: 3
+    
+    primaryConfig:
+      availabilityMode: SynchronousCommit
+      failoverMode: External
+      readableSecondary: ReadOnly
+      sessionTimeout: 10
+    
+    secondaryConfig:
+      availabilityMode: SynchronousCommit
+      failoverMode: External
+      readableSecondary: ReadOnly
+      sessionTimeout: 10
+    
+    seedingMode: Automatic
+    clusterType: External
+    endpointPort: 5022
+    dbFailover: true
+    
+    # Manual failover — DBA controls all failover decisions
+    automaticFailover: false
+    
+    healthCheckCredentials:
+      secretRef:
+        usernameSecret:
+          name: sql-ag-helper
+          key: username
+        passwordSecret:
+          name: sql-ag-helper
+          key: password
+  
+  # No listener section — direct replica access only
+  
+  failover:
+    automatic: false
+    dataLossThreshold: 0
+    healthCheckTimeout: "30s"
+    leaseTimeout: "60s"
+  
+  sidecar:
+    image: ghcr.io/tejasaks/mssql-ag-helper:v1.0.0
+    monitorInterval: "10s"
+    connectionTimeout: "30s"
+    maxRetries: 3
+    retryInterval: "5s"
+    stalenessThreshold: "30s"
+
+# ============================================================================
+# NEXT STEP
+# ============================================================================
+#
+#   1. Wait for pods: kubectl get pods -n mssql -w
+#   2. Run T-SQL:     ./ag-configure.sh   (or follow ag-configure.md)
+#   3. Verify:        kubectl get sqlserverag -n mssql
+#
+# MANUAL FAILOVER:
+#   kubectl annotate sqlserverag dr-ag -n mssql \
+#     mssql.microsoft.com/failover-to=sql-ag-1
+#
+# CLEANUP:
+#   kubectl delete -f ag-deploy.yaml
+#   kubectl delete namespace mssql
+# ============================================================================

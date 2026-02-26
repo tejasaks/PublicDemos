@@ -1,0 +1,339 @@
+# ============================================================================
+# SQL Server Availability Group — High Availability Deployment
+# ============================================================================
+#
+# Self-contained Kubernetes manifest that deploys EVERYTHING needed for a
+# production-ready SQL Server AG with automatic failover and an AG Listener.
+#
+# WHAT THIS CREATES:
+#   Namespace: mssql
+#     - Secret: sql-ag-sa        (SA password)
+#     - Secret: sql-ag-helper    (AG Helper credentials)
+#     - SQLServer: sql-ag        (3 replicas, hadrEnabled)
+#     - Service: sql-ag-0/1/2    (per-replica direct access + AG endpoint)
+#     - SQLServerAG: production-ag
+#         • AG Helper sidecar for health monitoring
+#         • AG Listener Service (VIP always routing to primary)
+#         • Automatic failover when primary is unhealthy
+#         • Primary / Secondary endpoint services
+#
+# TWO-STEP DEPLOYMENT:
+#   1. kubectl apply -f ag-deploy.yaml       ← this file (all K8s resources)
+#   2. Follow ag-configure.md or run ag-configure.sh  (T-SQL setup in SQL Server)
+#
+# ORDERING — SAFE TO APPLY EVERYTHING AT ONCE:
+#   This file deploys the SQLServerAG resource alongside the SQLServer resource.
+#   The operator handles missing prerequisites gracefully:
+#
+#   ┌──────────────────────────────────────────────────────────────────────┐
+#   │  What happens when you apply before T-SQL setup:                    │
+#   ├──────────────────────────────────────────────────────────────────────┤
+#   │                                                                     │
+#   │  SQLServer CR    → Operator creates StatefulSet, pods start.        │
+#   │                                                                     │
+#   │  SQLServerAG CR  → AG controller starts reconciling:                │
+#   │    • SQLServer not Ready yet → requeues every 10 seconds            │
+#   │    • SQLServer Ready, AG not in SQL yet → AG Helper reports         │
+#   │      empty/disconnected, phase="Creating", requeues every 10s       │
+#   │    • After T-SQL setup → AG Helper detects the AG,                  │
+#   │      controller transitions to "Running" automatically              │
+#   │                                                                     │
+#   │  Net effect: You may see "Creating" status and warnings until       │
+#   │  T-SQL is completed. These are informational, not errors.           │
+#   │  Everything self-heals once the AG exists.                          │
+#   └──────────────────────────────────────────────────────────────────────┘
+#
+# SCENARIO: High Availability
+#   - 3 synchronous-commit replicas
+#   - Automatic failover via controller
+#   - AG Listener for single-endpoint access
+#   - Read-only routing to secondaries
+#
+# ============================================================================
+
+---
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mssql
+
+---
+# SA password secret
+# SECURITY: Change this password in production!
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sql-ag-sa
+  namespace: mssql
+  labels:
+    app.kubernetes.io/component: mssql
+type: Opaque
+stringData:
+  password: "YourStrong@Passw0rd!"  # CHANGE THIS!
+
+---
+# AG Helper credentials secret
+# This login will be created in SQL Server during T-SQL setup (ag-configure.md)
+# Required permissions: VIEW SERVER STATE, ALTER ANY AVAILABILITY GROUP
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sql-ag-helper
+  namespace: mssql
+  labels:
+    app.kubernetes.io/component: ag-helper
+type: Opaque
+stringData:
+  username: "ag_helper"
+  password: "AGHelper@Passw0rd!"  # CHANGE THIS! Must match T-SQL in ag-configure
+
+---
+# SQL Server with 3 instances for AG
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServer
+metadata:
+  name: sql-ag
+  namespace: mssql
+spec:
+  description: "SQL Server AG cluster — 3 replicas for HA"
+  
+  version: "2025"
+  edition: Developer  # Use Enterprise for production
+  
+  instance:
+    count: 3
+    
+    resources:
+      limits:
+        cpu: "4"
+        memory: 8Gi
+      requests:
+        cpu: "2"
+        memory: 4Gi
+    
+    storage:
+      data:
+        size: 50Gi
+        # storageClass: managed-premium  # Uncomment for Azure
+      log:
+        size: 20Gi
+      backup:
+        size: 50Gi
+    
+    config:
+      hadrEnabled: true   # Required for AG
+      agentEnabled: true
+      collation: SQL_Latin1_General_CP1_CI_AS
+    
+    # Distribute pods across nodes for HA
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: mssql
+                  mssql.microsoft.com/instance: sql-ag
+              topologyKey: kubernetes.io/hostname
+  
+  credentials:
+    saPasswordSecretRef:
+      name: sql-ag-sa
+      key: password
+  
+  service:
+    type: LoadBalancer
+    port: 1433
+
+---
+# ============================================================================
+# PER-REPLICA SERVICES
+# ============================================================================
+# Direct access to each SQL Server replica individually.
+# Required for T-SQL AG setup, endpoint communication (5022), and debugging.
+#
+# DNS names for AG endpoint URLs:
+#   sql-ag-0.mssql.svc.cluster.local:5022
+#   sql-ag-1.mssql.svc.cluster.local:5022
+#   sql-ag-2.mssql.svc.cluster.local:5022
+# ============================================================================
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sql-ag-0
+  namespace: mssql
+  labels:
+    app: mssql
+    mssql.microsoft.com/instance: sql-ag
+    mssql.microsoft.com/replica: "0"
+spec:
+  type: LoadBalancer
+  selector:
+    app: mssql
+    mssql.microsoft.com/instance: sql-ag
+    statefulset.kubernetes.io/pod-name: sql-ag-0
+  ports:
+    - name: sql
+      port: 1433
+      targetPort: 1433
+    - name: ag-endpoint
+      port: 5022
+      targetPort: 5022
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sql-ag-1
+  namespace: mssql
+  labels:
+    app: mssql
+    mssql.microsoft.com/instance: sql-ag
+    mssql.microsoft.com/replica: "1"
+spec:
+  type: LoadBalancer
+  selector:
+    app: mssql
+    mssql.microsoft.com/instance: sql-ag
+    statefulset.kubernetes.io/pod-name: sql-ag-1
+  ports:
+    - name: sql
+      port: 1433
+      targetPort: 1433
+    - name: ag-endpoint
+      port: 5022
+      targetPort: 5022
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sql-ag-2
+  namespace: mssql
+  labels:
+    app: mssql
+    mssql.microsoft.com/instance: sql-ag
+    mssql.microsoft.com/replica: "2"
+spec:
+  type: LoadBalancer
+  selector:
+    app: mssql
+    mssql.microsoft.com/instance: sql-ag
+    statefulset.kubernetes.io/pod-name: sql-ag-2
+  ports:
+    - name: sql
+      port: 1433
+      targetPort: 1433
+    - name: ag-endpoint
+      port: 5022
+      targetPort: 5022
+
+# ============================================================================
+# SQLServerAG — Kubernetes AG Management
+# ============================================================================
+# Deploys AG Helper sidecar, creates listener Service, enables failover.
+# The AG must exist in SQL Server (T-SQL setup) for the Helper to monitor it.
+# Until then the controller retries every 10s — this is normal.
+# ============================================================================
+
+---
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServerAG
+metadata:
+  name: production-ag
+  namespace: mssql
+spec:
+  description: "Production AG — 3 sync replicas, automatic failover, listener"
+  
+  sqlServerRef:
+    name: sql-ag
+  
+  availabilityGroup:
+    name: ProductionAG  # Must match the AG name created via T-SQL
+    instanceCount: 3
+    
+    primaryConfig:
+      availabilityMode: SynchronousCommit
+      failoverMode: External
+      readableSecondary: ReadOnly
+      sessionTimeout: 10
+    
+    secondaryConfig:
+      availabilityMode: SynchronousCommit
+      failoverMode: External
+      readableSecondary: ReadOnly
+      sessionTimeout: 10
+    
+    seedingMode: Automatic
+    clusterType: External
+    endpointPort: 5022
+    dbFailover: true
+    automaticFailover: true
+    
+    healthCheckCredentials:
+      secretRef:
+        usernameSecret:
+          name: sql-ag-helper
+          key: username
+        passwordSecret:
+          name: sql-ag-helper
+          key: password
+  
+  # AG Listener — single VIP that always routes to primary
+  listener:
+    name: productionag-listener
+    port: 1433
+    serviceType: ClusterIP
+  
+  # Failover configuration
+  failover:
+    automatic: true
+    dataLossThreshold: 0          # Zero data loss
+    healthCheckTimeout: "30s"
+    leaseTimeout: "60s"
+    requiredSynchronizedSecondaries: -1  # Auto-calculate
+  
+  # AG Helper sidecar
+  sidecar:
+    image: ghcr.io/tejasaks/mssql-ag-helper:v1.0.0
+    monitorInterval: "10s"
+    connectionTimeout: "30s"
+    maxRetries: 3
+    retryInterval: "5s"
+    stalenessThreshold: "30s"
+
+# ============================================================================
+# NEXT STEP
+# ============================================================================
+#
+# After applying this file:
+#   1. Wait for pods to be Running:
+#      kubectl get pods -n mssql -w
+#
+#   2. Run the T-SQL setup:
+#      ./ag-configure.sh            (automated)
+#      — or follow ag-configure.md  (manual step-by-step)
+#
+#   3. Set up the AG Listener:
+#      ./ag-configure.sh listener
+#
+#   4. Verify:
+#      kubectl get sqlserverag -n mssql
+#      kubectl get sqlserver -n mssql
+#
+# ============================================================================
+# CLEANUP
+# ============================================================================
+#
+# To remove everything:
+#   kubectl delete -f ag-deploy.yaml
+#   kubectl delete namespace mssql
+#
+# To remove the operator and CRDs:
+#   kubectl delete -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/install.yaml
+#
+# ============================================================================
