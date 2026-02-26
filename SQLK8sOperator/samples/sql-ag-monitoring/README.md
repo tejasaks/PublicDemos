@@ -40,6 +40,15 @@ Deploy a 3-replica SQL Server Always On Availability Group with a full
 └────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+## Customization
+
+> **Passwords:** The sample manifests and scripts ship with placeholder passwords (e.g. `YourStrong@Passw0rd!`). Before deploying, open `ag-deploy.yaml` and change the SA password and AG Helper password in the Secret resources. The Grafana default login (`admin`/`admin`) can also be changed in the Grafana Deployment environment variables in the same file. Then update the matching values at the top of `ag-configure.sh` (`SA_PASSWORD`, `AG_HELPER_PASSWORD`, `MASTER_KEY_PASSWORD`, `REPLICA_LOGIN_PASSWORD`), or in the manual T-SQL steps in `ag-configure.md`.
+
+> **Instance and AG names:** You can rename the SQLServer resource (e.g. `sql-ag` → `my-sql`), the pod prefix, the AG name (`ProductionAG`), and the listener name. If you do, update them consistently in:
+> - `ag-deploy.yaml` — SQLServer `.metadata.name`, SQLServerAG `.metadata.name`, `.spec.availabilityGroup.name`, `.spec.listener.name`, per-replica Service names, and the Prometheus scrape config job name / relabeling rules
+> - `ag-configure.sh` — the `PRIMARY`, `REPLICAS`, `AG_NAME`, `AG_RESOURCE_NAME`, `AG_LISTENER_NAME`, and `DATABASE_NAME` variables at the top
+> - `ag-configure.md` — the pod names and AG name referenced in every T-SQL command
+
 ## Quick Start
 
 ```bash

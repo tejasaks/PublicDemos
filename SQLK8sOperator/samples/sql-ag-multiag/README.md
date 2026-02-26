@@ -36,6 +36,15 @@ each configured for a different workload pattern.
 └─────────────────────────────────────────────────────────────┘
 ```
 
+## Customization
+
+> **Passwords:** The sample manifests and scripts ship with placeholder passwords (e.g. `YourStrong@Passw0rd!`). Before deploying, open `ag-deploy.yaml` and change the SA password and AG Helper password in the Secret resources. Then update the matching values at the top of `ag-configure.sh` (`SA_PASSWORD`, `AG_HELPER_PASSWORD`, `MASTER_KEY_PASSWORD`, `REPLICA_LOGIN_PASSWORD`), or in the manual T-SQL steps in `ag-configure.md`.
+
+> **Instance and AG names:** You can rename the SQLServer resource, pod prefix, AG names (`ProductionAG`, `ReportingAG`, `DisasterRecoveryAG`), and database names (`AppDB`, `ReportingDB`, `CriticalDB`). If you do, update them consistently in:
+> - `ag-deploy.yaml` — SQLServer `.metadata.name`, each SQLServerAG `.metadata.name` and `.spec.availabilityGroup.name`, per-replica Service names and port mappings
+> - `ag-configure.sh` — the `AG_NAMES`, `AG_DATABASES`, `AG_RESOURCE_NAMES` arrays and replica variables at the top
+> - `ag-configure.md` — the pod names, AG names, and database names referenced in every T-SQL command
+
 ## Quick Start
 
 ```bash
