@@ -71,7 +71,7 @@ Deploy 3 SQL Server replicas configured for Availability Groups.
 ### 2.1: Apply the Replicas Manifest
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/samples/ag-step1-replicas.yaml
+kubectl apply -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/samples/sql-ag-ha/ag-deploy.yaml
 ```
 
 This creates:
@@ -124,7 +124,7 @@ sql-ag-2   LoadBalancer   10.96.100.13    <pending>       1433:31436/TCP   3m
 
 With all 3 instances running, configure the Availability Group using T-SQL. This step creates certificates, endpoints, and the AG itself inside SQL Server.
 
-> **Complete T-SQL Reference:** For detailed explanations of each command, see [ag-step2-setup-ag.md](../../samples/ag-step2-setup-ag.md).
+> **Complete T-SQL Reference:** For detailed explanations of each command, see [sql-ag-ha/ag-configure.md](../../samples/sql-ag-ha/ag-configure.md).
 
 ### 3.1: Create AG Helper Login (All Replicas)
 
@@ -445,7 +445,7 @@ SampleDB       sql-ag-2             SYNCHRONIZED                HEALTHY
 Now that the AG exists in SQL Server, deploy the SQLServerAG resource for Kubernetes management.
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/samples/ag-step3-ag-config.yaml
+kubectl apply -f https://raw.githubusercontent.com/tejasaks/PublicDemos/main/SQLK8sOperator/samples/sql-ag-ha/ag-deploy.yaml
 ```
 
 This creates:

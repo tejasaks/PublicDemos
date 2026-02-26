@@ -954,8 +954,10 @@ Pre-built sample configurations are available in the [samples/](../../samples/) 
 |------|-------------|
 | `sqlserver-2025-standalone.yaml` | Basic 2025 standalone instance (recommended) |
 | `sqlserver-2022-standalone.yaml` | SQL Server 2022 instance |
-| `sqlserver-availability-group.yaml` | 3-replica AG with full configuration |
-| `sqlserverag-minimal.yaml` | Minimal AG using CRD defaults |
+| `sql-ag-ha/` | High Availability AG (3 sync, auto failover, listener) |
+| `sql-ag-dr/` | Disaster Recovery AG (2 sync + 1 async, manual failover) |
+| `sql-ag-multiag/` | Multiple AGs on same replicas |
+| `sql-ag-monitoring/` | HA AG + Prometheus + Grafana monitoring stack |
 | `sqlserver-with-ad.yaml` | Active Directory authentication |
 | `operator-configuration-mcr-defaults.yaml` | MCR images with local operator components |
 | `operator-configuration-private-registry.yaml` | Private registry configuration with push instructions |

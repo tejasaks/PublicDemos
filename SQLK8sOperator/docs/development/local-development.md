@@ -302,7 +302,7 @@ make test
 make docker-build docker-push deploy IMG=mssql-operator:dev
 
 # 4. Test with sample resources
-kubectl apply -f samples/sqlserver-basic.yaml
+kubectl apply -f samples/sqlserver-2025-standalone.yaml
 
 # 5. Check logs
 kubectl logs -f deployment/mssql-operator-controller-manager -n mssql-system

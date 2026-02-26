@@ -230,10 +230,12 @@ Sample manifests are available in the [`samples/`](samples/) directory:
 
 | Sample | Description |
 |--------|-------------|
-| [`sqlserver-basic.yaml`](samples/sqlserver-basic.yaml) | Standalone development instance |
-| [`sqlserver-production.yaml`](samples/sqlserver-production.yaml) | Production-ready configuration |
-| [`sqlserver-availability-group.yaml`](samples/sqlserver-availability-group.yaml) | HA with Availability Groups |
-| [`sqlserverag.yaml`](samples/sqlserverag.yaml) | AG service configuration |
+| [`sqlserver-2022-standalone.yaml`](samples/sqlserver-2022-standalone.yaml) | Standalone SQL Server 2022 instance |
+| [`sqlserver-2025-standalone.yaml`](samples/sqlserver-2025-standalone.yaml) | Standalone SQL Server 2025 instance |
+| [`sql-ag-ha/`](samples/sql-ag-ha/) | High Availability AG (3 sync, auto failover, listener) |
+| [`sql-ag-dr/`](samples/sql-ag-dr/) | Disaster Recovery AG (2 sync + 1 async, manual failover) |
+| [`sql-ag-multiag/`](samples/sql-ag-multiag/) | Multiple AGs on same replicas |
+| [`sql-ag-monitoring/`](samples/sql-ag-monitoring/) | HA AG + Prometheus + Grafana monitoring stack |
 
 ## Project Information
 

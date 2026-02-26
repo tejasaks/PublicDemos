@@ -38,7 +38,7 @@ kubectl get sqlserverag production-ag -n mssql -o jsonpath='{.status.primaryRepl
 sqlcmd -S <sql-ag-0-service-ip>,1433 -U sa -P 'password'
 ```
 
-See [samples/ag-step3-dr-config.yaml](../../samples/ag-step3-dr-config.yaml) for a DR/manual failover example without listener.
+See [sql-ag-dr/](../../samples/sql-ag-dr/) for a DR/manual failover example without listener.
 
 ## Architecture
 
@@ -137,7 +137,8 @@ listener:
 ### Step 1: Apply the SQLServerAG Resource
 
 ```bash
-kubectl apply -f ag-step3-ag-config.yaml
+# AG resources are included in the unified ag-deploy.yaml
+kubectl apply -f samples/sql-ag-ha/ag-deploy.yaml
 ```
 
 ### Step 2: Wait for VIP Assignment

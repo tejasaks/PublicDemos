@@ -581,7 +581,7 @@ main() {
             echo "  $0 --remote install           # Install with GHCR.IO images"
             echo "  $0 all                        # Full local dev setup"
             echo "  $0 --remote all               # Full setup using remote images"
-            echo "  $0 deploy samples/ag-step1-replicas.yaml"
+            echo "  $0 deploy samples/sql-ag-ha/ag-deploy.yaml"
             exit 1
             ;;
     esac

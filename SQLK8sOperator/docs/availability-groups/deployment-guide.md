@@ -33,34 +33,35 @@ Each SQLServerAG resource manages exactly **one** Availability Group:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  STEP 1: Deploy SQL Replicas                                       │
-│  ─────────────────────────────                                      │
-│  - Apply ag-step1-replicas.yaml                                     │
-│  - Wait for pods to be Running (1/1 Ready)                          │
-│  - SQL Server running, but no AG Helper yet                         │
+│  STEP 1: Deploy SQL Replicas + AG Resources                        │
+│  ──────────────────────────────────────────                          │
+│  - Apply ag-deploy.yaml from a scenario folder                      │
+│    (e.g. samples/sql-ag-ha/ag-deploy.yaml)                         │
+│  - Wait for pods to be Running                                      │
+│  - SQL Server running, AG Helper sidecar attached                   │
 │                                                                     │
 │  STEP 2: Configure AG via T-SQL                                     │
 │  ─────────────────────────────────                                  │
+│  - Follow ag-configure.md or run ag-configure.sh                    │
 │  - Create AG Helper login on all replicas                           │
 │  - Create certificates and endpoints                                │
 │  - Create databases and backup                                      │
 │  - Create Availability Group on primary                             │
 │  - Join secondaries to AG                                           │
 │                                                                     │
-│  STEP 3: Deploy AG Helper + K8s Services                            │
-│  ─────────────────────────────────────────                          │
-│  - Apply ag-step3-ag-config.yaml                                     │
-│  - AG Helper starts and monitors the specified AG                    │
-│  - LoadBalancer services created for primary/secondary              │
-│                                                                     │
-│  STEP 4: Verify AG Helper Detection                                 │
+│  STEP 3: Verify AG Helper Detection                                 │
 │  ────────────────────────────────────────────                       │
 │  - Check AG Helper logs for "Discovered N Availability Group(s)"    │
 │  - Verify health monitoring is active                               │
+│                                                                     │
+│  STEP 4: (Optional) Set up AG Listener                              │
+│  ──────────────────────────────────────────                          │
+│  - Run ag-configure.sh listener                                     │
+│  - Verify listener is Ready                                         │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-> **Important:** The AG Helper is deployed via SQLServerAG resource (Step 3). The AG must exist in SQL Server before AG Helper can monitor it. Always complete T-SQL setup (Step 2) before applying Step 3.
+> **Important:** The AG must exist in SQL Server before AG Helper can monitor it. Apply the deploy manifest first, then complete T-SQL setup before the AG Helper can discover the AG.
 
 ## Prerequisites
 
@@ -80,7 +81,8 @@ Deploy SQL Server replicas configured for Availability Groups.
 ### Using Sample Manifest
 
 ```bash
-kubectl apply -f samples/ag-step1-replicas.yaml
+# High Availability scenario (pick the scenario folder you need)
+kubectl apply -f samples/sql-ag-ha/ag-deploy.yaml
 ```
 
 This creates:
@@ -160,7 +162,7 @@ kubectl get pods -n mssql -w
 
 ## Step 2: Configure AG via T-SQL
 
-The complete T-SQL setup is documented in [samples/ag-step2-setup-ag.md](../../samples/ag-step2-setup-ag.md).
+The complete T-SQL setup is documented in each scenario folder's `ag-configure.md`, e.g. [sql-ag-ha/ag-configure.md](../../samples/sql-ag-ha/ag-configure.md).
 
 ### Quick Summary
 
@@ -193,7 +195,7 @@ done
 
 ### Step 2.2-2.4: Certificates and Endpoints
 
-See [samples/ag-step2-setup-ag.md](../../samples/ag-step2-setup-ag.md) for complete certificate exchange steps including `kubectl cp` commands.
+See [sql-ag-ha/ag-configure.md](../../samples/sql-ag-ha/ag-configure.md) for complete certificate exchange steps including `kubectl cp` commands, or run the automated `ag-configure.sh` script.
 
 ### Step 2.5: Create Database
 
@@ -266,7 +268,8 @@ After T-SQL setup, deploy the AG Helper sidecar via SQLServerAG resource.
 ### Apply the SQLServerAG Manifest
 
 ```bash
-kubectl apply -f samples/ag-step3-ag-config.yaml
+# AG resources are included in the unified ag-deploy.yaml
+kubectl apply -f samples/sql-ag-ha/ag-deploy.yaml
 ```
 
 This creates:
@@ -395,10 +398,10 @@ sqlcmd -S <CLUSTER_IP>,1433 -U sa -P 'YourStrong@Passw0rd!'
 
 | File | Purpose |
 |------|---------|
-| [ag-step1-replicas.yaml](../../samples/ag-step1-replicas.yaml) | Step 1: SQL replicas |
-| [ag-step2-setup-ag.md](../../samples/ag-step2-setup-ag.md) | Step 2: T-SQL setup guide |
-| [ag-step3-ag-config.yaml](../../samples/ag-step3-ag-config.yaml) | Step 3: AG management with LoadBalancer services |
-| [ag-step3-multi-ag.yaml](../../samples/ag-step3-multi-ag.yaml) | Advanced: Multiple AGs (one SQLServerAG per AG) |
+| [sql-ag-ha/](../../samples/sql-ag-ha/) | High Availability: 3 sync replicas, auto failover, listener |
+| [sql-ag-dr/](../../samples/sql-ag-dr/) | Disaster Recovery: 2 sync + 1 async, manual failover |
+| [sql-ag-multiag/](../../samples/sql-ag-multiag/) | Multiple AGs on same replicas |
+| [sql-ag-monitoring/](../../samples/sql-ag-monitoring/) | HA + Prometheus + Grafana monitoring stack |
 
 ### Common Commands
 

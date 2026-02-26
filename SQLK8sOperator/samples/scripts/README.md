@@ -19,7 +19,7 @@ However, the actual Availability Group configuration (T-SQL) must be executed ma
 ### 1. Deploy the SQL Server pods
 
 ```bash
-kubectl apply -f samples/sqlserver-availability-group.yaml
+kubectl apply -f samples/sql-ag-ha/ag-deploy.yaml
 ```
 
 ### 2. Wait for all pods to be running

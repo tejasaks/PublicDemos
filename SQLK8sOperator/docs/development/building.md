@@ -478,10 +478,10 @@ For **Linux/Ubuntu with minikube**, we provide `scripts/dev-setup.sh` as a conve
 ./scripts/dev-setup.sh deploy
 
 # AG deployment
-./scripts/dev-setup.sh deploy samples/sqlserver-availability-group.yaml
+./scripts/dev-setup.sh deploy samples/sql-ag-ha/ag-deploy.yaml
 
-# Minimal AG
-./scripts/dev-setup.sh deploy samples/sqlserverag-minimal.yaml
+# DR scenario
+./scripts/dev-setup.sh deploy samples/sql-ag-dr/ag-deploy.yaml
 ```
 
 **Connect to SQL Server:**
