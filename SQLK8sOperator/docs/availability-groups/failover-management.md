@@ -7,6 +7,7 @@ Guide to configuring and managing failover for SQL Server Availability Groups.
 ## Table of Contents
 
 - [Automatic Failover](#automatic-failover)
+- [Failure Condition Levels](#failure-condition-levels)
 - [Manual Failover](#manual-failover)
 - [Failover Selection Algorithm](#failover-selection-algorithm)
 - [Cooldown and Flapping Prevention](#cooldown-and-flapping-prevention)
@@ -75,6 +76,11 @@ spec:
     
     # Required synchronized secondaries (-1 = auto-calculate)
     requiredSynchronizedSecondaries: -1
+    
+    # Failure condition level (optional, default: 1)
+    # Controls which SQL Server internal health signals trigger failover.
+    # See "Failure Condition Levels" section below.
+    failureConditionLevel: 3  # 1-5
 ```
 
 ### Failover Timeline
@@ -88,6 +94,73 @@ spec:
 | T+35s | New primary confirmed |
 | T+36s | Service labels updated |
 | T+96s | Cooldown period ends |
+
+## Failure Condition Levels
+
+The `failureConditionLevel` field controls which SQL Server internal health signals
+(via `sp_server_diagnostics`) trigger automatic failover. This is modeled after the
+[WSFC FAILURE_CONDITION_LEVEL](https://learn.microsoft.com/en-us/sql/sql-server/failover-clusters/windows/configure-failureconditionlevel-property-settings)
+setting.
+
+### Level Summary
+
+| Level | Triggers Failover On | Recommended For |
+|:-----:|----------------------|-----------------|
+| **1** (default) | AG topology failure only (role loss, no sync, AG broken) | Dev/test, monitoring-only setups |
+| **2** | + `sp_server_diagnostics` call fails entirely | Conservative HA |
+| **3** | + `system` component error (spinlock, OOM, access violation) | Standard HA ✅ |
+| **4** | + `resource` component error (memory/scheduler pressure) | Mission-critical |
+| **5** | + `query_processing` component error (runaway queries, blocking) | Maximum detection |
+
+Levels are **cumulative** — level 3 includes all checks from levels 1 and 2.
+
+### How It Works
+
+When `failureConditionLevel >= 2`:
+
+1. The AG Helper sidecar calls `sp_server_diagnostics` on every health check cycle
+   alongside the standard DMV queries
+2. Each SQL Server component returns a state: `1` (clean), `2` (warning), or `3` (error)
+3. The AG Helper evaluates component states against the configured level:
+   - **Level 2**: Checks if the diagnostics call itself succeeded
+   - **Level 3**: Also checks the `system` component for error state
+   - **Level 4**: Also checks the `resource` component
+   - **Level 5**: Also checks the `query_processing` component
+4. If a relevant component reports error state (3), health becomes **Critical** → triggering failover
+5. If a relevant component reports warning state (2) but baseline is Healthy, health becomes **Warning** (no failover)
+
+### Configuration Example
+
+```yaml
+failover:
+  automatic: true
+  failureConditionLevel: 3
+```
+
+When omitted or set to `1`, the AG Helper does not call `sp_server_diagnostics` —
+behavior is identical to previous versions.
+
+### Warning vs Error States
+
+| Component State | Effect on Health | Triggers Failover? |
+|:---------------:|------------------|:------------------:|
+| 1 (clean) | No change | No |
+| 2 (warning) | Health → "Warning" if baseline was "Healthy" | No |
+| 3 (error) | Health → "Critical" if component is at configured level | **Yes** |
+
+### Important Caveats
+
+- **Over-TDS limitation:** The operator calls `sp_server_diagnostics` via a standard TDS
+  connection, unlike WSFC which uses a preemptive thread. A complete SQL Server scheduler
+  hang may prevent the diagnostics call from completing. The staleness threshold provides
+  a backstop for this scenario.
+- **Higher levels = more sensitive:** Levels 4 and 5 may trigger failover during legitimate
+  peak workloads. Test thoroughly before deploying in production.
+- **Backward compatible:** Omitting this field preserves the exact pre-existing behavior
+  (level 1: AG topology checks only).
+
+For a detailed comparison of WSFC vs operator health detection, see the
+[Health Detection Comparison](health-detection-comparison.md) guide.
 
 ## Manual Failover
 
@@ -278,6 +351,7 @@ kubectl patch sqlserverag prod-ag-01 -n mssql --type merge \
 
 ## Next Steps
 
+- [Health Detection Comparison](health-detection-comparison.md) - WSFC vs operator health model
 - [AG Operations Guide](../operations/ag-operations.md) - Quick reference kubectl commands
 - [Multi-AG Scenarios](multi-ag-scenarios.md) - Multiple AGs
 - [AG Helper Reference](ag-helper-reference.md) - Complete API

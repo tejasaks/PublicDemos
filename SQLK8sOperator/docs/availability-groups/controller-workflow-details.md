@@ -141,6 +141,33 @@ WHERE drs.group_id = (SELECT group_id FROM sys.availability_groups WHERE name = 
 
 **Returns:** Per-database synchronization state, including suspension status and LSN values.
 
+#### 5. Server Diagnostics (Optional — Level 2+)
+
+When `failureConditionLevel >= 2`, the AG Helper additionally calls `sp_server_diagnostics`:
+
+```sql
+EXEC sp_server_diagnostics
+```
+
+**Returns:** One row per SQL Server internal component (system, resource, query_processing,
+io_subsystem, events), each with a state value:
+
+| State | Meaning |
+|:-----:|---------|
+| 0 | Unknown |
+| 1 | Clean (healthy) |
+| 2 | Warning |
+| 3 | Error |
+
+The AG Helper reads `component_name` and `state` from each row, discarding the XML `data`
+column. The result is stored in the `diagnostics` field of the AG state.
+
+> **Note:** This query is only executed when `failureConditionLevel >= 2`. When omitted or
+> set to 1, the AG Helper skips this call entirely — existing behavior is preserved.
+
+For details on how each component maps to failure condition levels, see
+[Health Detection Comparison](health-detection-comparison.md).
+
 ### Monitor Loop
 
 The AG Helper runs a continuous monitoring loop:
@@ -172,10 +199,16 @@ func (h *AGHelper) MonitorLoop(ctx context.Context) {
 
 ## Part 2: AG Helper - Health Determination
 
-After collecting data, the AG Helper applies this logic to determine overall health:
+After collecting data, the AG Helper applies this logic to determine overall health.
+The health determination is now a two-phase process: baseline AG topology health,
+followed by optional `sp_server_diagnostics` evaluation.
+
+### Phase 1: Baseline AG Topology Health
 
 ```go
 func (h *AGHelper) determineHealth(state *AGState) string {
+    // === Phase 1: Baseline AG Topology ===
+
     // State 1: AG not configured yet
     if state.Role == RoleNotAvailable {
         if len(state.Replicas) == 0 {
@@ -192,22 +225,71 @@ func (h *AGHelper) determineHealth(state *AGState) string {
         }
     }
 
-    // State 2: No synchronized replicas
     if syncedCount == 0 {
         if state.IsLocalPrimary && len(state.Databases) == 0 {
-            return "Waiting"  // Primary with no databases yet
+            baselineHealth = "Waiting"
+        } else {
+            baselineHealth = "Critical"
         }
-        return "Critical"     // Data not synchronized anywhere
+    } else if syncedCount < len(state.Replicas) {
+        baselineHealth = "Warning"
+    } else {
+        baselineHealth = "Healthy"
     }
 
-    // State 3: Partial synchronization
-    if syncedCount < len(state.Replicas) {
-        return "Warning"      // Some replicas not synced
-    }
-
-    // State 4: All replicas synchronized
-    return "Healthy"
+    // === Phase 2: Failure Condition Level Evaluation ===
+    // (see below)
 }
+```
+
+### Phase 2: Failure Condition Level Evaluation
+
+When `failureConditionLevel >= 2` and diagnostics data is available, the AG Helper
+evaluates component states against the configured level:
+
+```go
+    // Skip diagnostics evaluation if level 1 or no data
+    if h.failureConditionLevel <= 1 || state.Diagnostics == nil {
+        return baselineHealth
+    }
+    diag := state.Diagnostics
+
+    // Level 2: sp_server_diagnostics responsiveness
+    if diag.Error != "" {
+        return "Critical"  // Diagnostics call failed entirely
+    }
+
+    // Level 3: System component errors
+    if h.failureConditionLevel >= 3 {
+        if s := getComponentState(diag, "system"); s == 3 {
+            return "Critical"
+        }
+    }
+
+    // Level 4: Resource component errors
+    if h.failureConditionLevel >= 4 {
+        if s := getComponentState(diag, "resource"); s == 3 {
+            return "Critical"
+        }
+    }
+
+    // Level 5: Query processing component errors
+    if h.failureConditionLevel >= 5 {
+        if s := getComponentState(diag, "query_processing"); s == 3 {
+            return "Critical"
+        }
+    }
+
+    // Check for warning states in evaluated components
+    if baselineHealth == "Healthy" {
+        for _, comp := range diag.Components {
+            if comp.State == 2 {
+                return "Warning"
+            }
+        }
+    }
+
+    return baselineHealth
 ```
 
 ### Health States Summary
@@ -295,9 +377,22 @@ The AG Helper exposes these endpoints on port 8080:
       "lastHardenedLsn": 12345678,
       "lastCommitLsn": 12345678
     }
-  ]
+  ],
+  "diagnostics": {
+    "components": [
+      {"name": "system", "state": 1},
+      {"name": "resource", "state": 1},
+      {"name": "query_processing", "state": 1},
+      {"name": "io_subsystem", "state": 1},
+      {"name": "events", "state": 1}
+    ],
+    "collectedAt": "2026-01-30T10:30:00Z"
+  }
 }
 ```
+
+> **Note:** The `diagnostics` field is only present when `failureConditionLevel >= 2`.
+> When omitted or at level 1, this field is absent from the response.
 
 ---
 
@@ -817,12 +912,14 @@ Full AG recovered with 3 synchronized instances!
 5. **Grace periods** prevent flapping (30s wait before failover, 60s cooldown between failovers)
 6. **LSN-based selection** ensures the replica with the most recent data (least data loss) becomes primary
 7. **Health states** differentiate between "not ready yet" (Waiting) and "broken" (Critical)
+8. **Server diagnostics** (opt-in via `failureConditionLevel`) add SQL-internal health signals — the AG Helper calls `sp_server_diagnostics` and evaluates component states alongside DMV topology checks
 
 ---
 
 ## Related Documentation
 
 - [AG Helper Reference](ag-helper-reference.md) - HTTP API details, configuration options
+- [Health Detection Comparison](health-detection-comparison.md) - WSFC vs operator health model
 - [Sidecar Architecture](../architecture/sidecar-architecture.md) - Container design patterns
 - [Failover Management](failover-management.md) - Manual failover procedures
 - [Operator Design](../architecture/operator-design.md) - Controller patterns and design decisions

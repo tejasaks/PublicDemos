@@ -164,6 +164,7 @@ stringData:
 | `SA_PASSWORD` | - | Fallback password (not recommended for production) |
 | `MONITOR_INTERVAL` | `10s` | AG health check interval |
 | `HTTP_PORT` | `8080` | HTTP API listen port |
+| `FAILURE_CONDITION_LEVEL` | `1` | Server diagnostics level (1-5). Controls `sp_server_diagnostics` integration. |
 
 ### Command-Line Flags
 
@@ -180,6 +181,7 @@ stringData:
 | `-max-retries` | `3` | Number of retry attempts for transient SQL errors (1-30) |
 | `-retry-interval` | `5s` | Delay between retry attempts |
 | `-staleness-threshold` | `30s` | Data older than this threshold triggers stale warnings |
+| `-failure-condition-level` | `1` | Server diagnostics level (1-5). At level 1, `sp_server_diagnostics` is not called. At levels 2-5, diagnostics are collected each cycle and evaluated for failover. See [Health Detection Comparison](health-detection-comparison.md). |
 
 ### Advanced Configuration
 
@@ -326,9 +328,23 @@ Full AG state including all availability groups and databases.
         }
       ]
     }
-  ]
+  ],
+  "diagnostics": {
+    "components": [
+      {"name": "system", "state": 1},
+      {"name": "resource", "state": 1},
+      {"name": "query_processing", "state": 1},
+      {"name": "io_subsystem", "state": 1},
+      {"name": "events", "state": 1}
+    ],
+    "collectedAt": "2024-01-15T10:30:00Z"
+  }
 }
 ```
+
+> **Note:** The `diagnostics` field is only present when `failureConditionLevel >= 2`.
+> When omitted or at level 1, this field is absent from the response. Each component's
+> `state` is: `0` (unknown), `1` (clean), `2` (warning), `3` (error).
 
 ---
 
@@ -576,6 +592,7 @@ mssql_ag_database_sync_state{ag_name="ProductionAG",database="AppDB"} 2
 | `MAX_RETRIES` | `3` | No | Retry count for transient SQL errors |
 | `RETRY_DELAY` | `1s` | No | Retry delay between attempts |
 | `STALENESS_THRESHOLD` | `30s` | No | Data older than this is marked stale |
+| `FAILURE_CONDITION_LEVEL` | `1` | No | Server diagnostics level (1-5). At level 1, `sp_server_diagnostics` is not called. At 2+, diagnostics are collected and evaluated per level. |
 | `LOG_LEVEL` | `info` | No | debug/info/warn/error |
 | `LOG_FORMAT` | `json` | No | json/text |
 | `ENABLE_METRICS` | `true` | No | Export metrics |

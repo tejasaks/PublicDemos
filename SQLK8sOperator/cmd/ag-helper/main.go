@@ -136,6 +136,9 @@ type AGState struct {
 	ConsecutiveFailures int                `json:"consecutiveFailures"`
 	DataStale           bool               `json:"dataStale"`
 
+	// Server diagnostics (populated when failureConditionLevel >= 2)
+	Diagnostics *ServerDiagnostics `json:"diagnostics,omitempty"`
+
 	mu sync.RWMutex
 }
 
@@ -165,6 +168,28 @@ type DatabaseState struct {
 	LastCommitLSN        int64     `json:"lastCommitLsn"`
 }
 
+// ComponentState represents the state of a single sp_server_diagnostics component.
+// sp_server_diagnostics returns five components: system, resource, query_processing,
+// io_subsystem, and events. Each reports a state integer:
+//
+//	0 = Unknown, 1 = Clean, 2 = Warning, 3 = Error
+type ComponentState struct {
+	Name  string `json:"name"`
+	State int    `json:"state"` // 0=unknown, 1=clean, 2=warning, 3=error
+}
+
+// ServerDiagnostics holds the result of calling sp_server_diagnostics (non-repeat mode).
+// The operator uses these signals alongside DMV-based AG health to implement WSFC-style
+// failure_condition_level health detection (levels 2-5).
+type ServerDiagnostics struct {
+	// Components maps component name → state (system, resource, query_processing, io_subsystem, events)
+	Components []ComponentState `json:"components,omitempty"`
+	// CollectedAt is when the diagnostics were last successfully collected
+	CollectedAt time.Time `json:"collectedAt"`
+	// Error is set if sp_server_diagnostics failed to execute or timed out
+	Error string `json:"error,omitempty"`
+}
+
 // FailoverRequest represents a request to failover the AG
 type FailoverRequest struct {
 	TargetReplica string `json:"targetReplica"`
@@ -191,20 +216,29 @@ type AGHelper struct {
 	maxRetries          int           // max reconnect attempts before declaring disconnected
 	retryInterval       time.Duration // delay between reconnect attempts
 	stalenessThreshold  time.Duration // how long before stale data triggers unhealthy
+
+	// Failure condition level (WSFC-style sp_server_diagnostics integration)
+	// 1 = AG topology only (default, no sp_server_diagnostics call)
+	// 2 = sp_server_diagnostics responsiveness check
+	// 3 = + system component errors
+	// 4 = + resource component errors
+	// 5 = + query_processing component errors
+	failureConditionLevel int
 }
 
 // NewAGHelper creates a new AGHelper instance
-func NewAGHelper(agName, connStr string, monitorInterval, connTimeout time.Duration, httpPort int, maxRetries int, retryInterval, stalenessThreshold time.Duration) *AGHelper {
+func NewAGHelper(agName, connStr string, monitorInterval, connTimeout time.Duration, httpPort int, maxRetries int, retryInterval, stalenessThreshold time.Duration, failureConditionLevel int) *AGHelper {
 	return &AGHelper{
-		agName:             agName,
-		connectionString:   connStr,
-		monitorInterval:    monitorInterval,
-		connectionTimeout:  connTimeout,
-		httpPort:           httpPort,
-		maxRetries:         maxRetries,
-		retryInterval:      retryInterval,
-		stalenessThreshold: stalenessThreshold,
-		connState:          SQLConnDisconnected,
+		agName:                agName,
+		connectionString:      connStr,
+		monitorInterval:       monitorInterval,
+		connectionTimeout:     connTimeout,
+		httpPort:              httpPort,
+		maxRetries:            maxRetries,
+		retryInterval:         retryInterval,
+		stalenessThreshold:    stalenessThreshold,
+		failureConditionLevel: failureConditionLevel,
+		connState:             SQLConnDisconnected,
 		state: &AGState{
 			AGName:          agName,
 			LastUpdated:     time.Now(),
@@ -678,7 +712,18 @@ func (h *AGHelper) GetAGState(ctx context.Context) (*AGState, error) {
 	}
 	state.Databases = databases
 
-	// Determine overall health
+	// Get server diagnostics if failure condition level >= 2
+	if h.failureConditionLevel >= 2 {
+		diag, diagErr := h.getServerDiagnostics(ctx)
+		if diagErr != nil {
+			klog.Warningf("sp_server_diagnostics query failed (level %d): %v", h.failureConditionLevel, diagErr)
+			// Still attach the diagnostics result — it contains the error message
+			// which determineHealth() uses for level 2 failure detection
+		}
+		state.Diagnostics = diag
+	}
+
+	// Determine overall health (incorporates diagnostics when level >= 2)
 	state.Health = h.determineHealth(state)
 
 	// Populate connection health metadata
@@ -811,7 +856,96 @@ func (h *AGHelper) getDatabaseStates(ctx context.Context) ([]DatabaseState, erro
 	return databases, nil
 }
 
-// determineHealth calculates overall health based on state
+// getServerDiagnostics calls sp_server_diagnostics in non-repeat mode and returns
+// component states. This is only called when failureConditionLevel >= 2.
+//
+// sp_server_diagnostics returns 5 rows, one per component:
+//   - system: spinlocks, severe access violations, out-of-memory
+//   - resource: memory, buffer pool, scheduler yields
+//   - query_processing: worker threads, deadlocked schedulers, long queries
+//   - io_subsystem: I/O latency and throughput
+//   - events: ring buffer events and errors
+//
+// Each row has: component_type (sysname), component_name (sysname),
+// state (int: 0=unknown, 1=clean, 2=warning, 3=error),
+// state_desc (sysname), data (xml) — we only capture state, not XML data.
+//
+// In non-repeat mode (no REPEAT_INTERVAL), it returns results immediately and exits.
+func (h *AGHelper) getServerDiagnostics(ctx context.Context) (*ServerDiagnostics, error) {
+	if h.db == nil {
+		return nil, fmt.Errorf("database connection not available")
+	}
+
+	// Use a sub-context with the health check timeout to prevent hangs.
+	// If SQL Server is completely unresponsive, this ensures we don't block forever.
+	diagCtx, cancel := context.WithTimeout(ctx, h.connectionTimeout)
+	defer cancel()
+
+	// Call sp_server_diagnostics in non-repeat mode (no parameters).
+	// This returns 5 result sets in a single call, one per component.
+	rows, err := h.db.QueryContext(diagCtx, "EXEC sp_server_diagnostics")
+	if err != nil {
+		return &ServerDiagnostics{
+			CollectedAt: time.Now(),
+			Error:       fmt.Sprintf("sp_server_diagnostics failed: %v", err),
+		}, err
+	}
+	defer rows.Close()
+
+	diag := &ServerDiagnostics{
+		CollectedAt: time.Now(),
+	}
+
+	// sp_server_diagnostics returns columns: component_type, component_name, state, state_desc, data
+	// We iterate all rows across all result sets to capture each component.
+	for {
+		for rows.Next() {
+			var componentType, componentName string
+			var state int
+			var stateDesc string
+			var data sql.NullString // XML data — we skip parsing this for now
+
+			if err := rows.Scan(&componentType, &componentName, &state, &stateDesc, &data); err != nil {
+				klog.V(4).Infof("Failed to scan sp_server_diagnostics row: %v", err)
+				continue
+			}
+
+			diag.Components = append(diag.Components, ComponentState{
+				Name:  componentName,
+				State: state,
+			})
+		}
+
+		// Move to the next result set (sp_server_diagnostics may return multiple)
+		if !rows.NextResultSet() {
+			break
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		diag.Error = fmt.Sprintf("sp_server_diagnostics row iteration error: %v", err)
+		return diag, err
+	}
+
+	return diag, nil
+}
+
+// getComponentState returns the state of a named component from diagnostics results.
+// Returns 0 (unknown) if the component is not found.
+func getComponentState(diag *ServerDiagnostics, name string) int {
+	if diag == nil {
+		return 0
+	}
+	for _, c := range diag.Components {
+		if strings.EqualFold(c.Name, name) {
+			return c.State
+		}
+	}
+	return 0
+}
+
+// determineHealth calculates overall health based on AG state and, when configured,
+// sp_server_diagnostics component states evaluated against the failure condition level.
 func (h *AGHelper) determineHealth(state *AGState) string {
 	// If AG doesn't exist yet, report as "Waiting" not "Critical"
 	// This allows the sidecar to run before AG is configured
@@ -823,6 +957,7 @@ func (h *AGHelper) determineHealth(state *AGState) string {
 		return "Critical" // AG exists but this instance can't see it - real problem
 	}
 
+	// === Baseline AG topology health (level 1 — always evaluated) ===
 	syncedCount := 0
 	for _, inst := range state.Instances {
 		if inst.SynchronizationState == StateSynchronized {
@@ -830,17 +965,79 @@ func (h *AGHelper) determineHealth(state *AGState) string {
 		}
 	}
 
+	// Determine baseline topology health
+	baselineHealth := "Healthy"
 	if syncedCount == 0 {
 		// If we're primary with no synced secondaries, could be initial seeding
 		if state.IsLocalPrimary && len(state.Databases) == 0 {
-			return "Waiting" // No databases in AG yet
+			baselineHealth = "Waiting" // No databases in AG yet
+		} else {
+			baselineHealth = "Critical"
 		}
+	} else if syncedCount < len(state.Instances) {
+		baselineHealth = "Warning"
+	}
+
+	// If failure condition level is 1 (default) or diagnostics not available,
+	// return the baseline topology health only.
+	if h.failureConditionLevel <= 1 || state.Diagnostics == nil {
+		return baselineHealth
+	}
+
+	// === Failure condition levels 2-5: evaluate sp_server_diagnostics ===
+	diag := state.Diagnostics
+
+	// Level 2: sp_server_diagnostics must have responded. If it errored, that itself
+	// means the diagnostic subsystem is unresponsive → Critical.
+	if h.failureConditionLevel >= 2 && diag.Error != "" {
+		klog.Warningf("sp_server_diagnostics failed (level %d): %s", h.failureConditionLevel, diag.Error)
 		return "Critical"
 	}
-	if syncedCount < len(state.Instances) {
-		return "Warning"
+
+	// Level 3: system component must not be in error state (state=3)
+	if h.failureConditionLevel >= 3 {
+		if getComponentState(diag, "system") == 3 {
+			klog.Warningf("sp_server_diagnostics: system component in ERROR state (failure level %d)", h.failureConditionLevel)
+			return "Critical"
+		}
 	}
-	return "Healthy"
+
+	// Level 4: resource component must not be in error state
+	if h.failureConditionLevel >= 4 {
+		if getComponentState(diag, "resource") == 3 {
+			klog.Warningf("sp_server_diagnostics: resource component in ERROR state (failure level %d)", h.failureConditionLevel)
+			return "Critical"
+		}
+	}
+
+	// Level 5: query_processing component must not be in error state
+	if h.failureConditionLevel >= 5 {
+		if getComponentState(diag, "query_processing") == 3 {
+			klog.Warningf("sp_server_diagnostics: query_processing component in ERROR state (failure level %d)", h.failureConditionLevel)
+			return "Critical"
+		}
+	}
+
+	// Check for warning states in any evaluated component — report as Warning
+	// but don't override an existing Critical from topology check
+	if baselineHealth == "Healthy" {
+		warningComponents := []string{}
+		if h.failureConditionLevel >= 3 && getComponentState(diag, "system") == 2 {
+			warningComponents = append(warningComponents, "system")
+		}
+		if h.failureConditionLevel >= 4 && getComponentState(diag, "resource") == 2 {
+			warningComponents = append(warningComponents, "resource")
+		}
+		if h.failureConditionLevel >= 5 && getComponentState(diag, "query_processing") == 2 {
+			warningComponents = append(warningComponents, "query_processing")
+		}
+		if len(warningComponents) > 0 {
+			klog.V(4).Infof("sp_server_diagnostics: warning state in components: %v", warningComponents)
+			return "Warning"
+		}
+	}
+
+	return baselineHealth
 }
 
 // Failover performs a failover to this replica
@@ -1238,6 +1435,17 @@ func getEnvWithFallback(primary, fallback, defaultVal string) string {
 	return defaultVal
 }
 
+// getEnvIntWithDefault returns the integer value of an environment variable,
+// or the default if not set or not a valid integer.
+func getEnvIntWithDefault(envVar string, defaultVal int) int {
+	if val := os.Getenv(envVar); val != "" {
+		if n, err := fmt.Sscanf(val, "%d", &defaultVal); err == nil && n == 1 {
+			return defaultVal
+		}
+	}
+	return defaultVal
+}
+
 // logCredentialSource logs which credential source is being used (for debugging)
 // and emits warnings for insecure configurations
 func logCredentialSource(username string) {
@@ -1259,17 +1467,18 @@ func logCredentialSource(username string) {
 
 func main() {
 	var (
-		agName             string
-		sqlHost            string
-		sqlPort            int
-		sqlUser            string
-		sqlPassword        string
-		monitorInterval    time.Duration
-		connectionTimeout  time.Duration
-		httpPort           int
-		maxRetries         int
-		retryInterval      time.Duration
-		stalenessThreshold time.Duration
+		agName                string
+		sqlHost               string
+		sqlPort               int
+		sqlUser               string
+		sqlPassword           string
+		monitorInterval       time.Duration
+		connectionTimeout     time.Duration
+		httpPort              int
+		maxRetries            int
+		retryInterval         time.Duration
+		stalenessThreshold    time.Duration
+		failureConditionLevel int
 	)
 
 	flag.StringVar(&agName, "ag-name", os.Getenv("AG_NAME"), "Name of the Availability Group")
@@ -1285,6 +1494,10 @@ func main() {
 	flag.IntVar(&maxRetries, "max-retries", 3, "Max reconnect attempts on transient SQL errors before declaring disconnected")
 	flag.DurationVar(&retryInterval, "retry-interval", 5*time.Second, "Delay between SQL reconnect attempts")
 	flag.DurationVar(&stalenessThreshold, "staleness-threshold", 30*time.Second, "Duration after which cached AG state is considered stale")
+	flag.IntVar(&failureConditionLevel, "failure-condition-level", getEnvIntWithDefault("FAILURE_CONDITION_LEVEL", 1),
+		"WSFC-style failure condition level (1-5). "+
+			"1=AG topology only (default), 2=sp_server_diagnostics responsiveness, "+
+			"3=+system errors, 4=+resource errors, 5=+query_processing errors")
 
 	klog.InitFlags(nil)
 	flag.Parse()
@@ -1295,6 +1508,9 @@ func main() {
 	if sqlPassword == "" {
 		klog.Fatal("AG helper password is required (set AG_HELPER_PASSWORD or SA_PASSWORD environment variable)")
 	}
+	if failureConditionLevel < 1 || failureConditionLevel > 5 {
+		klog.Fatalf("failure-condition-level must be between 1 and 5, got %d", failureConditionLevel)
+	}
 
 	// Log credential source for debugging (never log actual credentials)
 	logCredentialSource(sqlUser)
@@ -1303,10 +1519,15 @@ func main() {
 		sqlHost, sqlPort, sqlUser, sqlPassword)
 
 	helper := NewAGHelper(agName, connStr, monitorInterval, connectionTimeout, httpPort,
-		maxRetries, retryInterval, stalenessThreshold)
+		maxRetries, retryInterval, stalenessThreshold, failureConditionLevel)
 
 	klog.Infof("Connection resilience: maxRetries=%d, retryInterval=%s, stalenessThreshold=%s",
 		maxRetries, retryInterval, stalenessThreshold)
+	if failureConditionLevel > 1 {
+		klog.Infof("Failure condition level: %d (sp_server_diagnostics enabled)", failureConditionLevel)
+	} else {
+		klog.Info("Failure condition level: 1 (AG topology only, sp_server_diagnostics disabled)")
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

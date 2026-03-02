@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Webhook validation** for new sidecar fields: validates duration format for `retryInterval` and `stalenessThreshold`, warns if `stalenessThreshold` < 10s
 - **New ag-helper CLI flags**: `--max-retries`, `--retry-interval`, `--staleness-threshold`
 - **Connection pool tuning**: optimized `database/sql` pool parameters (30min lifetime, 1 idle, 3 max open, 10min idle time)
+- **`sp_server_diagnostics` integration**: optional `failureConditionLevel` field (1-5) in the `FailoverConfig` CRD. When set to level ≥ 2, the AG Helper sidecar runs `EXEC sp_server_diagnostics` each monitor cycle and evaluates SQL Server's five internal components (system, resource, query_processing, io_subsystem, events). Component errors at or above the configured level trigger automatic failover, mirroring WSFC failure condition level behavior. Fully backward compatible — omitting the field preserves level 1 (AG topology only) behavior.
+- **New ag-helper CLI flag**: `--failure-condition-level` (default 1, range 1-5). Also configurable via `FAILURE_CONDITION_LEVEL` environment variable.
+- **New sample**: `sql-ag-ha-diagnostics/` demonstrating level 3 diagnostics with automatic failover
+- **New documentation**: [Health Detection Comparison](docs/availability-groups/health-detection-comparison.md) — comprehensive WSFC vs operator health detection comparison with failure condition level recommendations
 
 ### Changed
 - (List changes to existing functionality)

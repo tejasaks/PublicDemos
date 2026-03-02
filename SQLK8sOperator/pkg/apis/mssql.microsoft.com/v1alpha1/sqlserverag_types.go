@@ -258,6 +258,41 @@ type FailoverConfig struct {
 	// required before committing on the primary (-1 for auto-calculate)
 	// +kubebuilder:default=-1
 	RequiredSynchronizedSecondaries int32 `json:"requiredSynchronizedSecondaries,omitempty"`
+
+	// FailureConditionLevel controls which SQL Server internal health signals trigger
+	// failover, modeled after the WSFC failure_condition_level used by SQL Server AGs.
+	// When set, the AG Helper sidecar calls sp_server_diagnostics alongside its normal
+	// DMV health checks and evaluates the returned component states against this level.
+	//
+	// Levels (cumulative — each level includes all lower levels):
+	//   1 — (Default) AG topology only. The sidecar monitors AG role, sync state, and
+	//       instance connectivity using DMV queries. sp_server_diagnostics is NOT called.
+	//       This is the baseline behavior and matches how the operator worked before this
+	//       field was introduced.
+	//   2 — sp_server_diagnostics responsiveness. The sidecar calls sp_server_diagnostics
+	//       each monitor cycle. If the procedure fails to respond within the health check
+	//       timeout, health is set to Critical. No component-state evaluation is performed.
+	//   3 — System component errors. In addition to level 2 checks, the sidecar evaluates
+	//       the "system" component from sp_server_diagnostics. If system reports state = 3
+	//       (error), health is set to Critical. Detects: spinlock issues, severe access
+	//       violations, and out-of-memory conditions.
+	//   4 — Resource component errors. In addition to level 3, the sidecar also evaluates
+	//       the "resource" component. If resource reports state = 3 (error), health is set
+	//       to Critical. Detects: memory pressure, scheduler yields, and excessive I/O latency.
+	//   5 — Query processing errors. In addition to level 4, the sidecar also evaluates
+	//       the "query_processing" component. If query_processing reports state = 3 (error),
+	//       health is set to Critical. Detects: deadlocked schedulers, long-running queries,
+	//       and excessive worker thread wait times.
+	//
+	// IMPORTANT: Levels 2-5 call sp_server_diagnostics over TDS (network). This partially
+	// negates the preemptive-thread guarantee that WSFC enjoys (in-process DLL). If SQL
+	// Server is completely unresponsive to TDS, the existing staleness threshold serves as
+	// the backstop — stale data triggers unhealthy after stalenessThreshold elapses.
+	//
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=5
+	FailureConditionLevel *int32 `json:"failureConditionLevel,omitempty"`
 }
 
 // AGSidecarSpec defines the AG helper sidecar configuration

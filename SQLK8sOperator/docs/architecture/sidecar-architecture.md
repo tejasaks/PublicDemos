@@ -106,6 +106,8 @@ containers:
       - "-max-retries=3"         # Retry transient SQL errors (1-30)
       - "-retry-interval=5s"     # Delay between retries
       - "-staleness-threshold=30s" # Data older than this = stale
+      # Optional: sp_server_diagnostics integration (level 1 = off)
+      - "-failure-condition-level=1"  # 1-5, see health-detection-comparison.md
     env:
       - name: SQL_PASSWORD
         valueFrom:
@@ -149,27 +151,37 @@ containers:
 │  │   FAIL   │                       │   PASS   │                         │
 │  └──────────┘                       └────┬─────┘                         │
 │                                          │                               │
-│                                          │ replica not synced            │
-│                                          ▼                               │
-│                                     ┌──────────┐                         │
-│                                     │ WARNING  │                         │
-│                                     │          │                         │
-│                                     │ Liveness:│                         │
-│                                     │   PASS   │                         │
-│                                     │ Readiness│                         │
-│                                     │   PASS   │                         │
-│                                     └────┬─────┘                         │
-│                                          │                               │
-│                                          │ AG broken/unreachable         │
-│                                          ▼                               │
-│                                     ┌──────────┐                         │
-│                                     │ CRITICAL │                         │
-│                                     │          │                         │
-│                                     │ Liveness:│                         │
-│                                     │   FAIL   │                         │
-│                                     │ Readiness│                         │
-│                                     │   FAIL   │                         │
-│                                     └──────────┘                         │
+│                           ┌──────────────┼──────────────┐                │
+│                           │ (baseline)   │ (if level≥2) │                │
+│                           ▼              ▼              │                │
+│                    replica not     diagnostics show     │                │
+│                    synced          component warning    │                │
+│                           │              │              │                │
+│                           ▼              ▼              │                │
+│                      ┌──────────┐                       │                │
+│                      │ WARNING  │◀──────────────────────┘                │
+│                      │          │                                        │
+│                      │ Liveness:│                                        │
+│                      │   PASS   │                                        │
+│                      │ Readiness│                                        │
+│                      │   PASS   │                                        │
+│                      └────┬─────┘                                        │
+│                           │                                              │
+│                ┌──────────┼──────────────┐                               │
+│                │(baseline)│ (if level≥2) │                               │
+│                ▼          ▼              │                               │
+│          AG broken   diagnostics show   │                               │
+│          unreachable component error    │                               │
+│                │          │              │                               │
+│                ▼          ▼              │                               │
+│           ┌──────────┐                  │                               │
+│           │ CRITICAL │◀─────────────────┘                               │
+│           │          │                                                   │
+│           │ Liveness:│                                                   │
+│           │   FAIL   │                                                   │
+│           │ Readiness│                                                   │
+│           │   FAIL   │                                                   │
+│           └──────────┘                                                   │
 │                                                                          │
 │                                                                          │
 │  Connection State Machine (overlays health states above):                │
@@ -283,9 +295,15 @@ All containers in a pod share the same network namespace:
 ### Connection Flow
 
 1. **AG Helper → SQL Server**: Queries `sys.dm_hadr_*` views for AG status
-2. **SQL Exporter → SQL Server**: Queries performance counters
-3. **External → AG Helper**: Health probes, failover API
-4. **Prometheus → SQL Exporter**: Scrapes metrics endpoint
+2. **AG Helper → SQL Server**: Calls `sp_server_diagnostics` for component health (when `failureConditionLevel >= 2`)
+3. **SQL Exporter → SQL Server**: Queries performance counters
+4. **External → AG Helper**: Health probes, failover API
+5. **Prometheus → SQL Exporter**: Scrapes metrics endpoint
+
+> **Note:** Connection flow #2 is optional. When `failureConditionLevel` is 1 (default),
+> AG Helper only queries DMV views. At level 2+, it additionally runs `EXEC sp_server_diagnostics`
+> to evaluate SQL Server component health (system, resource, query_processing, io_subsystem, events).
+> See [Health Detection Comparison](../availability-groups/health-detection-comparison.md) for details.
 
 ## Health Probe Design
 
@@ -419,3 +437,4 @@ resources:
 - [Networking](networking.md) - Services and traffic flow
 - [AG Helper Reference](../availability-groups/ag-helper-reference.md) - Complete API docs
 - [Monitoring Overview](../monitoring/overview.md) - Metrics and dashboards
+- [Health Detection Comparison](../availability-groups/health-detection-comparison.md) - WSFC vs Operator health detection, failure condition levels

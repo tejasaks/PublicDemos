@@ -359,6 +359,17 @@ spec:
                       required before committing on the primary (-1 for auto-calculate)
                     format: int32
                     type: integer
+                  failureConditionLevel:
+                    description: |-
+                      FailureConditionLevel controls the depth of SQL Server health evaluation
+                      using sp_server_diagnostics. Optional — when omitted, defaults to level 1
+                      (AG topology monitoring only). Level 2 adds diagnostics responsiveness.
+                      Level 3 adds system component error detection. Level 4 adds resource errors.
+                      Level 5 adds query_processing errors. Higher levels are more sensitive.
+                    format: int32
+                    minimum: 1
+                    maximum: 5
+                    type: integer
                 type: object
               listener:
                 description: |-

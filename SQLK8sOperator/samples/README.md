@@ -20,6 +20,10 @@ Deploys a 3-replica SQL Server instance and configures **three separate Availabi
 
 Deploys a 3-replica SQL Server instance with a full **Prometheus + Grafana monitoring stack**. Each pod runs a sql-exporter sidecar that exposes SQL and AG metrics on port 9399. Prometheus auto-discovers exporter targets via `kubernetes_sd_configs`, and Grafana is pre-loaded with two dashboards (AG Monitoring and SQL Server Overview). The AG configuration is identical to `sql-ag-ha` — use this when you want HA plus end-to-end observability out of the box.
 
+### [sql-ag-ha-diagnostics/](sql-ag-ha-diagnostics/)
+
+Extends the `sql-ag-ha` scenario with **`sp_server_diagnostics` integration** via the `failureConditionLevel` CRD field (set to level 3). In addition to standard AG topology monitoring, the AG Helper sidecar runs `EXEC sp_server_diagnostics` each cycle and evaluates the five SQL Server internal components (system, resource, query_processing, io_subsystem, events). A component error at or above the configured level triggers automatic failover. Use this when you need deeper health detection that mirrors WSFC's failure condition level behavior.
+
 ## Standalone Instances
 
 ### [sqlserver-2025-standalone.yaml](sqlserver-2025-standalone.yaml)

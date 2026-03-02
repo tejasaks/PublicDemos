@@ -68,6 +68,24 @@ type SidecarState struct {
 	ConnectionState     string `json:"connectionState"`
 	DataStale           bool   `json:"dataStale"`
 	ConsecutiveFailures int    `json:"consecutiveFailures"`
+
+	// Server diagnostics (present when failureConditionLevel >= 2)
+	Diagnostics *SidecarDiagnostics `json:"diagnostics,omitempty"`
+}
+
+// SidecarDiagnostics mirrors the ServerDiagnostics from the AG Helper sidecar.
+// The controller uses this to surface diagnostics data in the SQLServerAG status
+// and for enhanced logging during failover decisions.
+type SidecarDiagnostics struct {
+	Components  []SidecarComponentState `json:"components,omitempty"`
+	CollectedAt string                  `json:"collectedAt,omitempty"`
+	Error       string                  `json:"error,omitempty"`
+}
+
+// SidecarComponentState represents a single sp_server_diagnostics component
+type SidecarComponentState struct {
+	Name  string `json:"name"`
+	State int    `json:"state"`
 }
 
 // FailoverCandidate represents a replica that can become primary
@@ -268,6 +286,24 @@ func (r *SQLServerAGReconciler) updateAGStatus(ctx context.Context, ag *mssqlv1a
 					}
 				}
 				logger.V(4).Info("Got sidecar state", "pod", pod.Name, "role", role, "syncState", syncState, "stale", state.DataStale)
+
+				// Log diagnostics info if present (failure condition level >= 2)
+				if state.Diagnostics != nil {
+					if state.Diagnostics.Error != "" {
+						logger.Info("Sidecar diagnostics error",
+							"pod", pod.Name,
+							"error", state.Diagnostics.Error)
+					} else if len(state.Diagnostics.Components) > 0 {
+						for _, comp := range state.Diagnostics.Components {
+							if comp.State >= 2 { // warning or error
+								logger.Info("sp_server_diagnostics component degraded",
+									"pod", pod.Name,
+									"component", comp.Name,
+									"state", comp.State)
+							}
+						}
+					}
+				}
 			} else {
 				// Sidecar query failed — fall back to pod labels
 				logger.V(4).Info("Sidecar query failed, using pod labels", "pod", pod.Name, "error", err)

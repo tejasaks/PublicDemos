@@ -210,6 +210,7 @@ spec:
     healthCheckTimeout: string       # e.g., "30s"
     leaseTimeout: string             # e.g., "60s"
     requiredSynchronizedSecondaries: int  # -1 = auto-calculate
+    failureConditionLevel: int       # 1-5, default: 1 (optional)
   
   # AG Listener (optional — omit for DR/manual failover scenarios)
   listener:
@@ -238,6 +239,17 @@ spec:
 | `maxRetries` | int | 3 | Number of retry attempts for transient SQL errors before giving up. Range: 1-30. |
 | `retryInterval` | string | `5s` | Go duration between retry attempts (e.g., `5s`, `10s`). |
 | `stalenessThreshold` | string | `30s` | If the last successful SQL query is older than this duration, the AG Helper flags its data as stale. Both `/healthz` and `/readyz` return 503 when data is stale. The AG controller maps stale pods to `connectedState=STALE` and excludes them from failover candidate evaluation. Should generally be ≥ 3× `monitorInterval`. |
+
+#### Failure Condition Level
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `failureConditionLevel` | int | `1` | Controls the depth of SQL Server health evaluation using `sp_server_diagnostics`. Optional (pointer field — omit for backward compatible behavior). Level 1 = AG topology only (default). Level 2 = add diagnostics responsiveness check. Level 3 = add system component errors. Level 4 = add resource component errors. Level 5 = add query_processing component errors. See [Health Detection Comparison](../availability-groups/health-detection-comparison.md) for the full comparison with WSFC. |
+
+> **Note:** This field is a pointer type (`*int32`) in the CRD. When omitted, the operator treats it as
+> level 1 (AG topology checks only), preserving backward compatibility. At level ≥ 2, the AG Helper sidecar
+> runs `EXEC sp_server_diagnostics` each monitor cycle and evaluates component health against the configured
+> level before emitting the final health status.
 
 ## OperatorConfiguration CRD
 
