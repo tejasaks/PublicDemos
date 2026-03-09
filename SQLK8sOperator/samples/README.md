@@ -24,6 +24,14 @@ Deploys a 3-replica SQL Server instance with a full **Prometheus + Grafana monit
 
 Extends the `sql-ag-ha` scenario with **`sp_server_diagnostics` integration** via the `failureConditionLevel` CRD field (set to level 3). In addition to standard AG topology monitoring, the AG Helper sidecar runs `EXEC sp_server_diagnostics` each cycle and evaluates the five SQL Server internal components (system, resource, query_processing, io_subsystem, events). A component error at or above the configured level triggers automatic failover. Use this when you need deeper health detection that mirrors WSFC's failure condition level behavior.
 
+### [sql-ag-ha-minimal/](sql-ag-ha-minimal/)
+
+Absolute-minimum AG deployment — only **required fields** are specified, everything else uses operator defaults. Deploys a 3-replica synchronous-commit AG (`ag1`) with no listener, no failover tuning, and no sidecar overrides. Use this as a quick-start template when you want the simplest possible HA setup.
+
+### [sql-ag-ha-full/](sql-ag-ha-full/)
+
+Comprehensive reference AG deployment with **every CRD field** explicitly listed, annotated with defaults, ranges, and recommendations. Includes a listener, failover tuning (all 6 fields including `failureConditionLevel: 3`), sidecar advanced config (all 5 tuning knobs), monitoring, and two databases (`appdb`, `auditdb`). Use this as a field reference when customizing production deployments.
+
 ## Standalone Instances
 
 ### [sqlserver-2025-standalone.yaml](sqlserver-2025-standalone.yaml)
@@ -37,6 +45,14 @@ Deploys a single SQL Server 2022 Developer instance (`sql2022-dev01`) with persi
 ### [sqlserver-with-ad.yaml](sqlserver-with-ad.yaml)
 
 Deploys a SQL Server 2022 Enterprise instance configured for **Active Directory (Kerberos) authentication**. Includes AD domain join settings, keytab secret references, SPN configuration, and CoreDNS forwarding rules for domain controller lookups. Requires an existing AD domain with a service account that has permission to create SPNs. Use this for enterprise environments that need Windows Authentication alongside SQL authentication.
+
+### [sqlserver-standalone-minimal.yaml](sqlserver-standalone-minimal.yaml)
+
+Absolute-minimum standalone deployment — only a **data volume size** and **SA password secret** are specified. All other fields (version, edition, image, resources, service, monitoring) use operator defaults. Use this as a quick-start template for dev/test.
+
+### [sqlserver-standalone-full.yaml](sqlserver-standalone-full.yaml)
+
+Comprehensive reference standalone deployment with **every CRD field** explicitly listed, annotated with defaults, ranges, and recommendations. Covers instance config (resources, all 5 storage volumes, SQL Server config with all 9 fields), credentials, Active Directory (all 11 fields), service, monitoring, and metadata. Use this as a field reference when customizing production standalone instances.
 
 ## Operator Configuration
 
