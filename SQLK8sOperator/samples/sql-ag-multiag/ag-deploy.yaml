@@ -190,11 +190,7 @@ spec:
         service.beta.kubernetes.io/description: "Production OLTP read replicas"
   sidecar:
     image: ghcr.io/tejasaks/mssql-ag-helper:v1.0.0
-    monitorInterval: "10s"
-    connectionTimeout: "30s"
-    maxRetries: 3
-    retryInterval: "5s"
-    stalenessThreshold: "30s"
+    # Default tuning is fine for OLTP — omit advanced section
 
 # ============================================================================
 # AG 2: ReportingAG — Read scale-out (1 sync + 2 async)
@@ -245,11 +241,12 @@ spec:
         service.beta.kubernetes.io/description: "Reporting read replicas"
   sidecar:
     image: ghcr.io/tejasaks/mssql-ag-helper:v1.0.0
-    monitorInterval: "30s"
-    connectionTimeout: "30s"
-    maxRetries: 3
-    retryInterval: "5s"
-    stalenessThreshold: "90s"
+    advanced:
+      monitorInterval: "30s"         # Less aggressive for reporting
+      connectionTimeout: "30s"
+      maxRetries: 3
+      retryInterval: "5s"
+      stalenessThreshold: "90s"      # 3× monitorInterval
 
 # ============================================================================
 # AG 3: DisasterRecoveryAG — Geo-DR (1 sync + 1 async, 2 replicas)
@@ -294,11 +291,12 @@ spec:
     secondary: { type: ClusterIP, port: 3434 }
   sidecar:
     image: ghcr.io/tejasaks/mssql-ag-helper:v1.0.0
-    monitorInterval: "60s"
-    connectionTimeout: "60s"
-    maxRetries: 5
-    retryInterval: "10s"
-    stalenessThreshold: "180s"
+    advanced:
+      monitorInterval: "60s"         # Relaxed for geo-DR
+      connectionTimeout: "60s"
+      maxRetries: 5
+      retryInterval: "10s"
+      stalenessThreshold: "180s"     # 3× monitorInterval
 
 # ============================================================================
 # NEXT STEP: Follow ag-configure.md or run ag-configure.sh

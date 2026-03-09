@@ -224,11 +224,12 @@ spec:
   # AG Helper sidecar config
   sidecar:
     image: string
-    monitorInterval: duration
-    connectionTimeout: duration
-    maxRetries: int               # Default: 3, range: 1-30
-    retryInterval: duration       # Default: "5s"
-    stalenessThreshold: duration  # Default: "30s"
+    advanced:                     # Optional — all fields have defaults
+      monitorInterval: duration
+      connectionTimeout: duration
+      maxRetries: int             # Default: 3, range: 1-30
+      retryInterval: duration     # Default: "5s"
+      stalenessThreshold: duration  # Default: "30s"
 ```
 
 ## OperatorConfiguration CRD

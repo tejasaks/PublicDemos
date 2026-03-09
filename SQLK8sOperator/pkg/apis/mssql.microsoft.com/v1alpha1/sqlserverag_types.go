@@ -295,7 +295,10 @@ type FailoverConfig struct {
 	FailureConditionLevel *int32 `json:"failureConditionLevel,omitempty"`
 }
 
-// AGSidecarSpec defines the AG helper sidecar configuration
+// AGSidecarSpec defines the AG helper sidecar configuration.
+// Only image and resources are top-level; operational tuning knobs live
+// under the optional "advanced" sub-object so that simple deployments
+// can omit them entirely and rely on defaults.
 type AGSidecarSpec struct {
 	// Image is the AG helper sidecar image
 	// +kubebuilder:default="mssql-ag-helper:latest"
@@ -305,6 +308,17 @@ type AGSidecarSpec struct {
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
 
+	// Advanced contains optional operational tuning knobs for the AG Helper
+	// sidecar. All fields have sensible defaults — most deployments should
+	// omit this section entirely.
+	// +optional
+	Advanced *AGSidecarAdvancedSpec `json:"advanced,omitempty"`
+}
+
+// AGSidecarAdvancedSpec contains operational tuning knobs for the AG Helper
+// sidecar. All fields have sensible defaults and should only be set when
+// the operator needs to be tuned for a specific environment.
+type AGSidecarAdvancedSpec struct {
 	// MonitorInterval is how often to check AG health
 	// +kubebuilder:default="10s"
 	MonitorInterval string `json:"monitorInterval,omitempty"`

@@ -244,8 +244,8 @@ kubectl exec -it my-sqlserver-0 -n mssql -- \
 | SQL Server temporarily unresponsive | Wait for retries to succeed — staleness auto-clears on next successful query |
 | SQL Server process crashed | Check `kubectl logs my-sqlserver-0 -n mssql -c mssql-server` |
 | Network issue within pod | Restart the pod: `kubectl delete pod my-sqlserver-0 -n mssql` |
-| `stalenessThreshold` too aggressive | Increase: set to ≥ 3× `monitorInterval` (e.g., `30s` for `10s` interval) |
-| High SQL Server load causing timeouts | Increase `connectionTimeout` or `retryInterval` |
+| `stalenessThreshold` too aggressive | Increase: set `sidecar.advanced.stalenessThreshold` to ≥ 3× `monitorInterval` (e.g., `30s` for `10s` interval) |
+| High SQL Server load causing timeouts | Increase `sidecar.advanced.connectionTimeout` or `sidecar.advanced.retryInterval` |
 
 ### Connection State: Disconnected
 

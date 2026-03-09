@@ -41,8 +41,9 @@ spec:
       port: 1433
   sidecar:
     image: mssql-ag-helper:dev
-    monitorInterval: "10s"
-    connectionTimeout: "30s"
-    maxRetries: 3
-    retryInterval: "5s"
-    stalenessThreshold: "30s"
+    advanced:
+      monitorInterval: "10s"
+      connectionTimeout: "30s"
+      maxRetries: 3
+      retryInterval: "5s"
+      stalenessThreshold: "30s"

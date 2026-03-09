@@ -254,8 +254,8 @@ kubectl apply -f operator-configuration.yaml
 
 **Step 3: Apply updated CRDs (if upgrading to a version with new CRD fields)**
 
-If the new AG Helper version uses new CRD fields (e.g., `maxRetries`, `retryInterval`,
-`stalenessThreshold`), apply the updated CRDs first:
+If the new AG Helper version uses new CRD fields (e.g., `sidecar.advanced.maxRetries`,
+`sidecar.advanced.retryInterval`, `sidecar.advanced.stalenessThreshold`), apply the updated CRDs first:
 
 ```bash
 kubectl apply -f deploy/crds/

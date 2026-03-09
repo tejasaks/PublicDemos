@@ -215,8 +215,8 @@ func (r *SQLServerAGReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// Requeue to monitor AG health
 	monitorInterval := 10 * time.Second
-	if ag.Spec.Sidecar != nil && ag.Spec.Sidecar.MonitorInterval != "" {
-		if d, err := time.ParseDuration(ag.Spec.Sidecar.MonitorInterval); err == nil {
+	if ag.Spec.Sidecar != nil && ag.Spec.Sidecar.Advanced != nil && ag.Spec.Sidecar.Advanced.MonitorInterval != "" {
+		if d, err := time.ParseDuration(ag.Spec.Sidecar.Advanced.MonitorInterval); err == nil {
 			monitorInterval = d
 		}
 	}

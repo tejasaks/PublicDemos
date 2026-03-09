@@ -125,18 +125,18 @@ func (v *SQLServerAGValidator) validate(ctx context.Context, ag *mssqlv1alpha1.S
 		result.Merge(imageResult)
 	}
 
-	// 7b. Validate sidecar connection resilience fields
-	if ag.Spec.Sidecar != nil {
-		if ag.Spec.Sidecar.RetryInterval != "" {
-			if _, err := time.ParseDuration(ag.Spec.Sidecar.RetryInterval); err != nil {
-				result.AddError("sidecar.retryInterval: invalid duration %q: %v", ag.Spec.Sidecar.RetryInterval, err)
+	// 7b. Validate sidecar advanced connection resilience fields
+	if ag.Spec.Sidecar != nil && ag.Spec.Sidecar.Advanced != nil {
+		if ag.Spec.Sidecar.Advanced.RetryInterval != "" {
+			if _, err := time.ParseDuration(ag.Spec.Sidecar.Advanced.RetryInterval); err != nil {
+				result.AddError("sidecar.advanced.retryInterval: invalid duration %q: %v", ag.Spec.Sidecar.Advanced.RetryInterval, err)
 			}
 		}
-		if ag.Spec.Sidecar.StalenessThreshold != "" {
-			if d, err := time.ParseDuration(ag.Spec.Sidecar.StalenessThreshold); err != nil {
-				result.AddError("sidecar.stalenessThreshold: invalid duration %q: %v", ag.Spec.Sidecar.StalenessThreshold, err)
+		if ag.Spec.Sidecar.Advanced.StalenessThreshold != "" {
+			if d, err := time.ParseDuration(ag.Spec.Sidecar.Advanced.StalenessThreshold); err != nil {
+				result.AddError("sidecar.advanced.stalenessThreshold: invalid duration %q: %v", ag.Spec.Sidecar.Advanced.StalenessThreshold, err)
 			} else if d < 10*time.Second {
-				result.AddWarning("sidecar.stalenessThreshold %s is very short — may cause false stale reports during normal operation", ag.Spec.Sidecar.StalenessThreshold)
+				result.AddWarning("sidecar.advanced.stalenessThreshold %s is very short — may cause false stale reports during normal operation", ag.Spec.Sidecar.Advanced.StalenessThreshold)
 			}
 		}
 	}
