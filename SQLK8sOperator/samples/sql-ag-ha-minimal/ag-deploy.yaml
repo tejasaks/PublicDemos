@@ -1,0 +1,88 @@
+# ============================================================================
+# SQL Server AG (HA) — Minimal Configuration
+# ============================================================================
+#
+# Absolute-minimum resources for a 3-replica Always On Availability Group.
+# All optional fields are omitted and will use operator defaults:
+#
+#   AG instance count .............. 3
+#   Seeding mode .................. Automatic
+#   Primary availability mode ..... SynchronousCommit
+#   Secondary availability mode ... SynchronousCommit
+#   Failover mode ................. External
+#   Endpoint port ................. 5022
+#   Sidecar image ................. mssql-ag-helper:latest
+#   Sidecar monitor interval ...... 10s
+#   Service type .................. ClusterIP
+#   SQL edition ................... Developer
+#   SQL version ................... 2022
+#
+# ============================================================================
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mssql
+
+---
+# SA password
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sql-ag-sa
+  namespace: mssql
+type: Opaque
+stringData:
+  password: "YourStrong@Passw0rd!"
+
+---
+# Health-check probe credential
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ag-health-login
+  namespace: mssql
+type: Opaque
+stringData:
+  username: ag_health
+  password: "H3althProbe!Pwd"
+
+---
+# 3-replica SQL Server instances
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServer
+metadata:
+  name: sql-ag
+  namespace: mssql
+spec:
+  instance:
+    count: 3
+    storage:
+      data:
+        size: 10Gi
+    config:
+      hadrEnabled: true
+  credentials:
+    saPasswordSecretRef:
+      name: sql-ag-sa
+
+---
+# Availability Group — minimal
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServerAG
+metadata:
+  name: ag-minimal
+  namespace: mssql
+spec:
+  sqlServerRef:
+    name: sql-ag
+  availabilityGroup:
+    name: ag1
+    healthCheckCredentials:
+      secretRef:
+        name: ag-health-login
+    primaryConfig:
+      availabilityMode: SynchronousCommit
+    secondaryConfig:
+      availabilityMode: SynchronousCommit

@@ -1,0 +1,238 @@
+# ============================================================================
+# SQL Server Standalone — All Configuration Options
+# ============================================================================
+#
+# Every field in the SQLServer CRD is shown below with its default value.
+# Fields marked [REQUIRED] have no default and must be provided.
+# Fields marked [DEFAULT: ...] will use that value if omitted.
+# Fields marked [OPTIONAL] are nil/empty by default.
+#
+# Use this as a reference when deciding what to customize.
+# In practice, most deployments need only the required fields plus a few
+# overrides — see sqlserver-standalone-minimal.yaml for the minimal version.
+#
+# ============================================================================
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mssql
+
+---
+# SA password — [REQUIRED]
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sql-full-sa
+  namespace: mssql
+type: Opaque
+stringData:
+  password: "YourStrong@Passw0rd!"  # CHANGE THIS in production!
+
+---
+# TLS certificate — only needed when config.tlsEnabled: true
+# apiVersion: v1
+# kind: Secret
+# metadata:
+#   name: sql-tls-cert
+#   namespace: mssql
+# type: kubernetes.io/tls
+# data:
+#   tls.crt: <base64>
+#   tls.key: <base64>
+
+---
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServer
+metadata:
+  name: sql-full        # Max 13 chars (NetBIOS limit: 15 − 2 for pod suffix)
+  namespace: mssql
+spec:
+  # --------------------------------------------------------------------------
+  # Top-level fields
+  # --------------------------------------------------------------------------
+
+  description: "Full reference standalone instance"  # [OPTIONAL] max 1024 chars — for auditing/search
+
+  version: "2022"       # [DEFAULT: "2022"] Options: "2019", "2022", "2025", or custom catalog keys
+  edition: Developer    # [DEFAULT: Developer] Options: Developer, Express, Standard, Enterprise
+
+  shutdown: false        # [OPTIONAL] Set true to gracefully shut down without deleting the CR
+
+  # --------------------------------------------------------------------------
+  # instance — SQL Server container configuration
+  # --------------------------------------------------------------------------
+  instance:
+    count: 1             # [DEFAULT: 1] Range: 1-9. Use 1 for standalone; 2+ for AG instances.
+
+    # image: ""          # [OPTIONAL] Override image. If omitted, resolved from OperatorConfiguration
+                         #   image catalog using the version key. Example:
+                         #   mcr.microsoft.com/mssql/server:2022-CU16-ubuntu-22.04
+
+    imagePullPolicy: IfNotPresent  # [DEFAULT: IfNotPresent] Options: Always, Never, IfNotPresent
+                                   #   Use Always for :latest tags or CI/CD pipelines
+
+    # imagePullSecrets:  # [OPTIONAL] For private container registries
+    #   - name: my-registry-secret
+
+    # -- Resources --------------------------------------------------------
+    resources:
+      requests:
+        cpu: "1"          # Recommend ≥ 1 core for any workload
+        memory: 2Gi       # Recommend ≥ 2Gi; SQL minimum is ~512Mi
+      limits:
+        cpu: "4"          # Production: 4-16 cores depending on workload
+        memory: 8Gi       # Production: 8Gi-64Gi; SQL uses ~80% of limit by default
+
+    # -- Storage -----------------------------------------------------------
+    storage:
+      # Data volume — [REQUIRED]
+      data:
+        size: 20Gi                     # [REQUIRED] Pattern: ^[0-9]+[KMGT]i$
+        # storageClass: "managed-csi"  # [OPTIONAL] Omit to use cluster default SC
+        accessMode: ReadWriteOnce      # [DEFAULT: ReadWriteOnce] Options: ReadWriteOnce, ReadWriteMany, ReadOnlyMany
+        # selector:                    # [OPTIONAL] Label selector for specific PVs
+        #   matchLabels:
+        #     tier: premium
+
+      # Log volume — [OPTIONAL] Separate disk for transaction logs improves I/O
+      log:
+        size: 10Gi
+        # storageClass: "managed-csi-premium"  # Recommend fastest tier for logs
+
+      # TempDB volume — [OPTIONAL] Separate disk avoids contention with user data
+      tempdb:
+        size: 10Gi
+
+      # Backup volume — [OPTIONAL] For local backup targets
+      backup:
+        size: 50Gi
+
+      # Secrets volume — [OPTIONAL] For mounting additional credential files
+      # secrets:
+      #   size: 1Gi
+
+    # -- SQL Server config (mssql.conf) ------------------------------------
+    config:
+      agentEnabled: true     # [DEFAULT: true]  Enable SQL Server Agent for jobs/alerts
+      hadrEnabled: true      # [DEFAULT: true]  Enable HADR (required for AGs, harmless for standalone)
+      collation: SQL_Latin1_General_CP1_CI_AS  # [DEFAULT: SQL_Latin1_General_CP1_CI_AS]
+                             #   Common alternatives: Latin1_General_CI_AS, Latin1_General_100_CI_AS_SC_UTF8
+      lcid: 1033             # [DEFAULT: 1033 = English] See https://learn.microsoft.com/sql/relational-databases/collations/collation-and-unicode-support
+      # memoryLimitMB: 6144  # [OPTIONAL] Cap SQL Server memory. Omit to let SQL use ~80% of container limit.
+                             #   Recommendation: set to ~80% of resources.limits.memory in MB
+      # traceFlags:          # [OPTIONAL] Trace flags enabled at startup
+      #   - 1222             # Deadlock graphs in errorlog
+      #   - 3226             # Suppress backup success messages
+      #   - 7412             # Lightweight query profiling
+      tlsEnabled: false      # [DEFAULT: false] Enable TLS. Requires tlsCertSecretRef.
+      # tlsCertSecretRef:    # [OPTIONAL] Secret with tls.crt and tls.key
+      #   name: sql-tls-cert
+      # customMSSQLConf: ""  # [OPTIONAL] Raw mssql.conf INI content for settings not exposed above
+
+    # -- Scheduling --------------------------------------------------------
+    # nodeSelector:          # [OPTIONAL] Schedule pods to specific nodes
+    #   disktype: ssd
+    #   kubernetes.io/os: linux
+
+    # tolerations:           # [OPTIONAL] Tolerate node taints
+    #   - key: "dedicated"
+    #     operator: "Equal"
+    #     value: "sqlserver"
+    #     effect: "NoSchedule"
+
+    # affinity:              # [OPTIONAL] Pod affinity/anti-affinity rules
+    #   podAntiAffinity:
+    #     preferredDuringSchedulingIgnoredDuringExecution:
+    #       - weight: 100
+    #         podAffinityTerm:
+    #           labelSelector:
+    #             matchLabels:
+    #               app.kubernetes.io/component: mssql
+    #           topologyKey: kubernetes.io/hostname
+
+    # priorityClassName: ""  # [OPTIONAL] Kubernetes PriorityClass name for preemption
+
+    # securityContext:       # [OPTIONAL] Pod-level security context
+    #   runAsUser: 10001
+    #   runAsGroup: 0
+    #   fsGroup: 10001
+
+  # --------------------------------------------------------------------------
+  # credentials — Authentication [REQUIRED]
+  # --------------------------------------------------------------------------
+  credentials:
+    saPasswordSecretRef:
+      name: sql-full-sa    # [REQUIRED] Secret name containing the SA password
+      key: password         # [DEFAULT: "password"] Key within the secret
+    createDefaultLogin: false  # [OPTIONAL] Create additional default logins
+
+  # --------------------------------------------------------------------------
+  # activeDirectory — Windows Authentication via Kerberos [OPTIONAL]
+  # --------------------------------------------------------------------------
+  # activeDirectory:
+  #   enabled: false              # [DEFAULT: false]
+  #   realm: "CONTOSO.COM"        # [REQUIRED if enabled] Kerberos realm, UPPERCASE
+  #   domainControllers:          # [REQUIRED if enabled] ≥ 1 DC
+  #     - dc1.contoso.com
+  #     - dc2.contoso.com
+  #   serviceAccountSecretRef:    # [REQUIRED if enabled] Secret with username + password keys
+  #     name: sql-ad-svc
+  #   spnPrefix: "MSSQLSvc"       # [DEFAULT: "MSSQLSvc"]
+  #   # keytabSecretRef:          # [OPTIONAL] Pre-generated keytab
+  #   #   name: sql-keytab
+  #   reverseProxyLookup: false   # [DEFAULT: false]
+  #   # preferredDC: ""           # [OPTIONAL] Preferred domain controller
+  #   # adminGroup: ""            # [OPTIONAL] AD group → sysadmin
+  #   # netBIOSDomain: ""         # [OPTIONAL] e.g. "CONTOSO"
+  #   # dnsSuffix: ""             # [OPTIONAL] e.g. "contoso.com"
+
+  # --------------------------------------------------------------------------
+  # service — How the instance is exposed [OPTIONAL]
+  # --------------------------------------------------------------------------
+  service:
+    type: ClusterIP        # [DEFAULT: ClusterIP] Options: ClusterIP, NodePort, LoadBalancer
+    port: 1433             # [DEFAULT: 1433] SQL Server TCP port. Range: 1-65535.
+    # nodePort: 31433      # [OPTIONAL] Fixed NodePort (30000-32767). Only used with NodePort/LoadBalancer.
+    # loadBalancerIP: ""   # [OPTIONAL] Request specific LB IP (cloud-provider dependent)
+    # annotations:         # [OPTIONAL] Service annotations
+    #   service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+
+  # --------------------------------------------------------------------------
+  # monitoring — SQL Exporter sidecar [OPTIONAL]
+  # --------------------------------------------------------------------------
+  monitoring:
+    enabled: true                        # [DEFAULT: true] Deploy SQL Exporter sidecar
+    exporterImage: "burningalchemist/sql_exporter:latest"  # [DEFAULT: burningalchemist/sql_exporter:latest]
+    exporterPort: 9399                   # [DEFAULT: 9399] Prometheus scrape port
+    # exporterResources:                 # [OPTIONAL] Exporter container resources
+    #   requests:
+    #     cpu: 50m
+    #     memory: 64Mi
+    #   limits:
+    #     cpu: 200m
+    #     memory: 128Mi
+    # customQueries: ""                  # [OPTIONAL] Custom SQL exporter query YAML
+
+  # --------------------------------------------------------------------------
+  # metadata — Labels & annotations propagated to all child resources [OPTIONAL]
+  # --------------------------------------------------------------------------
+  metadata:
+    labels:
+      environment: production
+      team: dba
+    annotations:
+      owner: dba-team@contoso.com
+
+# ============================================================================
+# NEXT STEPS
+# ============================================================================
+#
+#   1. Apply:  kubectl apply -f sqlserver-standalone-full.yaml
+#   2. Wait:   kubectl get sqlserver -n mssql -w
+#   3. Connect:
+#        kubectl run sqlcmd --rm -it --image=mcr.microsoft.com/mssql-tools18 -- \
+#          sqlcmd -S sql-full-0.sql-full.mssql.svc.cluster.local -U sa
+#
+# ============================================================================

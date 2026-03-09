@@ -1,0 +1,63 @@
+# ============================================================================
+# SQL Server Standalone — Minimal Configuration
+# ============================================================================
+#
+# The absolute minimum YAML needed to deploy a single SQL Server instance.
+# Only truly required fields are specified — everything else uses defaults:
+#
+#   REQUIRED:
+#     - storage.data.size   (no default — must specify)
+#     - credentials         (no default — must reference a Secret)
+#
+#   DEFAULTS APPLIED AUTOMATICALLY:
+#     version: "2022"             edition: Developer
+#     instance.count: 1           imagePullPolicy: IfNotPresent
+#     config.agentEnabled: true   config.hadrEnabled: true
+#     config.collation: SQL_Latin1_General_CP1_CI_AS
+#     config.lcid: 1033           service.type: ClusterIP
+#     service.port: 1433
+#
+# ============================================================================
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mssql
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sql-sa
+  namespace: mssql
+type: Opaque
+stringData:
+  password: "YourStrong@Passw0rd!"  # CHANGE THIS in production!
+
+---
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServer
+metadata:
+  name: sql-minimal     # Max 13 chars (NetBIOS limit: 15 − 2 for pod suffix)
+  namespace: mssql
+spec:
+  instance:
+    storage:
+      data:
+        size: 10Gi      # Only required storage field
+
+  credentials:
+    saPasswordSecretRef:
+      name: sql-sa      # Must reference an existing Secret
+
+# ============================================================================
+# NEXT STEPS
+# ============================================================================
+#
+#   1. Apply:  kubectl apply -f sqlserver-standalone-minimal.yaml
+#   2. Wait:   kubectl get sqlserver -n mssql -w
+#   3. Connect (from within cluster):
+#        sqlcmd -S sql-minimal-0.sql-minimal.mssql.svc.cluster.local -U sa
+#
+# ============================================================================

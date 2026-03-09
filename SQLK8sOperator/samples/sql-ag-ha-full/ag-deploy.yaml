@@ -1,0 +1,297 @@
+# ============================================================================
+# SQL Server AG (HA) — All Configuration Options
+# ============================================================================
+#
+# Every field in the SQLServer and SQLServerAG CRDs is shown below with its
+# default value. Fields marked [REQUIRED] must be provided. Fields marked
+# [DEFAULT: ...] will use that value if omitted. Fields marked [OPTIONAL]
+# are nil/empty by default.
+#
+# For the minimal version see: sql-ag-ha-minimal/ag-deploy.yaml
+#
+# ============================================================================
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mssql
+
+---
+# SA password — [REQUIRED]
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sql-ag-full-sa
+  namespace: mssql
+type: Opaque
+stringData:
+  password: "YourStrong@Passw0rd!"  # CHANGE THIS in production!
+
+---
+# Default health-check probe credential
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ag-health-default
+  namespace: mssql
+type: Opaque
+stringData:
+  username: ag_health
+  password: "H3althProbe!Pwd"
+
+---
+# Per-instance health-check credential override (for instanceCredentials map)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ag-health-instance0
+  namespace: mssql
+type: Opaque
+stringData:
+  username: ag_health_i0
+  password: "Inst0Probe!Pwd"
+
+---
+# ============================================================================
+# SQLServer — 3-replica cluster (full options)
+# ============================================================================
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServer
+metadata:
+  name: sql-ag-full
+  namespace: mssql
+spec:
+  description: "Full reference AG cluster"  # [OPTIONAL] max 1024 chars
+
+  version: "2022"       # [DEFAULT: "2022"] Options: "2019", "2022", "2025", or custom catalog keys
+  edition: Developer    # [DEFAULT: Developer] Options: Developer, Express, Standard, Enterprise
+
+  shutdown: false        # [OPTIONAL] Set true to gracefully stop pods without deleting the CR
+
+  instance:
+    count: 3             # [DEFAULT: 1] Range: 1-9. Use 3 for a standard 3-replica AG.
+
+    # image: ""          # [OPTIONAL] Override image, resolved from OperatorConfiguration catalog if omitted
+    imagePullPolicy: IfNotPresent  # [DEFAULT: IfNotPresent] Options: Always, Never, IfNotPresent
+    # imagePullSecrets:
+    #   - name: my-registry-secret
+
+    resources:
+      requests:
+        cpu: "2"
+        memory: 4Gi
+      limits:
+        cpu: "8"
+        memory: 16Gi
+
+    storage:
+      data:
+        size: 50Gi                     # [REQUIRED]
+        # storageClass: "managed-csi"  # [OPTIONAL]
+        accessMode: ReadWriteOnce      # [DEFAULT: ReadWriteOnce]
+      log:
+        size: 20Gi
+      tempdb:
+        size: 20Gi
+      backup:
+        size: 100Gi
+      # secrets:
+      #   size: 1Gi
+
+    config:
+      agentEnabled: true     # [DEFAULT: true]
+      hadrEnabled: true      # [DEFAULT: true] — MUST be true for AG
+      collation: SQL_Latin1_General_CP1_CI_AS  # [DEFAULT: SQL_Latin1_General_CP1_CI_AS]
+      lcid: 1033             # [DEFAULT: 1033]
+      # memoryLimitMB: 12288  # [OPTIONAL] ~80% of limits.memory
+      # traceFlags:
+      #   - 1222
+      #   - 3226
+      tlsEnabled: false
+      # tlsCertSecretRef:
+      #   name: sql-tls-cert
+      # customMSSQLConf: ""
+
+    # nodeSelector:
+    #   kubernetes.io/os: linux
+    # tolerations: []
+    # affinity: {}
+    # priorityClassName: ""
+    # securityContext: {}
+
+  credentials:
+    saPasswordSecretRef:
+      name: sql-ag-full-sa
+      key: password         # [DEFAULT: "password"]
+    createDefaultLogin: false
+
+  service:
+    type: ClusterIP        # [DEFAULT: ClusterIP]
+    port: 1433             # [DEFAULT: 1433]
+
+  monitoring:
+    enabled: true
+    exporterImage: "burningalchemist/sql_exporter:latest"
+    exporterPort: 9399
+
+  metadata:
+    labels:
+      environment: production
+    annotations:
+      owner: dba-team@contoso.com
+
+---
+# ============================================================================
+# SQLServerAG — Availability Group (full options)
+# ============================================================================
+apiVersion: mssql.microsoft.com/v1alpha1
+kind: SQLServerAG
+metadata:
+  name: ag-full
+  namespace: mssql
+spec:
+  description: "Full reference availability group"  # [OPTIONAL] max 1024 chars
+
+  # --------------------------------------------------------------------------
+  # sqlServerRef — link to the SQLServer CR above [REQUIRED]
+  # --------------------------------------------------------------------------
+  sqlServerRef:
+    name: sql-ag-full
+
+  # --------------------------------------------------------------------------
+  # availabilityGroup — AG topology and behaviour [REQUIRED]
+  # --------------------------------------------------------------------------
+  availabilityGroup:
+    name: ag1                   # [REQUIRED] AG name inside SQL Server. Max 128 chars.
+
+    instanceCount: 3            # [DEFAULT: 3] Range: 2-9. Number of replicas in the AG.
+
+    # -- Health-check credentials (used by Pacemaker/operator probes) ------
+    healthCheckCredentials:      # [REQUIRED]
+      secretRef:
+        name: ag-health-default
+      usernameKey: username      # [DEFAULT: "username"]
+      passwordKey: password      # [DEFAULT: "password"]
+
+    # Per-instance overrides. Key = instance ordinal (e.g. "0", "1").
+    # instanceCredentials:       # [OPTIONAL] map[string]HealthCheckCredentialsSpec
+    #   "0":
+    #     secretRef:
+    #       name: ag-health-instance0
+    #     usernameKey: username
+    #     passwordKey: password
+
+    # -- Replica configuration ---------------------------------------------
+    primaryConfig:
+      availabilityMode: SynchronousCommit  # [DEFAULT: SynchronousCommit] Options: SynchronousCommit, AsynchronousCommit
+      failoverMode: External               # [DEFAULT: External] Options: External
+      readableSecondary: ReadOnly           # [DEFAULT: ReadOnly] Options: No, ReadOnly, All
+      sessionTimeout: 10                   # [DEFAULT: 10] Seconds. Range: 5-100.
+
+    secondaryConfig:
+      availabilityMode: SynchronousCommit  # [DEFAULT: SynchronousCommit]
+      failoverMode: External               # [DEFAULT: External]
+      readableSecondary: ReadOnly           # [DEFAULT: ReadOnly]
+      sessionTimeout: 10                   # [DEFAULT: 10]
+
+    seedingMode: Automatic      # [DEFAULT: Automatic] Options: Automatic, Manual
+                                #   Automatic = SQL handles initial data sync.
+                                #   Manual = DBA restores backups on secondaries.
+
+    # -- Databases to add to the AG ----------------------------------------
+    databases:                   # [OPTIONAL] Pre-create and add DBs on AG creation
+      - name: appdb
+      - name: auditdb
+
+    dbFailover: true            # [DEFAULT: true]  Enable per-database failover detection
+    automaticFailover: false    # [DEFAULT: false] Let Pacemaker/operator handle failover externally
+
+    clusterType: External       # [DEFAULT: External] Options: External
+    endpointPort: 5022          # [DEFAULT: 5022] Database mirroring endpoint port. Range: 1024-65535.
+
+    externalWriteLeaseValidity: "20s"  # [DEFAULT: "20s"] How long the primary's write lease is valid.
+                                       #   Recommendation: 10s-60s. Lower = faster failover detection
+                                       #   but more sensitive to transient network issues.
+
+  # --------------------------------------------------------------------------
+  # listener — AG listener service [OPTIONAL]
+  # --------------------------------------------------------------------------
+  listener:
+    name: ag-listener            # [REQUIRED if listener block present] DNS-safe, max 63 chars
+    port: 1433                   # [DEFAULT: 1433] Range: 1-65535
+    serviceType: ClusterIP       # [DEFAULT: ClusterIP] Options: ClusterIP, LoadBalancer, NodePort
+    # clusterIP: ""              # [OPTIONAL] Request specific ClusterIP. Usually auto-assigned.
+    # loadBalancerIP: ""         # [OPTIONAL] Request specific LB IP (cloud-provider dependent)
+    # annotations:               # [OPTIONAL]
+    #   service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+
+  # --------------------------------------------------------------------------
+  # failover — Failover behaviour tuning [OPTIONAL]
+  # --------------------------------------------------------------------------
+  failover:
+    automatic: true              # [DEFAULT: true]  Enable automatic failover
+    dataLossThreshold: 0         # [DEFAULT: 0] Max seconds of data loss tolerated during failover.
+                                 #   0 = zero data-loss (synchronous only). Range: 0-3600.
+    healthCheckTimeout: "30s"    # [DEFAULT: "30s"] Timeout for AG health probes.
+                                 #   Recommendation: 15s-120s.
+    leaseTimeout: "60s"          # [DEFAULT: "60s"] Leader lease expiration.
+                                 #   Recommendation: 30s-180s. Lower = faster failover,
+                                 #   higher = more resilient to brief network blips.
+    requiredSynchronizedSecondaries: -1  # [DEFAULT: -1] Auto-calculate = floor((replicas-1)/2).
+                                         #   0 = allow failover even with no sync secondaries.
+                                         #   Range: -1 to (instanceCount-1).
+
+    failureConditionLevel: 3     # [OPTIONAL] sp_server_diagnostics severity level that triggers failover.
+                                 #   1 = Server down only
+                                 #   2 = + unresponsive (no diagnostics in healthCheckTimeout)
+                                 #   3 = + critical system errors (default for SQL AG)
+                                 #   4 = + moderate errors (resource issues)
+                                 #   5 = + any qualified failure (most aggressive)
+                                 #   Recommendation: 3 for most workloads. Use 4-5 only if you want
+                                 #   proactive failover on resource pressure.
+
+  # --------------------------------------------------------------------------
+  # sidecar — AG helper sidecar container [OPTIONAL]
+  # --------------------------------------------------------------------------
+  sidecar:
+    image: "mssql-ag-helper:latest"  # [DEFAULT: "mssql-ag-helper:latest"]
+
+    resources:                          # [OPTIONAL] Sidecar container resources
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+
+    # -- Advanced tuning (for most deployments, defaults are fine) ----------
+    advanced:
+      monitorInterval: "10s"     # [DEFAULT: "10s"] How often the sidecar checks AG health.
+                                 #   Recommendation: 5s-60s. Lower = faster detection,
+                                 #   higher = less overhead.
+
+      connectionTimeout: "30s"   # [DEFAULT: "30s"] TCP connection timeout to SQL instances.
+                                 #   Recommendation: 10s-60s. Increase in high-latency networks.
+
+      maxRetries: 3              # [DEFAULT: 3] Retries before declaring an instance unreachable.
+                                 #   Range: 1-30. Recommendation: 3-10.
+
+      retryInterval: "5s"        # [DEFAULT: "5s"] Pause between retries.
+                                 #   Recommendation: 2s-30s. Combined with maxRetries this gives
+                                 #   total detection time of maxRetries × retryInterval.
+
+      stalenessThreshold: "30s"  # [DEFAULT: "30s"] Max age of cached AG state before forced refresh.
+                                 #   Recommendation: 15s-120s.
+
+# ============================================================================
+# NEXT STEPS
+# ============================================================================
+#
+#   1. Apply:  kubectl apply -f ag-deploy.yaml
+#   2. Watch:  kubectl get sqlserver,sqlserverag -n mssql -w
+#   3. Connect via listener:
+#        kubectl run sqlcmd --rm -it --image=mcr.microsoft.com/mssql-tools18 -- \
+#          sqlcmd -S ag-listener.mssql.svc.cluster.local -U sa
+#
+# ============================================================================
