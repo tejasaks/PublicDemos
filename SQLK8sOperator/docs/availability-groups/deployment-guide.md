@@ -402,6 +402,9 @@ sqlcmd -S <CLUSTER_IP>,1433 -U sa -P 'YourStrong@Passw0rd!'
 | [sql-ag-dr/](../../samples/sql-ag-dr/) | Disaster Recovery: 2 sync + 1 async, manual failover |
 | [sql-ag-multiag/](../../samples/sql-ag-multiag/) | Multiple AGs on same replicas |
 | [sql-ag-monitoring/](../../samples/sql-ag-monitoring/) | HA + Prometheus + Grafana monitoring stack |
+| [sql-ag-ha-diagnostics/](../../samples/sql-ag-ha-diagnostics/) | HA AG with sp_server_diagnostics health detection |
+| [sql-ag-ha-minimal/](../../samples/sql-ag-ha-minimal/) | Minimal HA AG (fewest settings, quickest start) |
+| [sql-ag-ha-full/](../../samples/sql-ag-ha-full/) | Full-featured HA AG (all options demonstrated) |
 
 ### Common Commands
 

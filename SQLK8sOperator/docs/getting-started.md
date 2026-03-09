@@ -146,11 +146,16 @@ This project includes ready-to-use sample manifests in the [samples/](../samples
 |-------------|-------------|
 | [sqlserver-2025-standalone.yaml](../samples/sqlserver-2025-standalone.yaml) | Basic SQL Server 2025 standalone instance (recommended starting point) |
 | [sqlserver-2022-standalone.yaml](../samples/sqlserver-2022-standalone.yaml) | SQL Server 2022 standalone instance |
+| [sqlserver-standalone-minimal.yaml](../samples/sqlserver-standalone-minimal.yaml) | Minimal standalone instance (fewest settings) |
+| [sqlserver-standalone-full.yaml](../samples/sqlserver-standalone-full.yaml) | Full-featured standalone instance (all options) |
+| [sqlserver-with-ad.yaml](../samples/sqlserver-with-ad.yaml) | Active Directory authentication configuration |
 | [sql-ag-ha/](../samples/sql-ag-ha/) | High Availability AG (3 sync replicas, auto failover, listener) |
 | [sql-ag-dr/](../samples/sql-ag-dr/) | Disaster Recovery AG (2 sync + 1 async, manual failover) |
 | [sql-ag-multiag/](../samples/sql-ag-multiag/) | Multiple AGs on same replicas |
 | [sql-ag-monitoring/](../samples/sql-ag-monitoring/) | HA AG + Prometheus + Grafana monitoring stack |
-| [sqlserver-with-ad.yaml](../samples/sqlserver-with-ad.yaml) | Active Directory authentication configuration |
+| [sql-ag-ha-diagnostics/](../samples/sql-ag-ha-diagnostics/) | HA AG with sp_server_diagnostics health detection |
+| [sql-ag-ha-minimal/](../samples/sql-ag-ha-minimal/) | Minimal HA AG (fewest settings, quickest start) |
+| [sql-ag-ha-full/](../samples/sql-ag-ha-full/) | Full-featured HA AG (all options demonstrated) |
 
 > **Note on AG Samples:** The Availability Group samples include Secret definitions for SA and AG Helper credentials for dev/test convenience. For production, see the [AG Deployment Guide](availability-groups/deployment-guide.md#step-25-create-ag-helper-credentials) for guidance on pre-creating secrets securely.
 
