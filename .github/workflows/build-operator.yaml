@@ -10,7 +10,8 @@
 #   - mssql-ag-helper    : AG monitoring sidecar
 #
 # TRIGGERS:
-#   - Push to main branch (when SQLK8sOperator files change)
+#   - Push to main branch (when SQLK8sOperator code/build files change)
+#     Docs, samples, tests, and markdown-only changes are excluded.
 #   - Git tag push (v*.*.*)
 #   - Manual trigger (workflow_dispatch)
 #
@@ -30,7 +31,19 @@ on:
     branches:
       - main
     paths:
-      - 'SQLK8sOperator/**'
+      # Go source and build files that affect the compiled binaries/images.
+      # NOTE: If you add a new folder under SQLK8sOperator/ that contains
+      # build-relevant code, add it here to trigger CI.
+      - 'SQLK8sOperator/cmd/**'
+      - 'SQLK8sOperator/internal/**'
+      - 'SQLK8sOperator/pkg/**'
+      - 'SQLK8sOperator/hack/**'
+      - 'SQLK8sOperator/deploy/**'
+      - 'SQLK8sOperator/go.mod'
+      - 'SQLK8sOperator/go.sum'
+      - 'SQLK8sOperator/Makefile'
+      - 'SQLK8sOperator/Dockerfile*'
+      - 'SQLK8sOperator/install.yaml'
       - '.github/workflows/build-operator.yaml'
     tags:
       - 'v*.*.*'
