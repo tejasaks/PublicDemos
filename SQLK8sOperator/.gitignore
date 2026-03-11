@@ -1,0 +1,16 @@
+# Compiled binaries
+bin/
+*.exe
+
+# Go build cache
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
