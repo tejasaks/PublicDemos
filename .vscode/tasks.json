@@ -1,0 +1,52 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "go: build SQLK8sOperator",
+      "type": "shell",
+      "command": "go -C SQLK8sOperator build ./cmd/mssql-operator",
+      "group": "build",
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "make: build SQLK8sOperator (GNU)",
+      "type": "shell",
+      "command": "\"C:/Program Files/Git/bin/bash.exe\" -lc \"export GOBIN=/c/Users/tejas/go/bin; export PATH='/c/Program Files/Go/bin:/c/Program Files (x86)/GnuWin32/bin:'\\\"$PATH\\\"; cd /c/githome/PublicDemos/SQLK8sOperator && make build\"",
+      "group": "build"
+    },
+    {
+      "label": "python: run active file",
+      "type": "shell",
+      "command": "C:/Users/tejas/AppData/Local/Microsoft/WindowsApps/python3.13.exe \"${file}\""
+    },
+    {
+      "label": "cpp: build active file (MSVC)",
+      "type": "shell",
+      "command": "\"C:/Program Files/Microsoft Visual Studio/18/Community/Common7/Tools/VsDevCmd.bat\" -arch=x64 -host_arch=x64 && cl /nologo /EHsc /W4 \"${file}\" /Fe:\"${fileDirname}/${fileBasenameNoExtension}.exe\"",
+      "options": {
+        "shell": {
+          "executable": "C:/Windows/System32/cmd.exe",
+          "args": ["/d", "/c"]
+        }
+      },
+      "group": "build",
+      "problemMatcher": ["$msCompile"]
+    },
+    {
+      "label": "cpp: run active executable",
+      "type": "shell",
+      "command": "\"${fileDirname}/${fileBasenameNoExtension}.exe\""
+    },
+    {
+      "label": "nmake: build in workspace root",
+      "type": "shell",
+      "command": "\"C:/Program Files/Microsoft Visual Studio/18/Community/Common7/Tools/VsDevCmd.bat\" -arch=x64 -host_arch=x64 && cd /d \"${workspaceFolder}\" && nmake /nologo",
+      "options": {
+        "shell": {
+          "executable": "C:/Windows/System32/cmd.exe",
+          "args": ["/d", "/c"]
+        }
+      }
+    }
+  ]
+}

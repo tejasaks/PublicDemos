@@ -1,0 +1,11 @@
+{
+  "python.defaultInterpreterPath": "C:/Users/tejas/AppData/Local/Microsoft/WindowsApps/python3.13.exe",
+  "go.goroot": "C:\\Program Files\\Go",
+  "go.gopath": "C:\\Users\\tejas\\go",
+  "cmake.cmakePath": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin\\cmake.exe",
+  "terminal.integrated.env.windows": {
+    "GOROOT": "C:\\Program Files\\Go",
+    "GOPATH": "C:\\Users\\tejas\\go",
+    "PATH": "C:\\Program Files\\Go\\bin;C:\\Program Files (x86)\\GnuWin32\\bin;C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin;${env:PATH}"
+  }
+}
