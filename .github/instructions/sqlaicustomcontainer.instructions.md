@@ -8,6 +8,7 @@ applyTo: "SQLAICustomContainer/**"
 - Start with a short implementation plan before any edits.
 - Keep changes synchronized across `Dockerfile`, `build-and-run.sh`, and `README.md` when options or behavior change.
 - If runtime flags, ports, volumes, or defaults change, update docs in `README.md`, test docs in `tests/*.md`, and sample command snippets in the same change set.
+- For architectural or significant structural changes, also update `DESIGN-EVOLUTION.md`, the Design Evolution section in `.github/instructions/sqlaicustomcontainer.instructions.md`, and the Design Evolution Summary in `.github/copilot-instructions.md`.
 - Include a concise devil's-advocate critique in responses for change requests, covering expected gains, potential regressions, and operational risks.
 - Preserve optional-service gating behavior for Ollama, MinIO, and Polybase.
 - Be explicit about Ubuntu vs RHEL paths/package logic when modifying install or startup flow.
@@ -36,3 +37,16 @@ Run from `SQLAICustomContainer/` and choose the nearest relevant checks:
 - Usage and options docs: `README.md`
 - Test documentation and examples: `tests/*.md`
 - Test harness and scenarios: `tests/`
+- Design evolution context: `DESIGN-EVOLUTION.md`
+
+## Design Evolution (Quick Reference)
+
+The container project evolved through these phases (see `DESIGN-EVOLUTION.md` for detail):
+
+1. Single-purpose container — SQL Server + Ollama + Caddy as a fixed bundle
+2. Optional components — MinIO and Polybase made toggleable; Ollama made optional
+3. Dual-OS support — Single Dockerfile with Ubuntu/RHEL runtime detection
+4. Test automation — Prerequisite checks, deployment scenario matrix, cleanup scripts
+5. Documentation maturity — Blog post, structured test docs (CHECKLIST, QUICKSTART, INDEX)
+
+When making changes, verify which phase introduced the feature you're modifying to avoid regressing prior design decisions.
