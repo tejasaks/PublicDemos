@@ -9,7 +9,8 @@ applyTo: "SQLAICustomContainer/**"
 - Keep changes synchronized across `Dockerfile`, `build-and-run.sh`, and `README.md` when options or behavior change.
 - If runtime flags, ports, volumes, or defaults change, update docs in `README.md`, test docs in `tests/*.md`, and sample command snippets in the same change set.
 - For architectural or significant structural changes, also update `DESIGN-EVOLUTION.md`, the Design Evolution section in `.github/instructions/sqlaicustomcontainer.instructions.md`, and the Design Evolution Summary in `.github/copilot-instructions.md`.
-- Include a concise devil's-advocate critique in responses for change requests, covering expected gains, potential regressions, and operational risks.
+- Include a concise devil's-advocate critique in responses for change requests where it adds value, covering expected gains, potential regressions, and operational risks. Skip the critique for straightforward tasks with nothing meaningful to critique.
+- For architectural or strategic questions, include a brief comparison with competitive container solutions or industry-standard approaches, noting alignment or novel divergence.
 - Preserve optional-service gating behavior for Ollama, MinIO, and Polybase.
 - Be explicit about Ubuntu vs RHEL paths/package logic when modifying install or startup flow.
 - Keep shell script behavior predictable and non-interactive for test automation.

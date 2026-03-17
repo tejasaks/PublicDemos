@@ -10,7 +10,8 @@ applyTo: "SQLK8sOperator/**"
 - Prefer minimal diffs; avoid unrelated refactors.
 - If code behavior changes, update impacted docs in `docs/`, samples in `samples/`, and any references in `README.md` or sub-readmes in the same PR.
 - For architectural or significant structural changes, also update `docs/development/design-evolution.md`, the Design Evolution section in `.github/instructions/sqlk8soperator.instructions.md`, and the Design Evolution Summary in `.github/copilot-instructions.md`.
-- Include a concise devil's-advocate critique in responses for change requests, covering expected gains, potential regressions, and operational risks.
+- Include a concise devil's-advocate critique in responses for change requests where it adds value, covering expected gains, potential regressions, and operational risks. Skip the critique for straightforward tasks with nothing meaningful to critique.
+- For architectural or strategic questions, include a brief comparison with competitive Kubernetes operators or industry-standard approaches, noting alignment or novel divergence.
 - For CRD/API changes in `pkg/apis/`, run `make manifests generate` and verify generated files in `deploy/crds/`.
 - When touching controllers in `internal/controller/`, validate with at least `make test` and run focused shell tests when behavior changes.
 

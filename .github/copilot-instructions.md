@@ -7,7 +7,8 @@
 - Prefer the smallest safe change set and avoid unrelated refactors.
 - For any code change, update affected documentation, sample manifests/scripts, and cross-references in the same change set.
 - For architectural or significant structural changes, also update the relevant copilot instruction files (`.github/copilot-instructions.md`, `.github/instructions/*.instructions.md`) and design evolution docs (`SQLK8sOperator/docs/development/design-evolution.md`, `SQLAICustomContainer/DESIGN-EVOLUTION.md`) in the same change set.
-- For each change request, include a brief critique section that plays devil's advocate and evaluates potential positive and negative impacts, risks, and tradeoffs.
+- For change requests where it adds value, include a brief critique section that plays devil's advocate and evaluates potential positive and negative impacts, risks, and tradeoffs. Skip the critique for straightforward tasks or simple commands where there is nothing meaningful to critique.
+- For architectural or strategic questions, include a comparison with competitive products, industry offerings, or general industry standards. Indicate whether the approach is broadly aligned with common practice or diverging into novel territory — and if novel, explain how it differs. Being different is not a blocker, but the distinction should be visible.
 - After edits, run the nearest relevant tests/lint checks for the changed area.
 
 ## Response Template
@@ -17,7 +18,8 @@ For change requests, structure responses with these sections in order:
 - Plan: brief implementation plan before edits.
 - Changes: what was modified and where.
 - Validation: commands run and outcomes.
-- Critique: devil's-advocate analysis of positives, negatives, risks, and tradeoffs.
+- Critique: devil's-advocate analysis of positives, negatives, risks, and tradeoffs. Omit if the task is a straightforward command with nothing meaningful to critique.
+- Industry comparison: for architectural or strategic questions, a brief comparison with competitive or industry-standard approaches.
 
 If a section is not applicable, explicitly state why.
 

@@ -16,7 +16,7 @@ When a code change modifies behavior, settings, contracts, examples, or operatio
 - Update cross-references and links pointing to changed docs or samples.
 - Keep command examples and expected outputs consistent with current implementation.
 - For architectural or significant structural changes, also update the copilot instruction files (`.github/copilot-instructions.md`, `.github/instructions/*.instructions.md`) and the design evolution documents (`SQLK8sOperator/docs/development/design-evolution.md`, `SQLAICustomContainer/DESIGN-EVOLUTION.md`).
-- Include a short devil's-advocate critique in the response that covers potential benefits, downsides, and edge-case impacts of the change.
+- Include a short devil's-advocate critique in the response that covers potential benefits, downsides, and edge-case impacts of the change. Skip the critique for straightforward tasks with nothing meaningful to critique.
 
 ## Verification Checklist
 
